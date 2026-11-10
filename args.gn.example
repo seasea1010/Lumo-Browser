@@ -1,7 +1,7 @@
 # args.gn.example — Lumo Windows x64 Release 用 GN 引数ひな形
 #
 # 元：Thorium の win_args.gn（Chromium 156 / Thorium 156.0.8078.80 時点）。
-# 使い方：このファイルを Chromium src の out/lumo/args.gn としてコピーする。
+# 使い方：このファイルを Chromium src の out/thorium/args.gn としてコピーする。
 # CI では Secrets から API キーを注入してから gn gen する。
 #
 # 注意：google_api_key / google_default_client_id / google_default_client_secret
