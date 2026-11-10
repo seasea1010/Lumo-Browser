@@ -35,7 +35,7 @@ Chromium のフルビルドは 10 時間以上かかることがあり、GitHub 
 
 ## Google Sync について
 
-- Sync を使うには、**せあ自身の Google API キー**が必要です。
+- Sync を使うには、**提案者自身の Google API キー**が必要です。
 - キーはリポジトリには絶対に入れません。GitHub の Secrets（`GOOGLE_API_KEY` /
   `GOOGLE_DEFAULT_CLIENT_ID` / `GOOGLE_DEFAULT_CLIENT_SECRET`）に入れ、
   ビルド時にだけ `args.gn` に注入します。`args.gn.example` の該当欄は空欄のままです。
