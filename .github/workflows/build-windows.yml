@@ -1,26 +1,31 @@
-# DRAFT — UNTESTED. Do not assume this workflow runs.
+# Lumo Windows build — Helium-style iterative build.
 #
-# Lumo Windows build, Helium-style iterative build.
-# Mirrors imputnet/helium-windows (.github/workflows/build-steps.yml +
-# build-stage.yml + .github/actions/stage/index.js):
-#   * GitHub Actions kills a job after 6 hours. A Chromium full build
-#     takes 10+ hours, so the build is split into 15 sequential jobs.
-#   * build-1 starts fresh (from_artifact: false). Each later job runs
-#     only while the previous job reports finished == 'false', downloads
-#     the previous job's build-state artifact, and resumes from it.
-#   * The stage script exits 42 when the time budget expires with the
-#     build incomplete (Helium's convention) — that is NOT a failure,
-#     it just means "resume in the next job".
-#   * When a stage finishes the build, build-final packages lumo.exe
-#     and publish-release creates a GitHub Release on tag v*.
-#   * Build state is zipped (7z) and passed as an artifact. GitHub
-#     Artifacts have size/retention limits — if the state zip is too
-#     big this will fail, and sccache / a larger runner will be needed.
-#   * Google API keys are NEVER in this file. They come from Secrets
-#     (GOOGLE_API_KEY / GOOGLE_DEFAULT_CLIENT_ID /
-#     GOOGLE_DEFAULT_CLIENT_SECRET) and are injected into args.gn at
-#     build time only.
-name: Build Lumo for Windows (DRAFT)
+# GitHub Actions kills a job after 6 hours, but a Chromium full build
+# takes 10+ hours, so the build is split into 15 sequential stages
+# (build-1 .. build-15), each a call to the reusable workflow
+# build-stage.yml. Each stage runs scripts/ci/stage.py, which resumes
+# from the previous stage's build-state artifact and checkpoints the
+# whole build tree (C:/lumo-build) when its time budget expires.
+# A stage exits 42 when the budget expires (resume in the next stage);
+# exit 0 means the build finished.
+#
+# When some stage finishes, build-final downloads that stage's
+# build-state artifact, packages the portable build as
+# lumo-windows-x64.zip and uploads it as an artifact.
+#
+# NO RELEASE IS CREATED. Lumo is proprietary and must not be handed to
+# anyone else while the repository is public (see LICENSE.md). The zip
+# is only available as a workflow artifact, for seasea1010 to download.
+# The old publish-release job and the tag trigger were removed for
+# this reason; the workflow runs only on manual dispatch.
+#
+# Build profile: AVX2 only (target machine: Intel Core i5-8350U, AVX2
+# confirmed). No SSE3 build is produced. The Thorium patches build
+# thorium.exe; build-final renames it to lumo.exe in the package.
+#
+# UNVERIFIED (has never run on GitHub Actions): see scripts/ci/stage.py.
+# The first real run will almost certainly need fixes.
+name: Build Lumo for Windows
 
 on:
   workflow_dispatch:
@@ -29,659 +34,172 @@ on:
         required: false
         description: Runner image name
         default: windows-2025
-      do-release:
-        required: false
-        type: boolean
-        description: Create a release after the build is done
-        default: false
-  push:
-    tags:
-      - "v*"
 
 permissions:
   contents: read
 
-env:
-  ARTIFACT_NAME: build-artifact-x64
-  BUILD_STATE_ZIP: build-state.zip
-
 jobs:
   build-1:
-    name: Build stage 1 of 15
-    runs-on: ${{ inputs.runner || 'windows-2025' }}
-    timeout-minutes: 330
-    outputs:
-      finished: ${{ steps.stage.outputs.finished }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Run build stage
-        id: stage
-        shell: bash
-        env:
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-          GOOGLE_DEFAULT_CLIENT_ID: ${{ secrets.GOOGLE_DEFAULT_CLIENT_ID }}
-          GOOGLE_DEFAULT_CLIENT_SECRET: ${{ secrets.GOOGLE_DEFAULT_CLIENT_SECRET }}
-        run: |
-          # TODO: fetch Chromium + apply Thorium patches on stage 1,
-          # then run scripts/ci/stage.py. Exit 42 = incomplete, resume.
-          python3 scripts/ci/stage.py --chromium-src C:/lumo-build/src --out-dir out/lumo || code=$?
-          code=${code:-0}
-          if [ "$code" -eq 0 ]; then echo "finished=true" >> "$GITHUB_OUTPUT";
-          elif [ "$code" -eq 42 ]; then echo "finished=false" >> "$GITHUB_OUTPUT";
-          else echo "finished=false" >> "$GITHUB_OUTPUT"; exit "$code"; fi
-      - name: Upload build state for the next stage
-        if: steps.stage.outputs.finished == 'false'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.ARTIFACT_NAME }}
-          path: ${{ env.BUILD_STATE_ZIP }}
-          retention-days: 3
+    uses: ./.github/workflows/build-stage.yml
+    secrets: inherit
+    with:
+      stage: 1
+      from-artifact: false
+      runner: ${{ inputs.runner || 'windows-2025' }}
 
   build-2:
-    name: Build stage 2 of 15
     needs: build-1
     if: needs.build-1.outputs.finished == 'false'
-    runs-on: ${{ inputs.runner || 'windows-2025' }}
-    timeout-minutes: 330
-    outputs:
-      finished: ${{ steps.stage.outputs.finished }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Download previous build state
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ env.ARTIFACT_NAME }}
-          path: build-state
-      - name: Extract previous build state
-        shell: pwsh
-        run: 7z x build-state/${{ env.BUILD_STATE_ZIP }} -oC:\lumo-build
-      - name: Run build stage
-        id: stage
-        shell: bash
-        env:
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-          GOOGLE_DEFAULT_CLIENT_ID: ${{ secrets.GOOGLE_DEFAULT_CLIENT_ID }}
-          GOOGLE_DEFAULT_CLIENT_SECRET: ${{ secrets.GOOGLE_DEFAULT_CLIENT_SECRET }}
-        run: |
-          python3 scripts/ci/stage.py --chromium-src C:/lumo-build/src --out-dir out/lumo || code=$?
-          code=${code:-0}
-          if [ "$code" -eq 0 ]; then echo "finished=true" >> "$GITHUB_OUTPUT";
-          elif [ "$code" -eq 42 ]; then echo "finished=false" >> "$GITHUB_OUTPUT";
-          else echo "finished=false" >> "$GITHUB_OUTPUT"; exit "$code"; fi
-      - name: Upload build state for the next stage
-        if: steps.stage.outputs.finished == 'false'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.ARTIFACT_NAME }}
-          path: ${{ env.BUILD_STATE_ZIP }}
-          retention-days: 3
+    uses: ./.github/workflows/build-stage.yml
+    secrets: inherit
+    with:
+      stage: 2
+      from-artifact: true
+      artifact-name: lumo-build-state-1
+      runner: ${{ inputs.runner || 'windows-2025' }}
 
   build-3:
-    name: Build stage 3 of 15
     needs: build-2
     if: needs.build-2.outputs.finished == 'false'
-    runs-on: ${{ inputs.runner || 'windows-2025' }}
-    timeout-minutes: 330
-    outputs:
-      finished: ${{ steps.stage.outputs.finished }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Download previous build state
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ env.ARTIFACT_NAME }}
-          path: build-state
-      - name: Extract previous build state
-        shell: pwsh
-        run: 7z x build-state/${{ env.BUILD_STATE_ZIP }} -oC:\lumo-build
-      - name: Run build stage
-        id: stage
-        shell: bash
-        env:
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-          GOOGLE_DEFAULT_CLIENT_ID: ${{ secrets.GOOGLE_DEFAULT_CLIENT_ID }}
-          GOOGLE_DEFAULT_CLIENT_SECRET: ${{ secrets.GOOGLE_DEFAULT_CLIENT_SECRET }}
-        run: |
-          python3 scripts/ci/stage.py --chromium-src C:/lumo-build/src --out-dir out/lumo || code=$?
-          code=${code:-0}
-          if [ "$code" -eq 0 ]; then echo "finished=true" >> "$GITHUB_OUTPUT";
-          elif [ "$code" -eq 42 ]; then echo "finished=false" >> "$GITHUB_OUTPUT";
-          else echo "finished=false" >> "$GITHUB_OUTPUT"; exit "$code"; fi
-      - name: Upload build state for the next stage
-        if: steps.stage.outputs.finished == 'false'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.ARTIFACT_NAME }}
-          path: ${{ env.BUILD_STATE_ZIP }}
-          retention-days: 3
+    uses: ./.github/workflows/build-stage.yml
+    secrets: inherit
+    with:
+      stage: 3
+      from-artifact: true
+      artifact-name: lumo-build-state-2
+      runner: ${{ inputs.runner || 'windows-2025' }}
 
   build-4:
-    name: Build stage 4 of 15
     needs: build-3
     if: needs.build-3.outputs.finished == 'false'
-    runs-on: ${{ inputs.runner || 'windows-2025' }}
-    timeout-minutes: 330
-    outputs:
-      finished: ${{ steps.stage.outputs.finished }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Download previous build state
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ env.ARTIFACT_NAME }}
-          path: build-state
-      - name: Extract previous build state
-        shell: pwsh
-        run: 7z x build-state/${{ env.BUILD_STATE_ZIP }} -oC:\lumo-build
-      - name: Run build stage
-        id: stage
-        shell: bash
-        env:
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-          GOOGLE_DEFAULT_CLIENT_ID: ${{ secrets.GOOGLE_DEFAULT_CLIENT_ID }}
-          GOOGLE_DEFAULT_CLIENT_SECRET: ${{ secrets.GOOGLE_DEFAULT_CLIENT_SECRET }}
-        run: |
-          python3 scripts/ci/stage.py --chromium-src C:/lumo-build/src --out-dir out/lumo || code=$?
-          code=${code:-0}
-          if [ "$code" -eq 0 ]; then echo "finished=true" >> "$GITHUB_OUTPUT";
-          elif [ "$code" -eq 42 ]; then echo "finished=false" >> "$GITHUB_OUTPUT";
-          else echo "finished=false" >> "$GITHUB_OUTPUT"; exit "$code"; fi
-      - name: Upload build state for the next stage
-        if: steps.stage.outputs.finished == 'false'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.ARTIFACT_NAME }}
-          path: ${{ env.BUILD_STATE_ZIP }}
-          retention-days: 3
+    uses: ./.github/workflows/build-stage.yml
+    secrets: inherit
+    with:
+      stage: 4
+      from-artifact: true
+      artifact-name: lumo-build-state-3
+      runner: ${{ inputs.runner || 'windows-2025' }}
 
   build-5:
-    name: Build stage 5 of 15
     needs: build-4
     if: needs.build-4.outputs.finished == 'false'
-    runs-on: ${{ inputs.runner || 'windows-2025' }}
-    timeout-minutes: 330
-    outputs:
-      finished: ${{ steps.stage.outputs.finished }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Download previous build state
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ env.ARTIFACT_NAME }}
-          path: build-state
-      - name: Extract previous build state
-        shell: pwsh
-        run: 7z x build-state/${{ env.BUILD_STATE_ZIP }} -oC:\lumo-build
-      - name: Run build stage
-        id: stage
-        shell: bash
-        env:
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-          GOOGLE_DEFAULT_CLIENT_ID: ${{ secrets.GOOGLE_DEFAULT_CLIENT_ID }}
-          GOOGLE_DEFAULT_CLIENT_SECRET: ${{ secrets.GOOGLE_DEFAULT_CLIENT_SECRET }}
-        run: |
-          python3 scripts/ci/stage.py --chromium-src C:/lumo-build/src --out-dir out/lumo || code=$?
-          code=${code:-0}
-          if [ "$code" -eq 0 ]; then echo "finished=true" >> "$GITHUB_OUTPUT";
-          elif [ "$code" -eq 42 ]; then echo "finished=false" >> "$GITHUB_OUTPUT";
-          else echo "finished=false" >> "$GITHUB_OUTPUT"; exit "$code"; fi
-      - name: Upload build state for the next stage
-        if: steps.stage.outputs.finished == 'false'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.ARTIFACT_NAME }}
-          path: ${{ env.BUILD_STATE_ZIP }}
-          retention-days: 3
+    uses: ./.github/workflows/build-stage.yml
+    secrets: inherit
+    with:
+      stage: 5
+      from-artifact: true
+      artifact-name: lumo-build-state-4
+      runner: ${{ inputs.runner || 'windows-2025' }}
 
   build-6:
-    name: Build stage 6 of 15
     needs: build-5
     if: needs.build-5.outputs.finished == 'false'
-    runs-on: ${{ inputs.runner || 'windows-2025' }}
-    timeout-minutes: 330
-    outputs:
-      finished: ${{ steps.stage.outputs.finished }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Download previous build state
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ env.ARTIFACT_NAME }}
-          path: build-state
-      - name: Extract previous build state
-        shell: pwsh
-        run: 7z x build-state/${{ env.BUILD_STATE_ZIP }} -oC:\lumo-build
-      - name: Run build stage
-        id: stage
-        shell: bash
-        env:
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-          GOOGLE_DEFAULT_CLIENT_ID: ${{ secrets.GOOGLE_DEFAULT_CLIENT_ID }}
-          GOOGLE_DEFAULT_CLIENT_SECRET: ${{ secrets.GOOGLE_DEFAULT_CLIENT_SECRET }}
-        run: |
-          python3 scripts/ci/stage.py --chromium-src C:/lumo-build/src --out-dir out/lumo || code=$?
-          code=${code:-0}
-          if [ "$code" -eq 0 ]; then echo "finished=true" >> "$GITHUB_OUTPUT";
-          elif [ "$code" -eq 42 ]; then echo "finished=false" >> "$GITHUB_OUTPUT";
-          else echo "finished=false" >> "$GITHUB_OUTPUT"; exit "$code"; fi
-      - name: Upload build state for the next stage
-        if: steps.stage.outputs.finished == 'false'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.ARTIFACT_NAME }}
-          path: ${{ env.BUILD_STATE_ZIP }}
-          retention-days: 3
+    uses: ./.github/workflows/build-stage.yml
+    secrets: inherit
+    with:
+      stage: 6
+      from-artifact: true
+      artifact-name: lumo-build-state-5
+      runner: ${{ inputs.runner || 'windows-2025' }}
 
   build-7:
-    name: Build stage 7 of 15
     needs: build-6
     if: needs.build-6.outputs.finished == 'false'
-    runs-on: ${{ inputs.runner || 'windows-2025' }}
-    timeout-minutes: 330
-    outputs:
-      finished: ${{ steps.stage.outputs.finished }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Download previous build state
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ env.ARTIFACT_NAME }}
-          path: build-state
-      - name: Extract previous build state
-        shell: pwsh
-        run: 7z x build-state/${{ env.BUILD_STATE_ZIP }} -oC:\lumo-build
-      - name: Run build stage
-        id: stage
-        shell: bash
-        env:
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-          GOOGLE_DEFAULT_CLIENT_ID: ${{ secrets.GOOGLE_DEFAULT_CLIENT_ID }}
-          GOOGLE_DEFAULT_CLIENT_SECRET: ${{ secrets.GOOGLE_DEFAULT_CLIENT_SECRET }}
-        run: |
-          python3 scripts/ci/stage.py --chromium-src C:/lumo-build/src --out-dir out/lumo || code=$?
-          code=${code:-0}
-          if [ "$code" -eq 0 ]; then echo "finished=true" >> "$GITHUB_OUTPUT";
-          elif [ "$code" -eq 42 ]; then echo "finished=false" >> "$GITHUB_OUTPUT";
-          else echo "finished=false" >> "$GITHUB_OUTPUT"; exit "$code"; fi
-      - name: Upload build state for the next stage
-        if: steps.stage.outputs.finished == 'false'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.ARTIFACT_NAME }}
-          path: ${{ env.BUILD_STATE_ZIP }}
-          retention-days: 3
+    uses: ./.github/workflows/build-stage.yml
+    secrets: inherit
+    with:
+      stage: 7
+      from-artifact: true
+      artifact-name: lumo-build-state-6
+      runner: ${{ inputs.runner || 'windows-2025' }}
 
   build-8:
-    name: Build stage 8 of 15
     needs: build-7
     if: needs.build-7.outputs.finished == 'false'
-    runs-on: ${{ inputs.runner || 'windows-2025' }}
-    timeout-minutes: 330
-    outputs:
-      finished: ${{ steps.stage.outputs.finished }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Download previous build state
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ env.ARTIFACT_NAME }}
-          path: build-state
-      - name: Extract previous build state
-        shell: pwsh
-        run: 7z x build-state/${{ env.BUILD_STATE_ZIP }} -oC:\lumo-build
-      - name: Run build stage
-        id: stage
-        shell: bash
-        env:
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-          GOOGLE_DEFAULT_CLIENT_ID: ${{ secrets.GOOGLE_DEFAULT_CLIENT_ID }}
-          GOOGLE_DEFAULT_CLIENT_SECRET: ${{ secrets.GOOGLE_DEFAULT_CLIENT_SECRET }}
-        run: |
-          python3 scripts/ci/stage.py --chromium-src C:/lumo-build/src --out-dir out/lumo || code=$?
-          code=${code:-0}
-          if [ "$code" -eq 0 ]; then echo "finished=true" >> "$GITHUB_OUTPUT";
-          elif [ "$code" -eq 42 ]; then echo "finished=false" >> "$GITHUB_OUTPUT";
-          else echo "finished=false" >> "$GITHUB_OUTPUT"; exit "$code"; fi
-      - name: Upload build state for the next stage
-        if: steps.stage.outputs.finished == 'false'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.ARTIFACT_NAME }}
-          path: ${{ env.BUILD_STATE_ZIP }}
-          retention-days: 3
+    uses: ./.github/workflows/build-stage.yml
+    secrets: inherit
+    with:
+      stage: 8
+      from-artifact: true
+      artifact-name: lumo-build-state-7
+      runner: ${{ inputs.runner || 'windows-2025' }}
 
   build-9:
-    name: Build stage 9 of 15
     needs: build-8
     if: needs.build-8.outputs.finished == 'false'
-    runs-on: ${{ inputs.runner || 'windows-2025' }}
-    timeout-minutes: 330
-    outputs:
-      finished: ${{ steps.stage.outputs.finished }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Download previous build state
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ env.ARTIFACT_NAME }}
-          path: build-state
-      - name: Extract previous build state
-        shell: pwsh
-        run: 7z x build-state/${{ env.BUILD_STATE_ZIP }} -oC:\lumo-build
-      - name: Run build stage
-        id: stage
-        shell: bash
-        env:
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-          GOOGLE_DEFAULT_CLIENT_ID: ${{ secrets.GOOGLE_DEFAULT_CLIENT_ID }}
-          GOOGLE_DEFAULT_CLIENT_SECRET: ${{ secrets.GOOGLE_DEFAULT_CLIENT_SECRET }}
-        run: |
-          python3 scripts/ci/stage.py --chromium-src C:/lumo-build/src --out-dir out/lumo || code=$?
-          code=${code:-0}
-          if [ "$code" -eq 0 ]; then echo "finished=true" >> "$GITHUB_OUTPUT";
-          elif [ "$code" -eq 42 ]; then echo "finished=false" >> "$GITHUB_OUTPUT";
-          else echo "finished=false" >> "$GITHUB_OUTPUT"; exit "$code"; fi
-      - name: Upload build state for the next stage
-        if: steps.stage.outputs.finished == 'false'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.ARTIFACT_NAME }}
-          path: ${{ env.BUILD_STATE_ZIP }}
-          retention-days: 3
+    uses: ./.github/workflows/build-stage.yml
+    secrets: inherit
+    with:
+      stage: 9
+      from-artifact: true
+      artifact-name: lumo-build-state-8
+      runner: ${{ inputs.runner || 'windows-2025' }}
 
   build-10:
-    name: Build stage 10 of 15
     needs: build-9
     if: needs.build-9.outputs.finished == 'false'
-    runs-on: ${{ inputs.runner || 'windows-2025' }}
-    timeout-minutes: 330
-    outputs:
-      finished: ${{ steps.stage.outputs.finished }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Download previous build state
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ env.ARTIFACT_NAME }}
-          path: build-state
-      - name: Extract previous build state
-        shell: pwsh
-        run: 7z x build-state/${{ env.BUILD_STATE_ZIP }} -oC:\lumo-build
-      - name: Run build stage
-        id: stage
-        shell: bash
-        env:
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-          GOOGLE_DEFAULT_CLIENT_ID: ${{ secrets.GOOGLE_DEFAULT_CLIENT_ID }}
-          GOOGLE_DEFAULT_CLIENT_SECRET: ${{ secrets.GOOGLE_DEFAULT_CLIENT_SECRET }}
-        run: |
-          python3 scripts/ci/stage.py --chromium-src C:/lumo-build/src --out-dir out/lumo || code=$?
-          code=${code:-0}
-          if [ "$code" -eq 0 ]; then echo "finished=true" >> "$GITHUB_OUTPUT";
-          elif [ "$code" -eq 42 ]; then echo "finished=false" >> "$GITHUB_OUTPUT";
-          else echo "finished=false" >> "$GITHUB_OUTPUT"; exit "$code"; fi
-      - name: Upload build state for the next stage
-        if: steps.stage.outputs.finished == 'false'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.ARTIFACT_NAME }}
-          path: ${{ env.BUILD_STATE_ZIP }}
-          retention-days: 3
+    uses: ./.github/workflows/build-stage.yml
+    secrets: inherit
+    with:
+      stage: 10
+      from-artifact: true
+      artifact-name: lumo-build-state-9
+      runner: ${{ inputs.runner || 'windows-2025' }}
 
   build-11:
-    name: Build stage 11 of 15
     needs: build-10
     if: needs.build-10.outputs.finished == 'false'
-    runs-on: ${{ inputs.runner || 'windows-2025' }}
-    timeout-minutes: 330
-    outputs:
-      finished: ${{ steps.stage.outputs.finished }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Download previous build state
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ env.ARTIFACT_NAME }}
-          path: build-state
-      - name: Extract previous build state
-        shell: pwsh
-        run: 7z x build-state/${{ env.BUILD_STATE_ZIP }} -oC:\lumo-build
-      - name: Run build stage
-        id: stage
-        shell: bash
-        env:
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-          GOOGLE_DEFAULT_CLIENT_ID: ${{ secrets.GOOGLE_DEFAULT_CLIENT_ID }}
-          GOOGLE_DEFAULT_CLIENT_SECRET: ${{ secrets.GOOGLE_DEFAULT_CLIENT_SECRET }}
-        run: |
-          python3 scripts/ci/stage.py --chromium-src C:/lumo-build/src --out-dir out/lumo || code=$?
-          code=${code:-0}
-          if [ "$code" -eq 0 ]; then echo "finished=true" >> "$GITHUB_OUTPUT";
-          elif [ "$code" -eq 42 ]; then echo "finished=false" >> "$GITHUB_OUTPUT";
-          else echo "finished=false" >> "$GITHUB_OUTPUT"; exit "$code"; fi
-      - name: Upload build state for the next stage
-        if: steps.stage.outputs.finished == 'false'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.ARTIFACT_NAME }}
-          path: ${{ env.BUILD_STATE_ZIP }}
-          retention-days: 3
+    uses: ./.github/workflows/build-stage.yml
+    secrets: inherit
+    with:
+      stage: 11
+      from-artifact: true
+      artifact-name: lumo-build-state-10
+      runner: ${{ inputs.runner || 'windows-2025' }}
 
   build-12:
-    name: Build stage 12 of 15
     needs: build-11
     if: needs.build-11.outputs.finished == 'false'
-    runs-on: ${{ inputs.runner || 'windows-2025' }}
-    timeout-minutes: 330
-    outputs:
-      finished: ${{ steps.stage.outputs.finished }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Download previous build state
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ env.ARTIFACT_NAME }}
-          path: build-state
-      - name: Extract previous build state
-        shell: pwsh
-        run: 7z x build-state/${{ env.BUILD_STATE_ZIP }} -oC:\lumo-build
-      - name: Run build stage
-        id: stage
-        shell: bash
-        env:
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-          GOOGLE_DEFAULT_CLIENT_ID: ${{ secrets.GOOGLE_DEFAULT_CLIENT_ID }}
-          GOOGLE_DEFAULT_CLIENT_SECRET: ${{ secrets.GOOGLE_DEFAULT_CLIENT_SECRET }}
-        run: |
-          python3 scripts/ci/stage.py --chromium-src C:/lumo-build/src --out-dir out/lumo || code=$?
-          code=${code:-0}
-          if [ "$code" -eq 0 ]; then echo "finished=true" >> "$GITHUB_OUTPUT";
-          elif [ "$code" -eq 42 ]; then echo "finished=false" >> "$GITHUB_OUTPUT";
-          else echo "finished=false" >> "$GITHUB_OUTPUT"; exit "$code"; fi
-      - name: Upload build state for the next stage
-        if: steps.stage.outputs.finished == 'false'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.ARTIFACT_NAME }}
-          path: ${{ env.BUILD_STATE_ZIP }}
-          retention-days: 3
+    uses: ./.github/workflows/build-stage.yml
+    secrets: inherit
+    with:
+      stage: 12
+      from-artifact: true
+      artifact-name: lumo-build-state-11
+      runner: ${{ inputs.runner || 'windows-2025' }}
 
   build-13:
-    name: Build stage 13 of 15
     needs: build-12
     if: needs.build-12.outputs.finished == 'false'
-    runs-on: ${{ inputs.runner || 'windows-2025' }}
-    timeout-minutes: 330
-    outputs:
-      finished: ${{ steps.stage.outputs.finished }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Download previous build state
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ env.ARTIFACT_NAME }}
-          path: build-state
-      - name: Extract previous build state
-        shell: pwsh
-        run: 7z x build-state/${{ env.BUILD_STATE_ZIP }} -oC:\lumo-build
-      - name: Run build stage
-        id: stage
-        shell: bash
-        env:
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-          GOOGLE_DEFAULT_CLIENT_ID: ${{ secrets.GOOGLE_DEFAULT_CLIENT_ID }}
-          GOOGLE_DEFAULT_CLIENT_SECRET: ${{ secrets.GOOGLE_DEFAULT_CLIENT_SECRET }}
-        run: |
-          python3 scripts/ci/stage.py --chromium-src C:/lumo-build/src --out-dir out/lumo || code=$?
-          code=${code:-0}
-          if [ "$code" -eq 0 ]; then echo "finished=true" >> "$GITHUB_OUTPUT";
-          elif [ "$code" -eq 42 ]; then echo "finished=false" >> "$GITHUB_OUTPUT";
-          else echo "finished=false" >> "$GITHUB_OUTPUT"; exit "$code"; fi
-      - name: Upload build state for the next stage
-        if: steps.stage.outputs.finished == 'false'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.ARTIFACT_NAME }}
-          path: ${{ env.BUILD_STATE_ZIP }}
-          retention-days: 3
+    uses: ./.github/workflows/build-stage.yml
+    secrets: inherit
+    with:
+      stage: 13
+      from-artifact: true
+      artifact-name: lumo-build-state-12
+      runner: ${{ inputs.runner || 'windows-2025' }}
 
   build-14:
-    name: Build stage 14 of 15
     needs: build-13
     if: needs.build-13.outputs.finished == 'false'
-    runs-on: ${{ inputs.runner || 'windows-2025' }}
-    timeout-minutes: 330
-    outputs:
-      finished: ${{ steps.stage.outputs.finished }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Download previous build state
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ env.ARTIFACT_NAME }}
-          path: build-state
-      - name: Extract previous build state
-        shell: pwsh
-        run: 7z x build-state/${{ env.BUILD_STATE_ZIP }} -oC:\lumo-build
-      - name: Run build stage
-        id: stage
-        shell: bash
-        env:
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-          GOOGLE_DEFAULT_CLIENT_ID: ${{ secrets.GOOGLE_DEFAULT_CLIENT_ID }}
-          GOOGLE_DEFAULT_CLIENT_SECRET: ${{ secrets.GOOGLE_DEFAULT_CLIENT_SECRET }}
-        run: |
-          python3 scripts/ci/stage.py --chromium-src C:/lumo-build/src --out-dir out/lumo || code=$?
-          code=${code:-0}
-          if [ "$code" -eq 0 ]; then echo "finished=true" >> "$GITHUB_OUTPUT";
-          elif [ "$code" -eq 42 ]; then echo "finished=false" >> "$GITHUB_OUTPUT";
-          else echo "finished=false" >> "$GITHUB_OUTPUT"; exit "$code"; fi
-      - name: Upload build state for the next stage
-        if: steps.stage.outputs.finished == 'false'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.ARTIFACT_NAME }}
-          path: ${{ env.BUILD_STATE_ZIP }}
-          retention-days: 3
+    uses: ./.github/workflows/build-stage.yml
+    secrets: inherit
+    with:
+      stage: 14
+      from-artifact: true
+      artifact-name: lumo-build-state-13
+      runner: ${{ inputs.runner || 'windows-2025' }}
 
   build-15:
-    name: Build stage 15 of 15
     needs: build-14
     if: needs.build-14.outputs.finished == 'false'
-    runs-on: ${{ inputs.runner || 'windows-2025' }}
-    timeout-minutes: 330
-    outputs:
-      finished: ${{ steps.stage.outputs.finished }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Download previous build state
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ env.ARTIFACT_NAME }}
-          path: build-state
-      - name: Extract previous build state
-        shell: pwsh
-        run: 7z x build-state/${{ env.BUILD_STATE_ZIP }} -oC:\lumo-build
-      - name: Run build stage
-        id: stage
-        shell: bash
-        env:
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-          GOOGLE_DEFAULT_CLIENT_ID: ${{ secrets.GOOGLE_DEFAULT_CLIENT_ID }}
-          GOOGLE_DEFAULT_CLIENT_SECRET: ${{ secrets.GOOGLE_DEFAULT_CLIENT_SECRET }}
-        run: |
-          python3 scripts/ci/stage.py --chromium-src C:/lumo-build/src --out-dir out/lumo || code=$?
-          code=${code:-0}
-          if [ "$code" -eq 0 ]; then echo "finished=true" >> "$GITHUB_OUTPUT";
-          elif [ "$code" -eq 42 ]; then echo "finished=false" >> "$GITHUB_OUTPUT";
-          else echo "finished=false" >> "$GITHUB_OUTPUT"; exit "$code"; fi
-      - name: Upload build state for the next stage
-        if: steps.stage.outputs.finished == 'false'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.ARTIFACT_NAME }}
-          path: ${{ env.BUILD_STATE_ZIP }}
-          retention-days: 3
+    uses: ./.github/workflows/build-stage.yml
+    secrets: inherit
+    with:
+      stage: 15
+      from-artifact: true
+      artifact-name: lumo-build-state-14
+      runner: ${{ inputs.runner || 'windows-2025' }}
 
   build-final:
     name: Package Lumo
@@ -689,46 +207,111 @@ jobs:
     if: ${{ !cancelled() && !failure() }}
     runs-on: ${{ inputs.runner || 'windows-2025' }}
     timeout-minutes: 330
+    env:
+      STAGE_1_RESULT: ${{ needs.build-1.result }}
+      STAGE_1_FINISHED: ${{ needs.build-1.outputs.finished }}
+      STAGE_2_RESULT: ${{ needs.build-2.result }}
+      STAGE_2_FINISHED: ${{ needs.build-2.outputs.finished }}
+      STAGE_3_RESULT: ${{ needs.build-3.result }}
+      STAGE_3_FINISHED: ${{ needs.build-3.outputs.finished }}
+      STAGE_4_RESULT: ${{ needs.build-4.result }}
+      STAGE_4_FINISHED: ${{ needs.build-4.outputs.finished }}
+      STAGE_5_RESULT: ${{ needs.build-5.result }}
+      STAGE_5_FINISHED: ${{ needs.build-5.outputs.finished }}
+      STAGE_6_RESULT: ${{ needs.build-6.result }}
+      STAGE_6_FINISHED: ${{ needs.build-6.outputs.finished }}
+      STAGE_7_RESULT: ${{ needs.build-7.result }}
+      STAGE_7_FINISHED: ${{ needs.build-7.outputs.finished }}
+      STAGE_8_RESULT: ${{ needs.build-8.result }}
+      STAGE_8_FINISHED: ${{ needs.build-8.outputs.finished }}
+      STAGE_9_RESULT: ${{ needs.build-9.result }}
+      STAGE_9_FINISHED: ${{ needs.build-9.outputs.finished }}
+      STAGE_10_RESULT: ${{ needs.build-10.result }}
+      STAGE_10_FINISHED: ${{ needs.build-10.outputs.finished }}
+      STAGE_11_RESULT: ${{ needs.build-11.result }}
+      STAGE_11_FINISHED: ${{ needs.build-11.outputs.finished }}
+      STAGE_12_RESULT: ${{ needs.build-12.result }}
+      STAGE_12_FINISHED: ${{ needs.build-12.outputs.finished }}
+      STAGE_13_RESULT: ${{ needs.build-13.result }}
+      STAGE_13_FINISHED: ${{ needs.build-13.outputs.finished }}
+      STAGE_14_RESULT: ${{ needs.build-14.result }}
+      STAGE_14_FINISHED: ${{ needs.build-14.outputs.finished }}
+      STAGE_15_RESULT: ${{ needs.build-15.result }}
+      STAGE_15_FINISHED: ${{ needs.build-15.outputs.finished }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Find the stage that finished the build
+        id: last
+        shell: pwsh
+        run: |
+          $lastStage = 0
+          $finished = 'false'
+          foreach ($n in 15..1) {
+            $result = [System.Environment]::GetEnvironmentVariable("STAGE_${n}_RESULT")
+            if ($result -eq 'success') {
+              $lastStage = $n
+              $finished = [System.Environment]::GetEnvironmentVariable("STAGE_${n}_FINISHED")
+              break
+            }
+          }
+          if ($lastStage -eq 0) { throw 'No build stage ran successfully.' }
+          if ($finished -ne 'true') {
+            throw "Build did not finish within 15 stages (last ran stage: $lastStage). Re-run the workflow; stage.py resumes from the checkpoint."
+          }
+          "stage=$lastStage" >> $env:GITHUB_OUTPUT
+          Write-Host "Build finished in stage $lastStage; packaging its build-state artifact."
+
       - name: Download finished build state
         uses: actions/download-artifact@v4
         with:
-          name: ${{ env.ARTIFACT_NAME }}
+          name: lumo-build-state-${{ steps.last.outputs.stage }}
           path: build-state
-      - name: Package portable zip (TODO)
+
+      - name: Extract finished build state
+        shell: pwsh
+        run: 7z x build-state/build-state.zip -oC:\ -y
+
+      - name: Package portable zip
         shell: pwsh
         run: |
-          # TODO: collect out/lumo/lumo.exe + required DLLs, .pak files,
-          # locales and resources into dist/, then zip as lumo-windows-x64.zip.
-          # This step is a placeholder until the first successful build exists.
-          Write-Host 'TODO: package lumo.exe'
+          $outDir = 'C:\lumo-build\src\out\thorium'
+          $exe = Join-Path $outDir 'thorium.exe'
+          if (-not (Test-Path $exe)) { throw "Built binary not found: $exe" }
+          $dist = Join-Path $env:GITHUB_WORKSPACE 'dist'
+          if (Test-Path $dist) { Remove-Item $dist -Recurse -Force }
+          New-Item $dist -ItemType Directory | Out-Null
+          # Copy the whole output dir except build-only intermediates.
+          # robocopy exit codes 0-7 mean success (copied / extra files);
+          # 8 and above mean failure.
+          robocopy $outDir $dist /MIR `
+            /XD obj gen toolchain `
+            /XF *.ninja *.ninja_log *.ninja_deps *.lib *.exp *.ilk *.pdb `
+               *.stamp *.rsp *.o *.obj *.a *.d `
+               *mini_installer.exe
+          if ($LASTEXITCODE -ge 8) { throw "robocopy failed: $LASTEXITCODE" }
+          # Thorium's patches name the binary thorium.exe; the portable
+          # package ships it as lumo.exe. UNVERIFIED: renaming has never
+          # been tested (see scripts/ci/stage.py). The mini installer is
+          # NOT included: it installs the product as Thorium until
+          # Lumo rebranding patches exist (see PLAN.md).
+          Rename-Item (Join-Path $dist 'thorium.exe') 'lumo.exe'
+          @'
+          Lumo — pre-release portable build (AVX2, Windows x64).
+          Built from a Thorium-style Chromium fork (Chromium 156).
+          Proprietary software, Copyright (c) 2026 seasea1010.
+          All rights reserved. Do not use, copy, or redistribute.
+          See LICENSE.md in the Lumo-Browser repository.
+          '@ | Set-Content -Path (Join-Path $dist 'README-LUMO.txt') -Encoding UTF8
+          if (-not (Test-Path (Join-Path $dist 'lumo.exe'))) { throw 'lumo.exe missing after rename' }
+          if (Test-Path (Join-Path $dist 'thorium.exe')) { throw 'thorium.exe still present after rename' }
+          7z a -tzip lumo-windows-x64.zip .\dist\* -mx=3 -mtc=on
+          Get-Item lumo-windows-x64.zip | Select-Object Name, Length | Format-List
+
       - name: Upload portable package
         uses: actions/upload-artifact@v4
         with:
           name: lumo-windows-x64
           path: lumo-windows-x64.zip
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 30
-
-  publish-release:
-    name: Publish GitHub Release
-    needs: build-final
-    if: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.do-release }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-      - name: Download portable package
-        uses: actions/download-artifact@v4
-        with:
-          name: lumo-windows-x64
-          path: dist
-      - name: Create release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release create "${{ github.ref_name }}" dist/lumo-windows-x64.zip \
-            --title "Lumo ${{ github.ref_name }}" \
-            --notes "DRAFT release — built from a Thorium-style Chromium fork. See PLAN.md for known risks."
