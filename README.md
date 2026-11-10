@@ -17,7 +17,7 @@ CEF（部品だけ使う方法）ではなく、Chromium のブラウザその�
 
 ## 対象
 
-- Windows 10/11 64bit（x64）を最初に作ります。AVX2 版と SSE3 版のどちらを出すかは未定です（→ `PLAN.md`）。
+- Windows 10/11 64bit（x64）を最初に作ります。AVX2 版のみです（せあの PC は Intel Core i5-8350U、AVX2 対応確認済み。SSE3 版は作りません）。
 - ビルドは**自分の PC ではやりません**。GitHub Actions（クラウド）のサーバーでビルドします。
   せあの PC は、できあがったブラウザを動かすだけです。
 
@@ -35,7 +35,7 @@ Chromium のフルビルドは 10 時間以上かかることがあり、GitHub 
 
 ## Google Sync について
 
-- Sync を使うには、**提案者自身の Google API キー**が必要です。
+- Sync を使うには、**せあ自身の Google API キー**が必要です。
 - キーはリポジトリには絶対に入れません。GitHub の Secrets（`GOOGLE_API_KEY` /
   `GOOGLE_DEFAULT_CLIENT_ID` / `GOOGLE_DEFAULT_CLIENT_SECRET`）に入れ、
   ビルド時にだけ `args.gn` に注入します。`args.gn.example` の該当欄は空欄のままです。
@@ -78,7 +78,7 @@ CI の中で `depot_tools` + `gclient` を使って取得します。
 
 - ブラウザ名・リポジトリ名（Lumo / Lumo-Browser に決定済み）
 - ピン留めする Chromium のバージョン（Thorium の追従バージョンに合わせるか）
-- AVX2 版か SSE3 版か（せあの PC の CPU に合わせる）
+- AVX2 版のみ（せあの PC は Intel Core i5-8350U、AVX2 対応確認済み）
 - Thorium を直接フォークするか、素の Chromium + Thorium のパッチ集で作るか
 
 ## 参考にしたもの
