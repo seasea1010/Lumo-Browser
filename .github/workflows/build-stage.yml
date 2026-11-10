@@ -1,0 +1,143 @@
+# Lumo build stage (reusable workflow, Helium-style).
+#
+# One stage of the 15-stage Windows build. Mirrors
+# imputnet/helium-windows (.github/workflows/build-stage.yml +
+# .github/actions/stage/index.js), with the stage logic in
+# scripts/ci/stage.py instead of a Node action:
+#   * from_artifact=false (stage 1): start from an empty build root.
+#   * from_artifact=true (stages 2-15): download the previous stage's
+#     build-state artifact (named lumo-build-state-<prev stage>) and
+#     extract it to C:\, then resume from the recorded phase.
+#   * stage.py exits 0 when the build finishes, 42 when the time
+#     budget expires (resume in the next stage), anything else on a
+#     real failure.
+#   * The build-state artifact is uploaded after EVERY stage that ran
+#     (finished or not), named lumo-build-state-<this stage>, so
+#     build-final can download the tree from the stage that finished.
+#     Per-stage names avoid the "multiple artifacts with the same name"
+#     problem of reusing one name.
+#   * The job timeout is 330 minutes; stage.py stops work after ~4h45m
+#     so there is time left to zip and upload the checkpoint.
+#
+# UNVERIFIED (has never run on GitHub Actions): see scripts/ci/stage.py.
+name: Lumo build stage
+
+on:
+  workflow_call:
+    inputs:
+      stage:
+        description: Stage number (1-15)
+        required: true
+        type: number
+      from-artifact:
+        description: Resume from the previous stage's build-state artifact
+        required: true
+        type: boolean
+      artifact-name:
+        description: Name of the previous stage's artifact to download (empty for stage 1)
+        required: false
+        type: string
+        default: ""
+      runner:
+        description: Runner image name
+        required: false
+        type: string
+        default: windows-2025
+    outputs:
+      finished:
+        description: "true when the build finished in this stage"
+        value: ${{ jobs.build.outputs.finished }}
+      stage:
+        description: This stage's number
+        value: ${{ jobs.build.outputs.stage }}
+
+permissions:
+  contents: read
+
+env:
+  BUILD_ROOT: C:/lumo-build
+  BUILD_STATE_ZIP: build-state.zip
+  # Pinned inputs. Thorium commit 382f9a88 is the main-branch commit
+  # whose version.py declares THORIUM_VERSION = "156.0.8078.80".
+  THORIUM_COMMIT: 382f9a882a4dce4e308f1aef71dad6f648e5a081
+  CHROMIUM_TAG: 156.0.8078.80
+
+jobs:
+  build:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 330
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+      stage: ${{ inputs.stage }}
+    steps:
+      - name: Record job start
+        shell: pwsh
+        run: '"LUMO_JOB_STARTED_AT=$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())" >> $env:GITHUB_ENV'
+
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Prepare Windows build environment
+        shell: pwsh
+        run: |
+          # Long paths are required for Chromium checkouts on Windows.
+          git config --global core.longpaths true
+          if (-not (Get-Command 7z -ErrorAction SilentlyContinue)) {
+            throw '7z is not available on this runner'
+          }
+          # Chromium 156 needs the Windows 11 SDK 10.0.28000.x
+          # (Helium installs 10.0.28000.0 the same way). UNVERIFIED:
+          # the exact SDK version Chromium 156 wants has not been
+          # confirmed against the 156.0.8078.80 tag.
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Windows Kits\10\Include\10.0.28000.0\um\Windows.h")) {
+            Invoke-WebRequest 'https://go.microsoft.com/fwlink/?linkid=2370315' -OutFile "$env:RUNNER_TEMP\winsdksetup.exe"
+            $installer = Start-Process "$env:RUNNER_TEMP\winsdksetup.exe" -ArgumentList '/quiet', '/norestart', '/features', '+' -Wait -PassThru
+            if ($installer.ExitCode -notin @(0, 3010)) { throw "Windows SDK installation failed: $($installer.ExitCode)" }
+          }
+
+      - name: Download previous build state
+        if: inputs.from-artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: build-state
+
+      - name: Extract previous build state
+        if: inputs.from-artifact
+        shell: pwsh
+        run: 7z x build-state/${{ env.BUILD_STATE_ZIP }} -oC:\ -y
+
+      - name: Run build stage
+        id: stage
+        shell: bash
+        env:
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          GOOGLE_DEFAULT_CLIENT_ID: ${{ secrets.GOOGLE_DEFAULT_CLIENT_ID }}
+          GOOGLE_DEFAULT_CLIENT_SECRET: ${{ secrets.GOOGLE_DEFAULT_CLIENT_SECRET }}
+        run: |
+          set +e
+          python scripts/ci/stage.py \
+            --build-root "$BUILD_ROOT" \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --state-zip "$GITHUB_WORKSPACE/${{ env.BUILD_STATE_ZIP }}" \
+            --job-started-at "$LUMO_JOB_STARTED_AT" \
+            --profile avx2 \
+            --thorium-commit "$THORIUM_COMMIT" \
+            --chromium-tag "$CHROMIUM_TAG"
+          code=$?
+          if [ "$code" -eq 0 ]; then echo "finished=true" >> "$GITHUB_OUTPUT";
+          elif [ "$code" -eq 42 ]; then echo "finished=false" >> "$GITHUB_OUTPUT";
+          else echo "finished=false" >> "$GITHUB_OUTPUT"; exit "$code"; fi
+
+      - name: Upload build state for the next stage
+        # Uploaded whether the stage finished or not: if it finished,
+        # build-final downloads this artifact to package the tree.
+        uses: actions/upload-artifact@v4
+        with:
+          name: lumo-build-state-${{ inputs.stage }}
+          path: ${{ env.BUILD_STATE_ZIP }}
+          retention-days: 3
