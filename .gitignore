@@ -1,0 +1,33 @@
+# Lumo のビルド成果物・Chromium ソース・API キー関係はコミットしない
+build/
+out/
+src/
+third_party/
+depot_tools/
+*.pyc
+__pycache__/
+.vs/
+*.user
+*.suo
+
+# API キーや認証情報（絶対にコミットしない）
+*api_key*
+*api-keys*
+.api_keys
+.googleapikeys
+*client_secret*
+*.pem
+*.key
+
+# 参照用クローン（調査用。push する前に消すこと）
+_thorium-reference/
+_helium-reference/
+
+# ビルド中の巨大な中間ファイル
+*.obj
+*.lib
+*.exp
+*.ilk
+*.pdb
+artifacts.zip
+build-artifact-*.zip
