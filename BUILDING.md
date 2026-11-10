@@ -48,23 +48,27 @@ py -3.11 setup.py     # オーバーレイ・パッチ・翻訳を適用（--avx
 
 `setup.py` のプロファイル（`--avx2` / `--sse3` / `--sse2` / `--woa` / `--avx512`）
 と、`args.gn` の `thorium_x86_profile` は一致させる必要があります。
-Lumo では最初は AVX2 版と SSE3 版のどちらか一方に絞ります（→ `PLAN.md`）。
+Lumo は AVX2 のみに決定済みです（→ `PLAN.md`）。
 
 ## 3. GN 設定
 
 Chromium の `src` ディレクトリで：
 
 ```powershell
-gn args out/lumo
+gn args out/thorium
 ```
 
 `args.gn.example` をコピーして使います。Windows x64 Release 用で、
 Thorium の `win_args.gn`（Chromium 156 / Thorium 156.0.8078.80 時点）を元にしています。
 
 ```powershell
-copy args.gn.example out/lumo/args.gn
-gn args out/lumo --list   # 設定の確認
+copy args.gn.example out/thorium/args.gn
+gn args out/thorium --list   # 設定の確認
 ```
+
+出力先が `out/lumo` ではなく `out/thorium` なのは、Thorium の `setup.py` が
+`pak` / `thor_ver` を `out/thorium` にコピーし、mini_installer のビルドが
+出力先の `thor_ver` を参照するためです。`out/lumo` にすると動きません。
 
 ### Google API キー（Sync 用）
 
@@ -94,15 +98,21 @@ google_default_client_secret = ""
 py -3.11 build.py --expect-os win --expect-cpu x64
 ```
 
-できあがりは `out/lumo/lumo.exe` と、プロファイル名付きのミニインストーラです。
-（Thorium では `out/thorium/thorium.exe` でした。Lumo では `lumo` に置き換えます）
+できあがりは `out/thorium/thorium.exe` と、プロファイル名付きのミニインストーラです。
+Thorium のパッチがバイナリ名を `thorium.exe` にするため、そのままでは
+`lumo.exe` にはなりません。CI の build-final でポータブル版をパッケージする際に
+`thorium.exe` を `lumo.exe` にリネームします（未検証）。ミニインストーラは
+Thorium としてインストールされるため、パッケージには含めません。About ページ等の
+ブランド名も Thorium のままです。完全な Lumo へのリブランドは別途パッチが必要です
+（→ `PLAN.md`）。
 
 ## 5. GitHub Actions でのビルド
 
 `.github/workflows/build-windows.yml` を見てください。
 Helium 式の 15 段階ジョブで、6 時間制限を回避しながらビルドします。
-手動実行（`workflow_dispatch`）で、ランナーは `windows-2025`、タグ `v*` で
-Release を作ります。DRAFT・未実行です。
+手動実行（`workflow_dispatch`）のみで、ランナーは `windows-2025` です。
+Release は作りません（公開期間中に他者に渡さない方針のため）。できあがった
+ポータブル zip はワークフローの Artifact からダウンロードします。未実行・未検証です。
 
 ## 参考
 
