@@ -12,18 +12,19 @@
 ## 未決定事項
 
 1. **Thorium を直接フォークするか、素の Chromium + Thorium のパッチ集で作るか**
-   - 直接フォーク：Thorium の `get_repo.py` / `version.py` / `setup.py` / `build.py` /
-     パッチ集がそのまま使えて一番早い。ただしブランド名（thorium → lumo）の
-     置き換えと、Thorium 固有の既定値の見直しが必要。
-   - 素の Chromium + パッチ：クリーンだが、Thorium のパッチ適用順序や
-     オーバーレイの再現が大変。最初は直接フォークが現実的。
+   - 決定（2026-11-10）：**Thorium を CI でクローンして使う方式**。リポジトリに
+     Thorium をフォークとして含めるのではなく、CI の build-1 が
+     `Alex313031/thorium` をピン留めコミット（382f9a88、Thorium 156 /
+     Chromium 156.0.8078.80）でクローンし、Thorium の `get_repo.py` /
+     `version.py` / `setup.py` をそのまま実行する。ブランド名（thorium →
+     lumo）の置き換えはパッケージ時の `thorium.exe` → `lumo.exe` リネームのみで、
+     About ページ等の完全なリブランドは未対応（別途パッチが必要）。
 2. **ピン留めする Chromium のバージョン**
    - 調査時点の Thorium は 156.0.8078.80（Chromium 156）。追従するバージョンを
      リポジトリ作成時に改めて確認して固定する。
 3. **AVX2 版か SSE3 版か（あるいは両方か）**
-   - Thorium は AVX2 / AVX / SSE3 などの CPU 別ビルドを出している。
-   - せあの PC の CPU が AVX2 に対応しているか確認して決める。両方出すと
-     ビルド時間が 2 倍になる。
+   - 決定（2026-11-10）：**AVX2 のみ**。せあの PC の CPU は Intel Core i5-8350U
+     で、Intel 公式仕様で AVX2 対応を確認済み。SSE3 版は作らない。
 4. **Google API キーの取得**
    - せあ自身のキーが必要。Chromium-dev グループ参加、Google Cloud Console での
      プロジェクト作成、OAuth クライアント作成、Secrets への登録が必要。
