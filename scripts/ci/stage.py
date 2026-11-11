@@ -20,10 +20,15 @@ Pipeline (all inside the job's time budget):
      Profile is AVX2 only (target machine: Intel Core i5-8350U).
 
 Resume model (mirrors Helium's stage action):
-  * The whole build root (C:/lumo-build: depot_tools + thorium + src) is
-    zipped with 7z and uploaded as an artifact when the time budget
-    expires. The next stage downloads and extracts it and continues from
-    the phase recorded in lumo-stage-state.json.
+  * The whole build root (C:/lumo-build: Chromium src + .gclient +
+    lumo-stage-state.json) is zipped with 7z and uploaded as an artifact
+    when the time budget expires. The next stage downloads and extracts
+    it and continues from the phase recorded in lumo-stage-state.json.
+    Thorium (C:/thorium) and depot_tools (C:/depot_tools) live OUTSIDE
+    the build root as siblings: Thorium's get_repo.py rejects overlapping
+    checkout paths, and it treats the Chromium root as the parent of the
+    src dir, so thorium/depot_tools must not sit under C:/lumo-build.
+    They are re-cloned by each stage's bootstrap phase when missing.
   * Exit code 42 means "build incomplete, resume in the next stage"
     (Helium's convention). It is NOT a failure.
   * Exit code 0 means the build finished; thorium.exe was verified to
@@ -96,8 +101,8 @@ class BudgetExpired(Exception):
     """The time budget ran out; checkpoint and resume later."""
 
 
-def log(message):
-    print(message, flush=True)
+def log(message, file=sys.stdout):
+    print(message, file=file, flush=True)
 
 
 def run(cmd, cwd, env=None, timeout_at=None, graceful=False):
@@ -584,7 +589,8 @@ def main():
     parser.add_argument(
         "--build-root",
         default=r"C:/lumo-build",
-        help="Root of the build tree (depot_tools + thorium + src)",
+        help="Root of the Chromium build tree (src + .gclient + state); "
+        "Thorium and depot_tools live in sibling dirs",
     )
     parser.add_argument(
         "--repo-root",
@@ -643,8 +649,16 @@ def main():
     repo_root = Path(
         args.repo_root or os.environ.get("GITHUB_WORKSPACE", os.getcwd())
     )
-    depot_tools = build_root / "depot_tools"
-    thorium_root = build_root / "thorium"
+    # Layout (must not overlap — Thorium's get_repo.py treats the
+    # Chromium root as the parent of the src dir and refuses any
+    # checkout path that contains another one):
+    #   Chromium root: C:/lumo-build        (src + .gclient + state)
+    #   Thorium:       C:/thorium           (sibling, re-cloned per stage)
+    #   depot_tools:   C:/depot_tools       (sibling, re-cloned per stage)
+    # The checkpoint only covers the build root; bootstrap re-clones
+    # Thorium/depot_tools when they are missing.
+    depot_tools = build_root.parent / "depot_tools"
+    thorium_root = build_root.parent / "thorium"
     chromium_src = build_root / "src"
 
     env = os.environ.copy()
@@ -663,6 +677,23 @@ def main():
         "chromium_src": chromium_src,
         "env": env,
     }
+
+    # Fail fast on overlapping checkout paths instead of letting
+    # get_repo.py reject them after cloning (first-run failure).
+    named_paths = (
+        ("Chromium root", chromium_src.parent),
+        ("Thorium", thorium_root),
+        ("depot_tools", depot_tools),
+    )
+    for i, (left_name, left_path) in enumerate(named_paths):
+        for right_name, right_path in named_paths[i + 1:]:
+            if left_path.is_relative_to(right_path) or right_path.is_relative_to(
+                left_path
+            ):
+                raise StageError(
+                    f"checkout paths must not overlap: {left_name}={left_path}, "
+                    f"{right_name}={right_path}"
+                )
 
     log(f"Lumo build stage: build root {build_root}")
     log(f"Thorium commit: {args.thorium_commit}")
