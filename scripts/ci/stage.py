@@ -43,6 +43,9 @@ UNVERIFIED (has never run on GitHub Actions):
     tag, gn args, ninja edge cases).
   * The build-state zip can be tens of GB. GitHub Artifacts may refuse
     it, and zipping/uploading may eat the time reserve.
+  * GitHub-hosted Windows runners start with only ~29 GiB free; stage.py
+    removes unused preinstalled toolchains (Android SDK, Java, Haskell)
+    to make room, but the full checkout + build may still not fit.
   * Renaming thorium.exe to lumo.exe at packaging time is assumed to
     work for a portable build; it has never been tested.
   * Thorium's own branding (About page, installer product name, etc.)
@@ -300,6 +303,75 @@ def chromium_checkout_complete(chromium_src, thorium_root):
     return all((chromium_src / rel / ".git").exists() for rel in nested)
 
 
+def depot_tools_initialized(depot_tools):
+    return (depot_tools / "python3_bin_reldir.txt").is_file()
+
+
+def initialize_depot_tools(depot_tools, env, deadline):
+    """Bootstrap depot_tools' bundled Python (gclient/update_depot_tools).
+
+    A fresh git clone of depot_tools is NOT initialized: fetch.bat fails
+    with 'python3_bin_reldir.txt not found' until gclient or
+    update_depot_tools has run once. Thorium's get_repo.py never does
+    this itself — it just clones (or reuses) and runs fetch.bat.
+    """
+    if depot_tools_initialized(depot_tools):
+        log("depot_tools already initialized; skipping bootstrap.")
+        return
+    log("\nInitializing depot_tools (first run bootstraps its Python)...")
+    if os.name == "nt":
+        init = depot_tools / "update_depot_tools.bat"
+        if not init.is_file():
+            raise StageError(f"update_depot_tools.bat not found: {init}")
+        cmd = [str(init)]
+    else:
+        cmd = python_script_tool(depot_tools, "gclient") + ["--version"]
+    run_checked(cmd, depot_tools, env=env, timeout_at=deadline)
+    if not depot_tools_initialized(depot_tools):
+        raise StageError(
+            "depot_tools still not initialized after bootstrap "
+            "(python3_bin_reldir.txt missing)"
+        )
+    log("depot_tools initialized.")
+
+
+def free_disk_space(build_root):
+    """Remove large preinstalled toolchains the Chromium build does not need.
+
+    GitHub-hosted Windows runners start with only ~29 GiB free, but a
+    Chromium checkout + build needs far more. Remove the biggest safe
+    items (Android SDK, Java, Haskell) when present. Nothing the build
+    uses (VS toolchain, Windows SDK, Python, Node, git, 7z) is touched.
+    """
+    if os.name != "nt":
+        return
+    before = disk_free_gb(build_root)
+    candidates = []
+    for var in ("ANDROID_HOME", "ANDROID_SDK_ROOT", "JAVA_HOME",
+                "JAVA_HOME_8_X64", "JAVA_HOME_11_X64", "JAVA_HOME_17_X64",
+                "JAVA_HOME_21_X64", "GHCUP_INSTALL_BASE_PREFIX"):
+        value = os.environ.get(var)
+        if value:
+            candidates.append(Path(value))
+    candidates.extend([
+        Path(r"C:\Android\android-sdk"),
+        Path(r"C:\Program Files\Java"),
+        Path(r"C:\ghcup"),
+        Path(r"C:\Program Files\Haskell Platform"),
+    ])
+    seen = set()
+    for path in candidates:
+        if path in seen:
+            continue
+        seen.add(path)
+        if path.is_dir():
+            log(f"Removing unused preinstalled toolchain: {path}")
+            shutil.rmtree(path, ignore_errors=True)
+    after = disk_free_gb(build_root)
+    if after >= 0 and before >= 0:
+        log(f"Free disk: {before:.0f} GiB -> {after:.0f} GiB after cleanup.")
+
+
 def phase_bootstrap(args, ctx, deadline):
     """Clone depot_tools + Thorium, fetch Chromium (get_repo.py)."""
     build_root = ctx["build_root"]
@@ -313,6 +385,10 @@ def phase_bootstrap(args, ctx, deadline):
         git_clone(DEPOT_TOOLS_REPO, depot_tools)
     else:
         log(f"\nUsing existing depot_tools: {depot_tools}")
+    # A fresh clone is not initialized: fetch.bat needs the bundled
+    # Python (python3_bin_reldir.txt), which only appears after gclient
+    # / update_depot_tools runs once. get_repo.py does not do this.
+    initialize_depot_tools(depot_tools, env, deadline)
 
     if not thorium_root.is_dir():
         log(f"\nCloning Thorium into {thorium_root}")
@@ -705,7 +781,9 @@ def main():
         log(f"Free disk:       {free_gb:.0f} GiB")
         if free_gb < 100:
             log("WARNING: less than 100 GiB free; a Chromium checkout "
-                "plus build outputs may not fit (see PLAN.md).")
+                "plus build outputs may not fit (see PLAN.md). "
+                "Removing unused preinstalled toolchains to make room.")
+            free_disk_space(build_root)
     if os.name == "nt":
         # The child ninja process gets CTRL_BREAK on timeout; make sure
         # this parent ignores console Ctrl-C so it survives to
