@@ -307,6 +307,21 @@ def depot_tools_initialized(depot_tools):
     return (depot_tools / "python3_bin_reldir.txt").is_file()
 
 
+def _init_env(env):
+    """Env for the depot_tools bootstrap.
+
+    update_depot_tools.bat exits immediately (doing nothing, exit 0)
+    when DEPOT_TOOLS_UPDATE=0 — see its line
+    `IF "%DEPOT_TOOLS_UPDATE%" == "0" GOTO :EOF` — so the variable
+    stage.py sets for the rest of the build must be unset here, or the
+    bootstrap silently does nothing and python3_bin_reldir.txt never
+    appears (this killed run #4).
+    """
+    init_env = dict(env)
+    init_env.pop("DEPOT_TOOLS_UPDATE", None)
+    return init_env
+
+
 def initialize_depot_tools(depot_tools, env, deadline):
     """Bootstrap depot_tools' bundled Python (gclient/update_depot_tools).
 
@@ -326,7 +341,7 @@ def initialize_depot_tools(depot_tools, env, deadline):
         cmd = [str(init)]
     else:
         cmd = python_script_tool(depot_tools, "gclient") + ["--version"]
-    run_checked(cmd, depot_tools, env=env, timeout_at=deadline)
+    run_checked(cmd, depot_tools, env=_init_env(env), timeout_at=deadline)
     if not depot_tools_initialized(depot_tools):
         raise StageError(
             "depot_tools still not initialized after bootstrap "
