@@ -63,7 +63,7 @@ import signal
 import subprocess
 import sys
 import time
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 # Helium's convention: exit code 42 means "build incomplete, resume later".
 EXIT_INCOMPLETE = 42
@@ -335,38 +335,68 @@ def initialize_depot_tools(depot_tools, env, deadline):
     log("depot_tools initialized.")
 
 
+# Directories that may be deleted to free disk on a GitHub-hosted
+# Windows runner. EXACT paths only — never environment variables, never
+# a drive root, never anything else. A previous version built the list
+# from env vars and one resolved to C:\ itself, deleting Git and the
+# runner's node.exe and killing run #3. The allowlist + _safe_to_delete
+# guard below exist so that can never happen again.
+DELETABLE_TOOLCHAINS = (
+    r"C:\Android\android-sdk",
+    r"C:\ghcup",
+    r"C:\Program Files\Java",
+    r"C:\Program Files\Haskell Platform",
+)
+DELETABLE_JDK_ROOT = r"C:\hostedtoolcache\windows\Java_Temurin-Hotspot_jdk"
+
+
+def _safe_to_delete(path):
+    r"""True only for paths inside the deletable-toolchain allowlist.
+
+    Deliberately strict: a drive root, a top-level directory, and
+    anything outside the allowlist is refused — including Git
+    (C:\Program Files\Git), the runner (C:\actions-runner), the
+    Windows SDK, Python, the build tree, and the repo checkout.
+    """
+    p = PureWindowsPath(path)
+    for base in DELETABLE_TOOLCHAINS:
+        b = PureWindowsPath(base)
+        if p == b or p.is_relative_to(b):
+            return True
+    jdk_root = PureWindowsPath(DELETABLE_JDK_ROOT)
+    if p != jdk_root and p.is_relative_to(jdk_root):
+        return True
+    return False
+
+
 def free_disk_space(build_root):
     """Remove large preinstalled toolchains the Chromium build does not need.
 
-    GitHub-hosted Windows runners start with only ~29 GiB free, but a
-    Chromium checkout + build needs far more. Remove the biggest safe
-    items (Android SDK, Java, Haskell) when present. Nothing the build
+    GitHub-hosted Windows runners start with only ~28 GiB free, but a
+    Chromium checkout + build needs far more. Only the allowlisted
+    toolchain dirs (Android SDK, Temurin JDKs, Haskell, Java) are ever
+    removed; _safe_to_delete refuses everything else. Nothing the build
     uses (VS toolchain, Windows SDK, Python, Node, git, 7z) is touched.
     """
     if os.name != "nt":
         return
     before = disk_free_gb(build_root)
-    candidates = []
-    for var in ("ANDROID_HOME", "ANDROID_SDK_ROOT", "JAVA_HOME",
-                "JAVA_HOME_8_X64", "JAVA_HOME_11_X64", "JAVA_HOME_17_X64",
-                "JAVA_HOME_21_X64", "GHCUP_INSTALL_BASE_PREFIX"):
-        value = os.environ.get(var)
-        if value:
-            candidates.append(Path(value))
-    candidates.extend([
-        Path(r"C:\Android\android-sdk"),
-        Path(r"C:\Program Files\Java"),
-        Path(r"C:\ghcup"),
-        Path(r"C:\Program Files\Haskell Platform"),
-    ])
+    candidates = [Path(p) for p in DELETABLE_TOOLCHAINS]
+    jdk_root = Path(DELETABLE_JDK_ROOT)
+    if jdk_root.is_dir():
+        candidates.extend(p for p in jdk_root.iterdir() if p.is_dir())
     seen = set()
     for path in candidates:
         if path in seen:
             continue
         seen.add(path)
-        if path.is_dir():
-            log(f"Removing unused preinstalled toolchain: {path}")
-            shutil.rmtree(path, ignore_errors=True)
+        if not path.is_dir():
+            continue
+        if not _safe_to_delete(path):
+            log(f"Refusing to delete (not in allowlist): {path}")
+            continue
+        log(f"Removing unused preinstalled toolchain: {path}")
+        shutil.rmtree(path, ignore_errors=True)
     after = disk_free_gb(build_root)
     if after >= 0 and before >= 0:
         log(f"Free disk: {before:.0f} GiB -> {after:.0f} GiB after cleanup.")
