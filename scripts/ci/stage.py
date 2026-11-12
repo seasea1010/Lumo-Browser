@@ -48,9 +48,13 @@ UNVERIFIED (has never run on GitHub Actions):
   * GitHub-hosted Windows runners start with only ~29 GiB free (31 GiB
     after the run #5 cleanup). The checkout is shallow now (~21 GiB,
     verified 2026-11-11/12), but checkout + build outputs still need
-    ~45-55 GiB, so stage.py also removes .NET, LLVM, the VS package
-    cache and unused hostedtoolcache runtimes. Whether that closes the
-    remaining 14-24 GiB gap is only proven by run #6's log.
+    ~45-55 GiB. Run #6 (with .NET, LLVM, the VS package cache and
+    unused hostedtoolcache runtimes also removed) still filled the
+    disk — so completely that the runner crashed and GitHub kept no
+    job log, leaving the cleanup's effect unverified. Run #7 adds old
+    Windows SDK versions, preinstalled servers/Perl and a docker prune
+    to the cleanup, plus a disk watchdog that logs the drain and
+    aborts at 3 GiB free so the log survives either way.
   * Renaming thorium.exe to lumo.exe at packaging time is assumed to
     work for a portable build; it has never been tested.
   * Thorium's own branding (About page, installer product name, etc.)
@@ -67,12 +71,33 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path, PureWindowsPath
 
 # Helium's convention: exit code 42 means "build incomplete, resume later".
 EXIT_INCOMPLETE = 42
 EXIT_FAILURE = 1
+# Exit code 44: the disk watchdog aborted the stage before the disk
+# filled completely (see _disk_watchdog). A real failure for the job,
+# but one that leaves the runner — and this log — alive.
+EXIT_DISK_ABORT = 44
+
+# Disk watchdog tuning. Run #6 filled the disk so completely that the
+# Actions runner itself crashed writing its own diagnostic log, and
+# GitHub kept no job log at all: whether the cleanup freed anything,
+# and where the disk went, is unknowable for that run. The watchdog
+# polls free space and aborts while DISK_ABORT_FREE_GB still remain,
+# so the job ends normally and the log survives with the drain curve
+# and the largest directories recorded.
+DISK_WATCH_INTERVAL_SECONDS = 30
+DISK_ABORT_FREE_GB = 3.0
+
+# Set by main(): log() also appends to this file (build root
+# stage.log, which rides along in the checkpoint zip), and the
+# watchdog reads the current phase from _CURRENT_PHASE.
+_LOG_FILE = None
+_CURRENT_PHASE = {"phase": "startup"}
 
 # Pinned inputs. Thorium commit 382f9a88 is the main-branch commit whose
 # version.py declares THORIUM_VERSION = "156.0.8078.80" (verified locally
@@ -111,6 +136,12 @@ class BudgetExpired(Exception):
 
 def log(message, file=sys.stdout):
     print(message, file=file, flush=True)
+    if file is sys.stdout and _LOG_FILE is not None:
+        try:
+            _LOG_FILE.write(str(message) + "\n")
+            _LOG_FILE.flush()
+        except (OSError, ValueError):
+            pass
 
 
 def run(cmd, cwd, env=None, timeout_at=None, graceful=False):
@@ -209,6 +240,91 @@ def disk_free_gb(path):
         return shutil.disk_usage(path).free / (1024 ** 3)
     except OSError:
         return -1.0
+
+
+def _largest_subdirs(root, limit=8):
+    """Best-effort (size GiB, name) of the largest entries under root.
+
+    Bounded walk (file-count cap) so the watchdog's dying message does
+    not itself take forever on a tens-of-GB tree.
+    """
+    sizes = []
+    try:
+        entries = list(os.scandir(root))
+    except OSError:
+        return sizes
+    for entry in entries:
+        total = 0
+        try:
+            if entry.is_file(follow_symlinks=False):
+                total = entry.stat(follow_symlinks=False).st_size
+            elif entry.is_dir(follow_symlinks=False):
+                count = 0
+                capped = False
+                for dirpath, _dirnames, filenames in os.walk(entry.path):
+                    for name in filenames:
+                        try:
+                            total += os.path.getsize(
+                                os.path.join(dirpath, name)
+                            )
+                        except OSError:
+                            pass
+                        count += 1
+                        if count > 300000:
+                            capped = True
+                            break
+                    if capped:
+                        break
+        except OSError:
+            continue
+        sizes.append((total / (1024 ** 3), entry.name))
+    sizes.sort(reverse=True)
+    return sizes[:limit]
+
+
+def _disk_watchdog(build_root):
+    """Log the free-disk drain; abort before the disk hits zero.
+
+    GitHub only keeps a job's log when the job ends with the runner
+    alive. Run #6's runner died of a full disk and the log was lost,
+    so this thread trades a doomed build for a diagnosable one: at
+    DISK_ABORT_FREE_GB it records the phase and the largest build-root
+    directories, then exits with EXIT_DISK_ABORT while the runner can
+    still upload the log.
+    """
+    last_logged = None
+    while True:
+        time.sleep(DISK_WATCH_INTERVAL_SECONDS)
+        free = disk_free_gb(build_root)
+        if free < 0:
+            continue
+        phase = _CURRENT_PHASE["phase"]
+        if last_logged is None or abs(free - last_logged) >= 0.5:
+            log(f"[disk-watch] free {free:.1f} GiB (phase: {phase})")
+            last_logged = free
+        if free < DISK_ABORT_FREE_GB:
+            log(
+                f"error: free disk dropped to {free:.1f} GiB "
+                f"(phase: {phase}); aborting before the disk fills "
+                "completely so the runner survives and this log is "
+                "preserved (run #6 lost its log to a runner crash)."
+            )
+            log("Largest directories under the build root:")
+            for size_gb, name in _largest_subdirs(build_root):
+                log(f"  {size_gb:6.1f} GiB  {name}")
+            sys.stdout.flush()
+            os._exit(EXIT_DISK_ABORT)
+
+
+def start_disk_watchdog(build_root):
+    thread = threading.Thread(
+        target=_disk_watchdog,
+        args=(build_root,),
+        daemon=True,
+        name="disk-watchdog",
+    )
+    thread.start()
+    return thread
 
 
 def ninja_jobs():
@@ -372,6 +488,13 @@ DELETABLE_TOOLCHAINS = (
     r"C:\Program Files\dotnet",
     r"C:\Program Files\LLVM",
     r"C:\ProgramData\Microsoft\VisualStudio\Packages",
+    # Added for run #7 (run #6 still filled the disk and the runner
+    # crashed before keeping any log). Preinstalled servers and Perl
+    # the Chromium build never uses.
+    r"C:\Program Files\MongoDB",
+    r"C:\Program Files\MySQL",
+    r"C:\Program Files\Microsoft SQL Server",
+    r"C:\Strawberry",
 )
 DELETABLE_JDK_ROOT = r"C:\hostedtoolcache\windows\Java_Temurin-Hotspot_jdk"
 
@@ -381,6 +504,15 @@ DELETABLE_JDK_ROOT = r"C:\hostedtoolcache\windows\Java_Temurin-Hotspot_jdk"
 # either in use or handled above.
 HOSTEDTOOLCACHE_ROOT = r"C:\hostedtoolcache\windows"
 DELETABLE_HOSTEDTOOLCACHE_NAMES = ("go", "ruby", "codeql", "pypy")
+
+# Old Windows SDK versions under C:\Program Files (x86)\Windows
+# Kits\10. The build uses exactly one SDK version — the one
+# build-stage.yml installs (10.0.28000.0) — so every OTHER version
+# directory under Include/Lib/bin/References is deletable. The kept
+# version and the Kits root itself are never touched.
+KEEP_WINDOWS_SDK_VERSION = "10.0.28000.0"
+WINDOWS_KITS_SUBDIRS = ("Include", "Lib", "bin", "References")
+WINDOWS_KITS_ROOT = r"C:\Program Files (x86)\Windows Kits\10"
 
 
 def _safe_to_delete(path):
@@ -403,6 +535,15 @@ def _safe_to_delete(path):
     if p.is_relative_to(cache_root):
         rel = p.relative_to(cache_root)
         if rel.parts and rel.parts[0].lower() in DELETABLE_HOSTEDTOOLCACHE_NAMES:
+            return True
+    kits_root = PureWindowsPath(WINDOWS_KITS_ROOT)
+    if p.is_relative_to(kits_root):
+        rel = p.relative_to(kits_root)
+        if (
+            len(rel.parts) >= 2
+            and rel.parts[0] in WINDOWS_KITS_SUBDIRS
+            and rel.parts[1].lower() != KEEP_WINDOWS_SDK_VERSION.lower()
+        ):
             return True
     return False
 
@@ -433,6 +574,16 @@ def free_disk_space(build_root):
             if p.is_dir()
             and p.name.lower() in DELETABLE_HOSTEDTOOLCACHE_NAMES
         )
+    kits_root = Path(WINDOWS_KITS_ROOT)
+    for sub in WINDOWS_KITS_SUBDIRS:
+        sub_dir = kits_root / sub
+        if sub_dir.is_dir():
+            candidates.extend(
+                p
+                for p in sub_dir.iterdir()
+                if p.is_dir()
+                and p.name.lower() != KEEP_WINDOWS_SDK_VERSION.lower()
+            )
     seen = set()
     for path in candidates:
         if path in seen:
@@ -449,6 +600,21 @@ def free_disk_space(build_root):
         item_after = disk_free_gb(build_root)
         if item_before >= 0 and item_after >= 0:
             log(f"  Freed ~{item_after - item_before:.1f} GiB: {path}")
+    docker = shutil.which("docker")
+    if docker:
+        item_before = disk_free_gb(build_root)
+        log("Pruning Docker images/containers (docker system prune -af)...")
+        try:
+            subprocess.run(
+                [docker, "system", "prune", "-af"],
+                capture_output=True,
+                timeout=600,
+            )
+        except (OSError, subprocess.SubprocessError) as error:
+            log(f"  docker prune failed (ignored): {error}")
+        item_after = disk_free_gb(build_root)
+        if item_before >= 0 and item_after > item_before:
+            log(f"  Freed ~{item_after - item_before:.1f} GiB: docker prune")
     after = disk_free_gb(build_root)
     if after >= 0 and before >= 0:
         log(f"Free disk: {before:.0f} GiB -> {after:.0f} GiB after cleanup.")
@@ -814,6 +980,12 @@ def checkpoint(args, ctx):
     zip_path = Path(args.state_zip)
     if zip_path.is_file():
         zip_path.unlink()
+    # Quarantined conflicting checkouts only waste disk (the zip
+    # excludes them anyway); drop them before measuring/zipping.
+    bad_scm = build_root / "_bad_scm"
+    if bad_scm.is_dir():
+        log(f"Removing quarantined conflicting checkouts: {bad_scm}")
+        shutil.rmtree(bad_scm, ignore_errors=True)
     seven_zip = find_executable("7z")
     log(f"\nCheckpointing build root to {zip_path} (7z, -mx=3; "
         f"this can take a while for a tens-of-GB tree)...")
@@ -906,6 +1078,15 @@ def main():
 
     build_root = Path(args.build_root).expanduser()
     build_root.mkdir(parents=True, exist_ok=True)
+    # Mirror the log into the build root so it rides along in the
+    # checkpoint zip even when a later stage is where things fail.
+    global _LOG_FILE
+    try:
+        _LOG_FILE = open(
+            build_root / "stage.log", "a", encoding="utf-8"
+        )
+    except OSError:
+        _LOG_FILE = None
     repo_root = Path(
         args.repo_root or os.environ.get("GITHUB_WORKSPACE", os.getcwd())
     )
@@ -978,6 +1159,10 @@ def main():
         except (OSError, ValueError):
             pass
 
+    # From here on, watch the disk: log its drain and abort before it
+    # hits zero (run #6 lost its whole job log to a runner crash).
+    start_disk_watchdog(build_root)
+
     state = read_state(build_root)
     log(f"Resuming from phase: {state['phase']}")
 
@@ -991,10 +1176,14 @@ def main():
     try:
         index = PHASES.index(state["phase"])
         for phase in PHASES[index:-1]:
+            _CURRENT_PHASE["phase"] = phase
             phase_fns[phase](args, ctx, deadline)
             state = {"phase": PHASES[PHASES.index(phase) + 1]}
             write_state(build_root, state)
             log(f"Phase {phase} done; next phase: {state['phase']}")
+            free_now = disk_free_gb(build_root)
+            if free_now >= 0:
+                log(f"Free disk: {free_now:.0f} GiB")
     except BudgetExpired:
         write_state(build_root, state)
         log("\nBudget expired: checkpointing and exiting 42 "
