@@ -8,8 +8,10 @@ Pipeline (all inside the job's time budget):
      Thorium's get_repo.py to fetch Chromium (fetch + gclient sync +
      runhooks). A partial fetch is resumed by the next stage via
      get_repo.py --recover-incomplete.
-  2. version   -- Thorium's version.py: check out the pinned Chromium tag
-     (156.0.8078.80) and gclient sync.
+  2. version   -- check out the pinned Chromium tag (156.0.8078.80)
+     keeping the checkout shallow (explicit tag fetch + gclient sync
+     --no-history). Thorium's version.py is not used: its sync is full
+     history with --with_branch_heads --with_tags.
   3. setup     -- Thorium's setup.py --avx2: copy overlays, apply the
      Thorium patch series, GRD/XTB rebase.
   4. gn        -- write out/thorium/args.gn from args.gn.example, injecting
@@ -43,9 +45,12 @@ UNVERIFIED (has never run on GitHub Actions):
     tag, gn args, ninja edge cases).
   * The build-state zip can be tens of GB. GitHub Artifacts may refuse
     it, and zipping/uploading may eat the time reserve.
-  * GitHub-hosted Windows runners start with only ~29 GiB free; stage.py
-    removes unused preinstalled toolchains (Android SDK, Java, Haskell)
-    to make room, but the full checkout + build may still not fit.
+  * GitHub-hosted Windows runners start with only ~29 GiB free (31 GiB
+    after the run #5 cleanup). The checkout is shallow now (~21 GiB,
+    verified 2026-11-11/12), but checkout + build outputs still need
+    ~45-55 GiB, so stage.py also removes .NET, LLVM, the VS package
+    cache and unused hostedtoolcache runtimes. Whether that closes the
+    remaining 14-24 GiB gap is only proven by run #6's log.
   * Renaming thorium.exe to lumo.exe at packaging time is assumed to
     work for a portable build; it has never been tested.
   * Thorium's own branding (About page, installer product name, etc.)
@@ -361,8 +366,21 @@ DELETABLE_TOOLCHAINS = (
     r"C:\ghcup",
     r"C:\Program Files\Java",
     r"C:\Program Files\Haskell Platform",
+    # Added for run #6 (run #5 died on disk: 31 GiB free vs ~45-55 GiB
+    # needed). The Chromium build uses MSVC + its own CIPD clang, never
+    # .NET, the preinstalled LLVM, or the VS installer package cache.
+    r"C:\Program Files\dotnet",
+    r"C:\Program Files\LLVM",
+    r"C:\ProgramData\Microsoft\VisualStudio\Packages",
 )
 DELETABLE_JDK_ROOT = r"C:\hostedtoolcache\windows\Java_Temurin-Hotspot_jdk"
+
+# Hostedtoolcache runtimes the build never uses, by tool name under
+# C:\hostedtoolcache\windows. Deliberately NOT Python (setup-python's
+# interpreter runs this script), NOT node, and NOT any Java: those are
+# either in use or handled above.
+HOSTEDTOOLCACHE_ROOT = r"C:\hostedtoolcache\windows"
+DELETABLE_HOSTEDTOOLCACHE_NAMES = ("go", "ruby", "codeql", "pypy")
 
 
 def _safe_to_delete(path):
@@ -381,6 +399,11 @@ def _safe_to_delete(path):
     jdk_root = PureWindowsPath(DELETABLE_JDK_ROOT)
     if p != jdk_root and p.is_relative_to(jdk_root):
         return True
+    cache_root = PureWindowsPath(HOSTEDTOOLCACHE_ROOT)
+    if p.is_relative_to(cache_root):
+        rel = p.relative_to(cache_root)
+        if rel.parts and rel.parts[0].lower() in DELETABLE_HOSTEDTOOLCACHE_NAMES:
+            return True
     return False
 
 
@@ -389,9 +412,11 @@ def free_disk_space(build_root):
 
     GitHub-hosted Windows runners start with only ~28 GiB free, but a
     Chromium checkout + build needs far more. Only the allowlisted
-    toolchain dirs (Android SDK, Temurin JDKs, Haskell, Java) are ever
-    removed; _safe_to_delete refuses everything else. Nothing the build
-    uses (VS toolchain, Windows SDK, Python, Node, git, 7z) is touched.
+    toolchain dirs (Android SDK, Temurin JDKs, Haskell, Java, .NET,
+    preinstalled LLVM, the VS installer package cache, and unused
+    hostedtoolcache runtimes) are ever removed; _safe_to_delete refuses
+    everything else. Nothing the build uses (VS toolchain, Windows SDK,
+    Python, Node, git, 7z) is touched.
     """
     if os.name != "nt":
         return
@@ -400,6 +425,14 @@ def free_disk_space(build_root):
     jdk_root = Path(DELETABLE_JDK_ROOT)
     if jdk_root.is_dir():
         candidates.extend(p for p in jdk_root.iterdir() if p.is_dir())
+    cache_root = Path(HOSTEDTOOLCACHE_ROOT)
+    if cache_root.is_dir():
+        candidates.extend(
+            p
+            for p in cache_root.iterdir()
+            if p.is_dir()
+            and p.name.lower() in DELETABLE_HOSTEDTOOLCACHE_NAMES
+        )
     seen = set()
     for path in candidates:
         if path in seen:
@@ -410,8 +443,12 @@ def free_disk_space(build_root):
         if not _safe_to_delete(path):
             log(f"Refusing to delete (not in allowlist): {path}")
             continue
+        item_before = disk_free_gb(build_root)
         log(f"Removing unused preinstalled toolchain: {path}")
         shutil.rmtree(path, ignore_errors=True)
+        item_after = disk_free_gb(build_root)
+        if item_before >= 0 and item_after >= 0:
+            log(f"  Freed ~{item_after - item_before:.1f} GiB: {path}")
     after = disk_free_gb(build_root)
     if after >= 0 and before >= 0:
         log(f"Free disk: {before:.0f} GiB -> {after:.0f} GiB after cleanup.")
@@ -493,13 +530,17 @@ def phase_bootstrap(args, ctx, deadline):
             log("Fetching Chromium (this downloads tens of GB and can "
                 "take hours; it is resumed by the next stage if the "
                 "budget runs out).")
-            # NOTE: no --no-history: version.py needs the full tag
-            # history to check out tags/156.0.8078.80.
+            # Shallow fetch (verified on Muse's VM 2026-11-11/12): the
+            # full fetch needed ~88 GiB and killed run #5; --no-history
+            # brings the checkout to ~21 GiB. The pinned tag is NOT in
+            # a shallow fetch (fetch.py adds no tag refspec), so
+            # phase_version fetches it explicitly before checkout.
             run_checked(
                 [
                     sys.executable,
                     str(thorium_root / "get_repo.py"),
                     "--yes",
+                    "--no-history",
                     f"--chromium-src={chromium_src}",
                     f"--thorium-root={thorium_root}",
                     f"--depot-tools={depot_tools}",
@@ -511,18 +552,113 @@ def phase_bootstrap(args, ctx, deadline):
     log("\nBootstrap phase complete.")
 
 
+def checkout_pinned_tag(git, chromium_src, tag, env, timeout_at=None):
+    """Fetch the pinned tag into a shallow checkout and check it out.
+
+    A --no-history fetch contains no tags (fetch.py adds no tag refspec
+    for shallow fetches), so the tag must be fetched explicitly first.
+    Verified on Muse's VM 2026-11-11/12:
+    `git fetch --depth 1 origin tag <tag>` + `git checkout -f tags/<tag>`.
+    The detach mirrors Thorium's chromium_sync.prepare_git_checkout: it
+    keeps gclient sync from rebasing a named branch onto a DEPS pin.
+    """
+    run_checked(
+        [git, "fetch", "--depth", "1", "origin", "tag", tag],
+        chromium_src,
+        env=env,
+        timeout_at=timeout_at,
+    )
+    run_checked(
+        [git, "checkout", "--detach", "--force", "--quiet", "HEAD"],
+        chromium_src,
+        env=env,
+        timeout_at=timeout_at,
+    )
+    run_checked(
+        [git, "checkout", "-f", f"tags/{tag}"],
+        chromium_src,
+        env=env,
+        timeout_at=timeout_at,
+    )
+    run_checked(
+        [git, "clean", "-ffd"],
+        chromium_src,
+        env=env,
+        timeout_at=timeout_at,
+    )
+
+
 def phase_version(args, ctx, deadline):
-    """Thorium's version.py: pin Chromium to the Thorium tag."""
-    log(f"\nChecking out Chromium tag {args.chromium_tag} (version.py).")
+    """Pin Chromium to the Thorium tag, keeping the checkout shallow.
+
+    Mirrors Thorium's version.py step by step (tag checkout,
+    prepare_dependencies, gclient sync, runhooks) but with
+    --no-history: version.py itself runs a full-history sync with
+    --with_branch_heads --with_tags, which would re-download the history
+    the shallow fetch just avoided. The --no-history sync was verified
+    on Muse's VM 2026-11-11/12 (exit 0). GCS dependencies are NOT
+    skipped: version.py fetches them, and the Windows build may need
+    some of them.
+    """
+    chromium_src = ctx["chromium_src"]
+    thorium_root = ctx["thorium_root"]
+    depot_tools = ctx["depot_tools"]
+    env = ctx["env"]
+    git = find_executable("git")
+    gclient = python_script_tool(depot_tools, "gclient")
+
+    log(f"\nChecking out Chromium tag {args.chromium_tag} "
+        "(shallow: explicit tag fetch, no version.py).")
+    checkout_pinned_tag(git, chromium_src, args.chromium_tag, env, deadline)
+
+    # Thorium's prepare_dependencies: detach every existing dep checkout
+    # so the sync below cannot rebase one onto a DEPS pin.
+    chromium_sync = thorium_root / "chromium_sync.py"
+    if not chromium_sync.is_file():
+        raise StageError(f"chromium_sync.py not found: {chromium_sync}")
     run_checked(
         [
+            *gclient,
+            "recurse",
+            "--scm=git",
             sys.executable,
-            str(ctx["thorium_root"] / "version.py"),
-            f"--chromium-src={ctx['chromium_src']}",
-            f"--depot-tools={ctx['depot_tools']}",
+            str(chromium_sync),
+            git,
+            str(chromium_src),
         ],
-        ctx["thorium_root"],
-        env=ctx["env"],
+        chromium_src,
+        env=env,
+        timeout_at=deadline,
+    )
+
+    log("\nRunning gclient sync --no-history "
+        "(no --with_branch_heads/--with_tags: they re-fetch tag history).")
+    run_checked(
+        [
+            *gclient,
+            "sync",
+            "--no-history",
+            "--force",
+            "--reset",
+            "--nohooks",
+            "--delete_unversioned_trees",
+        ],
+        chromium_src,
+        env=env,
+        timeout_at=deadline,
+    )
+    run_checked(
+        [git, "clean", "-ffd"],
+        chromium_src,
+        env=env,
+        timeout_at=deadline,
+    )
+
+    log("\ngclient runhooks (downloads the Clang toolchain, etc.).")
+    run_checked(
+        [*gclient, "runhooks"],
+        chromium_src,
+        env=env,
         timeout_at=deadline,
     )
     log("\nVersion phase complete.")
@@ -681,6 +817,8 @@ def checkpoint(args, ctx):
     seven_zip = find_executable("7z")
     log(f"\nCheckpointing build root to {zip_path} (7z, -mx=3; "
         f"this can take a while for a tens-of-GB tree)...")
+    # Exclude gclient's _bad_scm quarantine dirs (conflicting checkouts
+    # can be gigabytes; sync re-creates them if needed).
     run_checked(
         [
             seven_zip,
@@ -690,6 +828,7 @@ def checkpoint(args, ctx):
             build_root.name,
             "-mx=3",
             "-mtc=on",
+            "-xr!_bad_scm",
         ],
         build_root.parent,
         env=ctx["env"],
