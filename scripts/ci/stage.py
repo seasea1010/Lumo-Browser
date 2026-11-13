@@ -4,14 +4,20 @@
 Runs ONE build stage inside a single GitHub Actions job, Helium-style.
 
 Pipeline (all inside the job's time budget):
-  1. bootstrap -- clone depot_tools + Thorium (pinned commit), then run
-     Thorium's get_repo.py to fetch Chromium (fetch + gclient sync +
-     runhooks). A partial fetch is resumed by the next stage via
-     get_repo.py --recover-incomplete.
-  2. version   -- check out the pinned Chromium tag (156.0.8078.80)
-     keeping the checkout shallow (explicit tag fetch + gclient sync
-     --no-history). Thorium's version.py is not used: its sync is full
-     history with --with_branch_heads --with_tags.
+  1. bootstrap -- clone depot_tools + Thorium (pinned commit), then
+     download the prepared Chromium tarballs (base + win-x64) from
+     imputnet's chromium-tarballs release, verify their pinned
+     SHA-256 hashes, and unpack them into the src tree. This is
+     Helium's x64 acquisition method; runs #5-#7 all died in build-1
+     because even a shallow gclient fetch + sync (~45-55 GiB) does
+     not fit the runner's disk, while the two tarballs are ~3.5 GiB
+     compressed and ~15 GiB unpacked. The tarball tree is already
+     gclient-synced and post-runhooks (it contains
+     build/util/LASTCHANGE, buildtools/win/gn.exe, clang-cl.exe),
+     so no fetch, sync, or runhooks step exists anymore.
+  2. version   -- verify chrome/VERSION in the tarball tree equals
+     the pinned tag (156.0.8078.80). The tarballs are published per
+     exact version, so there is nothing to check out.
   3. setup     -- Thorium's setup.py --avx2: copy overlays, apply the
      Thorium patch series, GRD/XTB rebase.
   4. gn        -- write out/thorium/args.gn from args.gn.example, injecting
@@ -22,15 +28,20 @@ Pipeline (all inside the job's time budget):
      Profile is AVX2 only (target machine: Intel Core i5-8350U).
 
 Resume model (mirrors Helium's stage action):
-  * The whole build root (C:/lumo-build: Chromium src + .gclient +
-    lumo-stage-state.json) is zipped with 7z and uploaded as an artifact
-    when the time budget expires. The next stage downloads and extracts
-    it and continues from the phase recorded in lumo-stage-state.json.
+  * The whole build root (C:/lumo-build: Chromium src + the tarball
+    marker + lumo-stage-state.json) is zipped with 7z and uploaded
+    as an artifact when the time budget expires. The next stage
+    downloads and extracts it and continues from the phase recorded
+    in lumo-stage-state.json. The downloaded tarball archives are
+    deleted as soon as their tree is unpacked, and the download
+    directory is excluded from the checkpoint zip, so an interrupted
+    download is simply repeated by the next stage.
     Thorium (C:/thorium) and depot_tools (C:/depot_tools) live OUTSIDE
-    the build root as siblings: Thorium's get_repo.py rejects overlapping
-    checkout paths, and it treats the Chromium root as the parent of the
-    src dir, so thorium/depot_tools must not sit under C:/lumo-build.
-    They are re-cloned by each stage's bootstrap phase when missing.
+    the build root as siblings: Thorium's tooling treats the Chromium
+    root as the parent of the src dir and refuses overlapping
+    checkout paths, so thorium/depot_tools must not sit under
+    C:/lumo-build. They are re-cloned by each stage's bootstrap phase
+    when missing.
   * Exit code 42 means "build incomplete, resume in the next stage"
     (Helium's convention). It is NOT a failure.
   * Exit code 0 means the build finished; thorium.exe was verified to
@@ -39,22 +50,32 @@ Resume model (mirrors Helium's stage action):
   * Any other non-zero exit code is a real failure and fails the job.
 
 UNVERIFIED (has never run on GitHub Actions):
-  * The full fetch + build has never been attempted; the first real run
-    will almost certainly surface problems (SDK/toolchain versions,
-    artifact size limits, disk space, patch application on the pinned
-    tag, gn args, ninja edge cases).
+  * The full build has never completed; every run so far died in
+    build-1 on disk space, and later problems (SDK/toolchain
+    versions, artifact size limits, patch application on the pinned
+    tag, gn args, ninja edge cases) are still waiting behind it.
+  * Run #8's tarball acquisition is new. The two archives and their
+    SHA-256 hashes were verified locally (2026-11-13) against the
+    release's official SHA256SUMS, and their listings contain the
+    complete tree (587,942 + 78,486 entries). Unpacked, the combined
+    tree measured 14.4 GiB / ~640k files locally. Unpacking uses the
+    runner's bsdtar (zstd-capable on Windows Server 2025) with a 7z
+    streaming fallback; neither path has run in CI yet.
+  * The tarball tree has no .git and no .gclient. Thorium's
+    setup.py only checks that src/.git exists and its patch series
+    runs `git apply` inside the tree, so bootstrap creates a bare
+    `git init` repo there. Whether every Thorium script accepts
+    that shim is unverified.
+  * Thorium's patch series modifies ~51 files the tarballs do not
+    ship (chrome/android/java/** and friends, which only an
+    Android checkout carries). phase_setup fetches those from the
+    official Chromium mirrors at the pinned tag, and a series
+    filter drops any entry whose targets are still absent (a
+    safety net). Locally validated 2026-11-13 against the pinned
+    Thorium commit: fetch 51/51, filter dropped nothing, and
+    setup.py completed end to end on the tarball tree.
   * The build-state zip can be tens of GB. GitHub Artifacts may refuse
     it, and zipping/uploading may eat the time reserve.
-  * GitHub-hosted Windows runners start with only ~29 GiB free (31 GiB
-    after the run #5 cleanup). The checkout is shallow now (~21 GiB,
-    verified 2026-11-11/12), but checkout + build outputs still need
-    ~45-55 GiB. Run #6 (with .NET, LLVM, the VS package cache and
-    unused hostedtoolcache runtimes also removed) still filled the
-    disk — so completely that the runner crashed and GitHub kept no
-    job log, leaving the cleanup's effect unverified. Run #7 adds old
-    Windows SDK versions, preinstalled servers/Perl and a docker prune
-    to the cleanup, plus a disk watchdog that logs the drain and
-    aborts at 3 GiB free so the log survives either way.
   * Renaming thorium.exe to lumo.exe at packaging time is assumed to
     work for a portable build; it has never been tested.
   * Thorium's own branding (About page, installer product name, etc.)
@@ -63,7 +84,10 @@ UNVERIFIED (has never run on GitHub Actions):
 """
 
 import argparse
+import base64
+import binascii
 import ctypes
+import hashlib
 import json
 import os
 import re
@@ -73,6 +97,9 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path, PureWindowsPath
 
 # Helium's convention: exit code 42 means "build incomplete, resume later".
@@ -112,7 +139,49 @@ DEPOT_TOOLS_REPO = "https://chromium.googlesource.com/chromium/tools/depot_tools
 # GN out dir MUST be out/thorium (not out/lumo).
 OUT_DIR_NAME = "out/thorium"
 STATE_FILE_NAME = "lumo-stage-state.json"
-FETCH_MARKER = ".thorium-fetch-incomplete"
+
+# ---------------------------------------------------------------------------
+# Tarball acquisition (run #8).
+#
+# Helium's x64 builds never gclient-clone: they unpack the prepared
+# Chromium tarballs published by imputnet (Helium's downloads.x64.ini
+# points at the same source). Two archives make up the full tree:
+#   * base    -- the Chromium source tree (DEPS, chrome/VERSION, ...)
+#   * win-x64 -- the Windows DEPS checkouts and runhooks outputs
+#     (third_party/*, buildtools/win/gn.exe, build/util/LASTCHANGE,
+#     clang-cl.exe, the rust toolchain, PGO profiles)
+# Sizes and SHA-256 hashes below were verified locally on 2026-11-13
+# against the release's official SHA256SUMS, and both tar listings
+# were read end to end (587,942 + 78,486 entries). The workflow still
+# downloads from the official sources and re-verifies the hashes.
+# ---------------------------------------------------------------------------
+TARBALL_URL_TEMPLATES = (
+    "https://tarballs.imput.net/chromium-{tag}/{filename}",
+    "https://github.com/imputnet/chromium-tarballs/releases/download/"
+    "chromium-{tag}/{filename}",
+)
+TARBALLS = (
+    {
+        "name": "base",
+        "filename": "chromium-{tag}-base.tar.zst",
+        "size": 1_983_332_802,
+        "sha256": "0d3ab019bebfa7d029004a2612839e6ef5cbb1850cee4ba86987c5c25594bf33",
+        "sentinels": ("BUILD.gn", "DEPS", "chrome/VERSION"),
+    },
+    {
+        "name": "win-x64",
+        "filename": "chromium-{tag}-win-x64.tar.zst",
+        "size": 1_731_634_454,
+        "sha256": "68e23fac830e31542ae9f017e98c7535ad43cd64796abec774ec0e75d0c3cac3",
+        "sentinels": (
+            "buildtools/win/gn.exe",
+            "build/util/LASTCHANGE",
+            "third_party/llvm-build/Release+Asserts/bin/clang-cl.exe",
+        ),
+    },
+)
+TARBALL_DIR_NAME = "lumo-tarballs"
+TARBALL_MARKER = ".lumo-tarball-tree.json"
 
 # Default work budget per job: 4h45m. The job timeout is 330 minutes
 # (5.5h); the remaining ~45 minutes are reserved for zipping the build
@@ -401,27 +470,296 @@ def git_clone(url, dest, recursive=False):
     run_checked(cmd, dest.parent)
 
 
-def chromium_checkout_complete(chromium_src, thorium_root):
-    """Whether the Chromium checkout looks complete (get_repo.py's test)."""
-    parent = chromium_src.parent
-    if not (parent / ".gclient").is_file():
-        return False
-    if not (chromium_src / ".git").exists():
-        return False
-    nested = []
-    try:
-        sys.path.insert(0, str(thorium_root))
-        from trunk import CHROMIUM_NESTED_CHECKOUTS
+def tarball_tree_complete(build_root, chromium_src, tag):
+    """Whether the unpacked tarball tree looks complete.
 
-        nested = [rel for rel, _ in CHROMIUM_NESTED_CHECKOUTS]
-    except (ImportError, AttributeError) as error:
-        log(f"Could not import trunk.CHROMIUM_NESTED_CHECKOUTS ({error}); "
-            "falling back to a basic checkout check.")
-        return (chromium_src / "BUILD.gn").is_file()
-    finally:
-        if str(thorium_root) in sys.path:
-            sys.path.remove(str(thorium_root))
-    return all((chromium_src / rel / ".git").exists() for rel in nested)
+    The marker is written only after both archives were downloaded,
+    hash-verified, and unpacked; the sentinel files (the ones the
+    later phases actually consume) are checked on top of it.
+    """
+    marker = build_root / TARBALL_MARKER
+    if not marker.is_file():
+        return False
+    try:
+        data = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return False
+    if data.get("tag") != tag:
+        return False
+    return all(
+        (chromium_src / sentinel).exists()
+        for spec in TARBALLS
+        for sentinel in spec["sentinels"]
+    )
+
+
+def _sha256_of(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _download_file(url, dest, deadline):
+    request = urllib.request.Request(
+        url, headers={"User-Agent": "lumo-ci-stage"}
+    )
+    with urllib.request.urlopen(request) as response, open(
+        dest, "wb"
+    ) as out:
+        downloaded = 0
+        last_log = time.time()
+        while True:
+            if deadline is not None and time.time() >= deadline:
+                raise BudgetExpired()
+            chunk = response.read(1024 * 1024)
+            if not chunk:
+                break
+            out.write(chunk)
+            downloaded += len(chunk)
+            if time.time() - last_log >= 30:
+                log(f"  ... {downloaded / (1024 ** 3):.2f} GiB downloaded")
+                last_log = time.time()
+
+
+def download_tarball(spec, tag, dest_dir, deadline):
+    """Download one tarball (or reuse a verified copy); return its path.
+
+    The pinned size + SHA-256 are verified for every copy, downloaded
+    or reused. A failed mirror falls through to the next one; a size
+    or hash mismatch deletes the file so a partial/corrupt download
+    is never unpacked or resumed.
+    """
+    filename = spec["filename"].format(tag=tag)
+    dest = dest_dir / filename
+    if dest.is_file() and dest.stat().st_size == spec["size"]:
+        log(f"Verifying existing download: {filename}")
+        if _sha256_of(dest) == spec["sha256"]:
+            log("Existing file verified by SHA-256; skipping download.")
+            return dest
+        log("Existing file failed SHA-256; downloading it again.")
+        dest.unlink()
+    errors = []
+    for template in TARBALL_URL_TEMPLATES:
+        url = template.format(tag=tag, filename=filename)
+        log(f"\nDownloading {filename}\n  from {url}")
+        try:
+            _download_file(url, dest, deadline)
+        except (OSError, urllib.error.URLError) as error:
+            errors.append(f"{url}: {error}")
+            log(f"Download failed: {error}")
+            continue
+        if dest.stat().st_size != spec["size"]:
+            errors.append(
+                f"{url}: size {dest.stat().st_size} != {spec['size']}"
+            )
+            log("Downloaded size does not match the pinned size; "
+                "trying the next mirror.")
+            dest.unlink(missing_ok=True)
+            continue
+        if _sha256_of(dest) != spec["sha256"]:
+            errors.append(f"{url}: SHA-256 mismatch")
+            log("Downloaded file failed SHA-256; trying the next mirror.")
+            dest.unlink(missing_ok=True)
+            continue
+        log(f"Downloaded {filename} "
+            f"({spec['size'] / (1024 ** 3):.2f} GiB), SHA-256 verified.")
+        return dest
+    raise StageError(
+        f"could not download {filename}: " + "; ".join(errors)
+    )
+
+
+def _extract_with_bsdtar(archive, dest, deadline):
+    """Unpack a .tar.zst with Windows' bsdtar, stripping the top dir.
+
+    libarchive in Windows Server 2025 / Windows 11 understands zstd.
+    Returns True when tar.exe ran and exited 0; the caller verifies
+    the sentinel files either way, because a benign warning (e.g. a
+    symlink it could not create) can also produce a non-zero exit.
+    """
+    system_root = os.environ.get("SystemRoot", r"C:\Windows")
+    tar_exe = Path(system_root) / "System32" / "tar.exe"
+    if not tar_exe.is_file():
+        return False
+    code = run(
+        [
+            str(tar_exe),
+            "-xf",
+            str(archive),
+            "-C",
+            str(dest),
+            "--strip-components",
+            "1",
+        ],
+        dest,
+        timeout_at=deadline,
+    )
+    return code == 0
+
+
+def _run_7z_pipe(seven_zip, archive, staging, deadline):
+    """Stream-decompress with 7z: .tar.zst -> tar -> unpacked files.
+
+    Piping avoids writing the ~9 GiB intermediate .tar to disk.
+    Returns True only when both 7z processes exit 0.
+    """
+    log(f"\n[{staging}] 7z x -so {archive.name} | "
+        "7z x -si -ttar (streaming unpack)")
+    producer = subprocess.Popen(
+        [seven_zip, "x", "-so", str(archive)],
+        stdout=subprocess.PIPE,
+    )
+    consumer = subprocess.Popen(
+        [seven_zip, "x", "-si", "-ttar", f"-o{staging}", "-y"],
+        stdin=producer.stdout,
+    )
+    producer.stdout.close()
+    while True:
+        code = consumer.poll()
+        if code is not None:
+            producer.wait()
+            return code == 0 and producer.returncode == 0
+        if deadline is not None and time.time() >= deadline:
+            consumer.kill()
+            producer.kill()
+            consumer.wait()
+            producer.wait()
+            raise BudgetExpired()
+        time.sleep(5)
+
+
+def _extract_with_7z(archive, dest, top_name, staging, deadline):
+    """Fallback unpack via 7z streaming + robocopy move.
+
+    7z cannot strip the leading chromium-<tag> directory, so the
+    archive is unpacked into a staging dir and the top directory's
+    contents are moved into dest (same-volume renames via robocopy).
+    """
+    try:
+        seven_zip = find_executable("7z")
+    except StageError:
+        return False
+    if staging.is_dir():
+        shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True, exist_ok=True)
+    if not _run_7z_pipe(seven_zip, archive, staging, deadline):
+        return False
+    top = staging / top_name
+    if not top.is_dir():
+        return False
+    robocopy = shutil.which("robocopy") or "robocopy"
+    code = run(
+        [
+            robocopy,
+            str(top),
+            str(dest),
+            "/E",
+            "/MOVE",
+            "/MT:32",
+            "/R:1",
+            "/W:1",
+            "/NFL",
+            "/NDL",
+            "/NJH",
+            "/NJS",
+        ],
+        staging,
+        timeout_at=deadline,
+    )
+    shutil.rmtree(staging, ignore_errors=True)
+    # robocopy exit codes 0-7 are success variants; >= 8 is failure.
+    return code < 8
+
+
+def extract_tarball(archive, spec, tag, chromium_src, download_dir, deadline):
+    """Unpack one tarball into the src tree and verify its sentinels."""
+    sentinels = spec["sentinels"]
+    if all((chromium_src / s).exists() for s in sentinels):
+        log(f"The {spec['name']} tree is already unpacked "
+            "(sentinel files present); skipping unpack.")
+        return
+    chromium_src.mkdir(parents=True, exist_ok=True)
+    free = disk_free_gb(chromium_src)
+    log(f"\nUnpacking {archive.name} into {chromium_src} "
+        f"(free disk: {free:.1f} GiB)...")
+    _extract_with_bsdtar(archive, chromium_src, deadline)
+    if not all((chromium_src / s).exists() for s in sentinels):
+        log("bsdtar did not produce the full tree; trying the 7z "
+            "streaming fallback.")
+        staging = download_dir / f"extract-{spec['name']}"
+        _extract_with_7z(
+            archive,
+            chromium_src,
+            f"chromium-{tag}",
+            staging,
+            deadline,
+        )
+    missing = [s for s in sentinels if not (chromium_src / s).exists()]
+    if missing:
+        raise StageError(
+            f"unpacking {archive.name} did not produce: "
+            + ", ".join(missing)
+        )
+    free = disk_free_gb(chromium_src)
+    log(f"Unpacked {archive.name} (free disk: {free:.1f} GiB).")
+
+
+def ensure_git_checkout(git, chromium_src, env):
+    """Give the tarball tree the .git Thorium's tooling insists on.
+
+    The tarball tree has no .git, but Thorium setup.py's
+    require_checkout() refuses a Chromium tree without one, and its
+    patch series runs `git apply` inside the tree (which needs
+    `git rev-parse --show-toplevel` to succeed). A bare `git init`
+    satisfies both; `git apply` needs no commit.
+    """
+    if (chromium_src / ".git").exists():
+        log("Placeholder .git already present in the Chromium tree.")
+        return
+    log("\nRunning git init in the tarball tree (Thorium's setup.py "
+        "and patch series require a .git; the tarballs ship none).")
+    run_checked([git, "init", "--quiet"], chromium_src, env=env)
+
+
+def acquire_tarball_tree(args, ctx, deadline):
+    """Download, verify, and unpack both Chromium tarballs."""
+    build_root = ctx["build_root"]
+    chromium_src = ctx["chromium_src"]
+    tag = args.chromium_tag
+    download_dir = build_root / TARBALL_DIR_NAME
+    download_dir.mkdir(parents=True, exist_ok=True)
+    free = disk_free_gb(build_root)
+    log(f"\nAcquiring Chromium {tag} from the imputnet tarballs "
+        f"(base + win-x64; free disk: {free:.1f} GiB).")
+    for spec in TARBALLS:
+        if all(
+            (chromium_src / s).exists() for s in spec["sentinels"]
+        ):
+            log(f"The {spec['name']} tree is already unpacked; "
+                "skipping its download.")
+            continue
+        archive = download_tarball(spec, tag, download_dir, deadline)
+        extract_tarball(
+            archive, spec, tag, chromium_src, download_dir, deadline
+        )
+        # The archive is only needed until its tree is unpacked.
+        # Deleting it here keeps peak disk at tree + one archive
+        # instead of tree + both archives.
+        archive.unlink(missing_ok=True)
+        log(f"Deleted {archive.name} (tree unpacked and verified).")
+    git = find_executable("git")
+    ensure_git_checkout(git, chromium_src, ctx["env"])
+    marker = {
+        "tag": tag,
+        "sha256": {spec["name"]: spec["sha256"] for spec in TARBALLS},
+    }
+    (build_root / TARBALL_MARKER).write_text(
+        json.dumps(marker, indent=2) + "\n", encoding="utf-8"
+    )
+    free = disk_free_gb(build_root)
+    log(f"Chromium tarball tree ready (free disk: {free:.1f} GiB).")
 
 
 def depot_tools_initialized(depot_tools):
@@ -446,10 +784,9 @@ def _init_env(env):
 def initialize_depot_tools(depot_tools, env, deadline):
     """Bootstrap depot_tools' bundled Python (gclient/update_depot_tools).
 
-    A fresh git clone of depot_tools is NOT initialized: fetch.bat fails
-    with 'python3_bin_reldir.txt not found' until gclient or
-    update_depot_tools has run once. Thorium's get_repo.py never does
-    this itself — it just clones (or reuses) and runs fetch.bat.
+    A fresh git clone of depot_tools is NOT initialized: its .bat
+    wrappers fail with 'python3_bin_reldir.txt not found' until
+    gclient or update_depot_tools has run once (this killed run #2).
     """
     if depot_tools_initialized(depot_tools):
         log("depot_tools already initialized; skipping bootstrap.")
@@ -621,7 +958,7 @@ def free_disk_space(build_root):
 
 
 def phase_bootstrap(args, ctx, deadline):
-    """Clone depot_tools + Thorium, fetch Chromium (get_repo.py)."""
+    """Clone depot_tools + Thorium, unpack the Chromium tarballs."""
     build_root = ctx["build_root"]
     chromium_src = ctx["chromium_src"]
     thorium_root = ctx["thorium_root"]
@@ -633,9 +970,9 @@ def phase_bootstrap(args, ctx, deadline):
         git_clone(DEPOT_TOOLS_REPO, depot_tools)
     else:
         log(f"\nUsing existing depot_tools: {depot_tools}")
-    # A fresh clone is not initialized: fetch.bat needs the bundled
-    # Python (python3_bin_reldir.txt), which only appears after gclient
-    # / update_depot_tools runs once. get_repo.py does not do this.
+    # A fresh clone is not initialized: its .bat wrappers need the
+    # bundled Python (python3_bin_reldir.txt), which only appears
+    # after gclient / update_depot_tools runs once.
     initialize_depot_tools(depot_tools, env, deadline)
 
     if not thorium_root.is_dir():
@@ -653,185 +990,277 @@ def phase_bootstrap(args, ctx, deadline):
     else:
         log(f"\nUsing existing Thorium checkout: {thorium_root}")
 
-    fetch_marker = chromium_src.parent / FETCH_MARKER
-    if chromium_checkout_complete(chromium_src, thorium_root):
-        if fetch_marker.is_file():
-            log("Fetch marker present; completing the interrupted fetch "
-                "with get_repo.py --recover-incomplete.")
-            run_checked(
-                [
-                    sys.executable,
-                    str(thorium_root / "get_repo.py"),
-                    "--yes",
-                    "--recover-incomplete",
-                    f"--chromium-src={chromium_src}",
-                    f"--thorium-root={thorium_root}",
-                    f"--depot-tools={depot_tools}",
-                ],
-                thorium_root,
-                env=env,
-                timeout_at=deadline,
-            )
-        else:
-            log("Chromium checkout already complete; skipping fetch.")
+    if tarball_tree_complete(build_root, chromium_src, args.chromium_tag):
+        log("Chromium tarball tree already complete; skipping download.")
     else:
-        if fetch_marker.is_file():
-            log("Incomplete Chromium checkout; recovering with "
-                "get_repo.py --recover-incomplete.")
-            run_checked(
-                [
-                    sys.executable,
-                    str(thorium_root / "get_repo.py"),
-                    "--yes",
-                    "--recover-incomplete",
-                    f"--chromium-src={chromium_src}",
-                    f"--thorium-root={thorium_root}",
-                    f"--depot-tools={depot_tools}",
-                ],
-                thorium_root,
-                env=env,
-                timeout_at=deadline,
-            )
-        else:
-            log("Fetching Chromium (this downloads tens of GB and can "
-                "take hours; it is resumed by the next stage if the "
-                "budget runs out).")
-            # Shallow fetch (verified on Muse's VM 2026-11-11/12): the
-            # full fetch needed ~88 GiB and killed run #5; --no-history
-            # brings the checkout to ~21 GiB. The pinned tag is NOT in
-            # a shallow fetch (fetch.py adds no tag refspec), so
-            # phase_version fetches it explicitly before checkout.
-            run_checked(
-                [
-                    sys.executable,
-                    str(thorium_root / "get_repo.py"),
-                    "--yes",
-                    "--no-history",
-                    f"--chromium-src={chromium_src}",
-                    f"--thorium-root={thorium_root}",
-                    f"--depot-tools={depot_tools}",
-                ],
-                thorium_root,
-                env=env,
-                timeout_at=deadline,
-            )
+        acquire_tarball_tree(args, ctx, deadline)
     log("\nBootstrap phase complete.")
 
 
-def checkout_pinned_tag(git, chromium_src, tag, env, timeout_at=None):
-    """Fetch the pinned tag into a shallow checkout and check it out.
-
-    A --no-history fetch contains no tags (fetch.py adds no tag refspec
-    for shallow fetches), so the tag must be fetched explicitly first.
-    Verified on Muse's VM 2026-11-11/12:
-    `git fetch --depth 1 origin tag <tag>` + `git checkout -f tags/<tag>`.
-    The detach mirrors Thorium's chromium_sync.prepare_git_checkout: it
-    keeps gclient sync from rebasing a named branch onto a DEPS pin.
-    """
-    run_checked(
-        [git, "fetch", "--depth", "1", "origin", "tag", tag],
-        chromium_src,
-        env=env,
-        timeout_at=timeout_at,
-    )
-    run_checked(
-        [git, "checkout", "--detach", "--force", "--quiet", "HEAD"],
-        chromium_src,
-        env=env,
-        timeout_at=timeout_at,
-    )
-    run_checked(
-        [git, "checkout", "-f", f"tags/{tag}"],
-        chromium_src,
-        env=env,
-        timeout_at=timeout_at,
-    )
-    run_checked(
-        [git, "clean", "-ffd"],
-        chromium_src,
-        env=env,
-        timeout_at=timeout_at,
-    )
-
-
 def phase_version(args, ctx, deadline):
-    """Pin Chromium to the Thorium tag, keeping the checkout shallow.
+    """Verify the tarball tree is the pinned Chromium version.
 
-    Mirrors Thorium's version.py step by step (tag checkout,
-    prepare_dependencies, gclient sync, runhooks) but with
-    --no-history: version.py itself runs a full-history sync with
-    --with_branch_heads --with_tags, which would re-download the history
-    the shallow fetch just avoided. The --no-history sync was verified
-    on Muse's VM 2026-11-11/12 (exit 0). GCS dependencies are NOT
-    skipped: version.py fetches them, and the Windows build may need
-    some of them.
+    The old flow checked the tag out of a shallow clone and re-ran
+    gclient sync + runhooks; the tarball tree is already the pinned
+    tag, post-sync and post-runhooks, so there is nothing to check
+    out. Verify chrome/VERSION instead, so a wrong or corrupt tree
+    fails here in build-1 rather than hours later.
     """
     chromium_src = ctx["chromium_src"]
-    thorium_root = ctx["thorium_root"]
-    depot_tools = ctx["depot_tools"]
-    env = ctx["env"]
-    git = find_executable("git")
-    gclient = python_script_tool(depot_tools, "gclient")
-
-    log(f"\nChecking out Chromium tag {args.chromium_tag} "
-        "(shallow: explicit tag fetch, no version.py).")
-    checkout_pinned_tag(git, chromium_src, args.chromium_tag, env, deadline)
-
-    # Thorium's prepare_dependencies: detach every existing dep checkout
-    # so the sync below cannot rebase one onto a DEPS pin.
-    chromium_sync = thorium_root / "chromium_sync.py"
-    if not chromium_sync.is_file():
-        raise StageError(f"chromium_sync.py not found: {chromium_sync}")
-    run_checked(
-        [
-            *gclient,
-            "recurse",
-            "--scm=git",
-            sys.executable,
-            str(chromium_sync),
-            git,
-            str(chromium_src),
-        ],
-        chromium_src,
-        env=env,
-        timeout_at=deadline,
-    )
-
-    log("\nRunning gclient sync --no-history "
-        "(no --with_branch_heads/--with_tags: they re-fetch tag history).")
-    run_checked(
-        [
-            *gclient,
-            "sync",
-            "--no-history",
-            "--force",
-            "--reset",
-            "--nohooks",
-            "--delete_unversioned_trees",
-        ],
-        chromium_src,
-        env=env,
-        timeout_at=deadline,
-    )
-    run_checked(
-        [git, "clean", "-ffd"],
-        chromium_src,
-        env=env,
-        timeout_at=deadline,
-    )
-
-    log("\ngclient runhooks (downloads the Clang toolchain, etc.).")
-    run_checked(
-        [*gclient, "runhooks"],
-        chromium_src,
-        env=env,
-        timeout_at=deadline,
-    )
+    version_file = chromium_src / "chrome" / "VERSION"
+    if not version_file.is_file():
+        raise StageError(f"chrome/VERSION missing: {version_file}")
+    parts = {}
+    for line in version_file.read_text(encoding="utf-8").splitlines():
+        if "=" in line:
+            key, value = line.split("=", 1)
+            parts[key.strip()] = value.strip()
+    try:
+        version = ".".join(
+            parts[key] for key in ("MAJOR", "MINOR", "BUILD", "PATCH")
+        )
+    except KeyError as error:
+        raise StageError(
+            f"chrome/VERSION is missing {error}: {version_file}"
+        ) from error
+    if version != args.chromium_tag:
+        raise StageError(
+            f"tarball tree is Chromium {version}, "
+            f"expected {args.chromium_tag}"
+        )
+    log(f"\nTarball tree verified as Chromium {version} "
+        "(no checkout or gclient sync needed).")
     log("\nVersion phase complete.")
+
+
+def _series_patch_targets(patch_text):
+    """(modified, created) target paths of one git-style patch file."""
+    modified, created = [], []
+    pending_src = None
+    for line in patch_text.splitlines():
+        if line.startswith("--- "):
+            pending_src = line[4:].split("\t", 1)[0].strip()
+        elif line.startswith("+++ "):
+            dst = line[4:].split("\t", 1)[0].strip()
+            if dst.startswith("b/"):
+                dst = dst[2:]
+            if pending_src == "/dev/null":
+                created.append(dst)
+            elif dst != "/dev/null":
+                modified.append(dst)
+            pending_src = None
+    return modified, created
+
+
+def _analyze_series(thorium_root, chromium_src):
+    """Classify every Thorium series entry against this tree.
+
+    Returns one record per series line, in order:
+    {raw, conditional, apply_root, rel, missing}. `missing` is the
+    list of files the entry's patch modifies that are absent from
+    the tree, Thorium's src/ overlay, and the files created by
+    earlier kept entries; it is None for lines that are not
+    unconditional patch entries (comments, blanks, conditional
+    entries — setup.py selects none of those for the avx2 profile,
+    so they are neither fetched for nor filtered).
+    """
+    series_path = thorium_root / "patch_scripts" / "series" / "series"
+    if not series_path.is_file():
+        raise StageError(f"Thorium patch series not found: {series_path}")
+    overlay = set()
+    overlay_root = thorium_root / "src"
+    if overlay_root.is_dir():
+        for path in overlay_root.rglob("*"):
+            if path.is_file():
+                overlay.add(path.relative_to(overlay_root).as_posix())
+    created = set()
+    records = []
+    for raw in series_path.read_text(encoding="utf-8").splitlines():
+        record = {
+            "raw": raw,
+            "conditional": False,
+            "apply_root": ".",
+            "rel": None,
+            "missing": None,
+        }
+        line = raw.split("#", 1)[0].strip()
+        if line:
+            rest = line
+            conditional = rest.startswith("[")
+            while rest.startswith("["):
+                end = rest.find("]")
+                if end == -1:
+                    break
+                rest = rest[end + 1:].strip()
+            record["conditional"] = conditional
+            if not conditional and rest:
+                parts = rest.split(":")
+                if len(parts) == 2 and not parts[0].endswith(".patch"):
+                    record["apply_root"] = parts[0].strip()
+                    record["rel"] = parts[1].strip()
+                else:
+                    record["rel"] = rest
+                patch_file = thorium_root / record["rel"]
+                if patch_file.is_file():
+                    modified, creates = _series_patch_targets(
+                        patch_file.read_text(
+                            encoding="utf-8", errors="ignore"
+                        )
+                    )
+                    apply_root = record["apply_root"]
+
+                    def present(path):
+                        full = (
+                            path
+                            if apply_root == "."
+                            else f"{apply_root}/{path}"
+                        )
+                        return (
+                            (chromium_src / full).exists()
+                            or full in overlay
+                            or full in created
+                        )
+
+                    record["missing"] = [
+                        path for path in modified if not present(path)
+                    ]
+                    for path in creates:
+                        created.add(
+                            path
+                            if apply_root == "."
+                            else f"{apply_root}/{path}"
+                        )
+        records.append(record)
+    return records
+
+
+def _fetch_chromium_file(tag, rel_path):
+    """Download one main-repo file from the official Chromium mirrors.
+
+    Tries chromium.googlesource.com (canonical; base64 ?format=TEXT)
+    first, then the chromium/chromium GitHub mirror. Returns the
+    file bytes, or None when neither mirror has the file at the tag.
+    """
+    quoted = urllib.parse.quote(rel_path)
+    sources = (
+        (
+            "googlesource",
+            "https://chromium.googlesource.com/chromium/src/+/refs/tags/"
+            f"{tag}/{quoted}?format=TEXT",
+            True,
+        ),
+        (
+            "github",
+            f"https://raw.githubusercontent.com/chromium/chromium/"
+            f"{tag}/{quoted}",
+            False,
+        ),
+    )
+    for name, url, is_base64 in sources:
+        try:
+            request = urllib.request.Request(
+                url, headers={"User-Agent": "lumo-ci-stage"}
+            )
+            with urllib.request.urlopen(request) as response:
+                body = response.read()
+        except (OSError, urllib.error.URLError) as error:
+            log(f"  mirror {name} failed for {rel_path}: {error}")
+            continue
+        if is_base64:
+            try:
+                body = base64.b64decode(body)
+            except (ValueError, binascii.Error):
+                continue
+        if body:
+            return body
+    return None
+
+
+def fetch_missing_series_files(thorium_root, chromium_src, tag):
+    """Fetch patch-target files the tarballs do not ship.
+
+    The imputnet tarballs split the tree per platform: files only
+    an Android checkout carries (chrome/android/java/**,
+    android_webview/**, ...) are in neither the base nor the
+    win-x64 archive, but Thorium's unconditional patch series
+    modifies ~60 of them, and git apply fails the whole setup when
+    a target is absent. Those files belong to the main Chromium
+    repo, so fetch just them, at the pinned tag, from the official
+    mirrors. Files no mirror has stay missing; the series filter
+    below drops their patches.
+    """
+    records = _analyze_series(thorium_root, chromium_src)
+    wanted = []
+    for record in records:
+        if record["missing"] and record["apply_root"] == ".":
+            for path in record["missing"]:
+                if path not in wanted:
+                    wanted.append(path)
+    if not wanted:
+        return 0
+    log(f"\nFetching {len(wanted)} patch-target files the tarballs "
+        f"do not ship (Chromium mirrors, tag {tag})...")
+    fetched = 0
+    for rel_path in wanted:
+        dest = chromium_src / rel_path
+        if dest.exists():
+            continue
+        body = _fetch_chromium_file(tag, rel_path)
+        if body is None:
+            log(f"  not fetchable at {tag}: {rel_path}")
+            continue
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(body)
+        fetched += 1
+    log(f"Fetched {fetched}/{len(wanted)} missing patch-target files.")
+    return fetched
+
+
+def filter_unappliable_series(thorium_root, chromium_src):
+    """Drop Thorium series entries that still cannot apply.
+
+    Runs after fetch_missing_series_files. git apply is atomic per
+    patch file, so one dead target would fail Thorium's whole
+    setup phase; this filter is the safety net for entries whose
+    targets are still absent (a file no mirror has and no earlier
+    patch creates). In local validation against the pinned Thorium
+    commit (2026-11-13), the fetch step completed the tree and
+    this filter dropped nothing — setup.py then ran end to end.
+    Any drop is logged loudly, here and in the stage log.
+    """
+    series_path = thorium_root / "patch_scripts" / "series" / "series"
+    records = _analyze_series(thorium_root, chromium_src)
+    kept_lines = []
+    dropped = []
+    for record in records:
+        if record["missing"]:
+            dropped.append((record["rel"], record["missing"]))
+            continue
+        kept_lines.append(record["raw"])
+    if dropped:
+        for rel, missing in dropped:
+            shown = ", ".join(missing[:3])
+            if len(missing) > 3:
+                shown += f", ... ({len(missing)} files)"
+            log(f"WARNING: dropping Thorium series entry {rel}: it "
+                f"modifies files absent from this tree ({shown}). "
+                "Keeping it would fail the entire setup phase.")
+        series_path.write_text(
+            "\n".join(kept_lines) + "\n", encoding="utf-8"
+        )
+        log(f"Patch series filtered: dropped {len(dropped)} "
+            "unappliable entries (see warnings above).")
+    return dropped
 
 
 def phase_setup(args, ctx, deadline):
     """Thorium's setup.py: overlays + patch series + GRD rebase."""
+    thorium_root = ctx["thorium_root"]
+    chromium_src = ctx["chromium_src"]
+    fetch_missing_series_files(
+        thorium_root, chromium_src, args.chromium_tag
+    )
+    filter_unappliable_series(thorium_root, chromium_src)
     log(f"\nApplying Thorium setup for profile --{args.profile} "
         "(overlays, patch series, GRD rebase).")
     run_checked(
@@ -989,8 +1418,10 @@ def checkpoint(args, ctx):
     seven_zip = find_executable("7z")
     log(f"\nCheckpointing build root to {zip_path} (7z, -mx=3; "
         f"this can take a while for a tens-of-GB tree)...")
-    # Exclude gclient's _bad_scm quarantine dirs (conflicting checkouts
-    # can be gigabytes; sync re-creates them if needed).
+    # Exclude any _bad_scm quarantine dirs (a gclient-era leftover;
+    # conflicting checkouts can be gigabytes) and the tarball
+    # download dir (archives are deleted after unpacking anyway; an
+    # interrupted download is repeated by the next stage).
     run_checked(
         [
             seven_zip,
@@ -1001,6 +1432,7 @@ def checkpoint(args, ctx):
             "-mx=3",
             "-mtc=on",
             "-xr!_bad_scm",
+            f"-xr!{TARBALL_DIR_NAME}",
         ],
         build_root.parent,
         env=ctx["env"],
@@ -1021,8 +1453,8 @@ def main():
     parser.add_argument(
         "--build-root",
         default=r"C:/lumo-build",
-        help="Root of the Chromium build tree (src + .gclient + state); "
-        "Thorium and depot_tools live in sibling dirs",
+        help="Root of the Chromium build tree (src + tarball marker "
+        "+ state); Thorium and depot_tools live in sibling dirs",
     )
     parser.add_argument(
         "--repo-root",
@@ -1090,10 +1522,10 @@ def main():
     repo_root = Path(
         args.repo_root or os.environ.get("GITHUB_WORKSPACE", os.getcwd())
     )
-    # Layout (must not overlap — Thorium's get_repo.py treats the
+    # Layout (must not overlap — Thorium's tooling treats the
     # Chromium root as the parent of the src dir and refuses any
     # checkout path that contains another one):
-    #   Chromium root: C:/lumo-build        (src + .gclient + state)
+    #   Chromium root: C:/lumo-build        (src + marker + state)
     #   Thorium:       C:/thorium           (sibling, re-cloned per stage)
     #   depot_tools:   C:/depot_tools       (sibling, re-cloned per stage)
     # The checkpoint only covers the build root; bootstrap re-clones
@@ -1120,7 +1552,7 @@ def main():
     }
 
     # Fail fast on overlapping checkout paths instead of letting
-    # get_repo.py reject them after cloning (first-run failure).
+    # Thorium's tooling reject them after cloning (first-run failure).
     named_paths = (
         ("Chromium root", chromium_src.parent),
         ("Thorium", thorium_root),
