@@ -88,6 +88,7 @@ import base64
 import binascii
 import ctypes
 import hashlib
+import io
 import json
 import os
 import re
@@ -95,6 +96,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tarfile
 import threading
 import time
 import urllib.error
@@ -1216,6 +1218,193 @@ def fetch_missing_series_files(thorium_root, chromium_src, tag):
     return fetched
 
 
+def _test_fonts_sources(build_gn_text):
+    """Extract the sources list from test_fonts' BUILD.gn text."""
+    match = re.search(
+        r"sources\s*=\s*\[(.*?)\]", build_gn_text, re.DOTALL
+    )
+    if not match:
+        return []
+    return re.findall(r'"([^"]+)"', match.group(1))
+
+
+def _test_fonts_gcs_object(tag):
+    """Parse DEPS at the tag for the test_fonts GCS pin.
+
+    src/third_party/test_fonts/test_fonts is not a git checkout:
+    DEPS declares it as a GCS dep (bucket chromium-fonts) — one
+    tar.gz holding all the fonts, with the object name, size and
+    sha256 pinned in DEPS itself. Returns (bucket, object_name,
+    size_bytes, sha256sum), or None when not found.
+    """
+    body = _fetch_chromium_file(tag, "DEPS")
+    if body is None:
+        return None
+    text = body.decode("utf-8", "replace")
+    anchor = text.find("'src/third_party/test_fonts/test_fonts'")
+    if anchor < 0:
+        return None
+    block = text[anchor:anchor + 4000]
+
+    def grab(pattern):
+        match = re.search(pattern, block)
+        return match.group(1) if match else None
+
+    bucket = grab(r"'bucket':\s*'([^']+)'")
+    object_name = grab(r"'object_name':\s*'([^']+)'")
+    sha256sum = grab(r"'sha256sum':\s*'([^']+)'")
+    size = grab(r"'size_bytes':\s*(\d+)")
+    if not all([bucket, object_name, sha256sum, size]):
+        return None
+    return bucket, object_name, int(size), sha256sum
+
+
+def _fetch_test_fonts_archive(chromium_src, tag):
+    """Download the pinned test_fonts tar.gz and extract it.
+
+    The archive holds the font files flat at its root; gclient
+    extracts it straight into third_party/test_fonts/test_fonts/,
+    and so does this. Size and sha256 are verified against the
+    DEPS pin before anything is written.
+    """
+    pin = _test_fonts_gcs_object(tag)
+    if pin is None:
+        raise StageError(
+            "Could not parse the test_fonts GCS entry from DEPS "
+            f"at tag {tag}."
+        )
+    bucket, object_name, size, sha256sum = pin
+    url = f"https://storage.googleapis.com/{bucket}/{object_name}"
+    log(f"Downloading the test_fonts archive ({size} bytes, "
+        "pinned in DEPS)...")
+    try:
+        request = urllib.request.Request(
+            url, headers={"User-Agent": "lumo-ci-stage"}
+        )
+        with urllib.request.urlopen(request) as response:
+            blob = response.read()
+    except (OSError, urllib.error.URLError) as error:
+        raise StageError(
+            f"test_fonts archive download failed: {error}"
+        ) from error
+    if len(blob) != size:
+        raise StageError(
+            f"test_fonts archive size mismatch: got {len(blob)} "
+            f"bytes, DEPS pins {size}."
+        )
+    if hashlib.sha256(blob).hexdigest() != sha256sum:
+        raise StageError(
+            "test_fonts archive sha256 does not match the DEPS pin."
+        )
+    dest_root = (
+        chromium_src / "third_party" / "test_fonts" / "test_fonts"
+    )
+    dest_root.mkdir(parents=True, exist_ok=True)
+    extracted = 0
+    with tarfile.open(fileobj=io.BytesIO(blob), mode="r:gz") as arc:
+        for member in arc.getmembers():
+            name = member.name
+            if name.startswith("./"):
+                name = name[2:]
+            if not member.isfile() or not name or "/" in name:
+                continue
+            source = arc.extractfile(member)
+            if source is None:
+                continue
+            (dest_root / name).write_bytes(source.read())
+            extracted += 1
+    log(f"Extracted {extracted} test_fonts files "
+        "(size and sha256 verified against DEPS).")
+    return extracted
+
+
+def fetch_missing_test_fonts(chromium_src, tag):
+    """Fetch third_party/test_fonts files the tarballs do not ship.
+
+    Run #8 (2026-11-13) got all the way through setup and gn gen,
+    then autoninja stopped during scheduling:
+    third_party/test_fonts/test_fonts/Ahem.ttf was absent
+    ("missing and no known rule to make it"). The imputnet base
+    tarball contains no third_party/test_fonts entries at all,
+    but thorium_all pulls in content_shell -> web_test -> skia's
+    test_fonts_harddeps, so every file in the copy("test_fonts")
+    target is a build input. The fonts are not in the main
+    Chromium repo either: DEPS ships them as a separate GCS
+    tar.gz (see _test_fonts_gcs_object), which the tarball build
+    never fetched. Read the target's source list from
+    third_party/test_fonts/BUILD.gn at the pinned tag, fetch the
+    main-repo files (LICENSE) from the mirrors and the fonts
+    from the pinned GCS archive, and fail here in the setup
+    phase rather than inside autoninja.
+    """
+    fonts_root = chromium_src / "third_party" / "test_fonts"
+    build_gn_path = fonts_root / "BUILD.gn"
+    if build_gn_path.is_file():
+        build_gn_text = build_gn_path.read_text(
+            encoding="utf-8", errors="replace"
+        )
+    else:
+        body = _fetch_chromium_file(
+            tag, "third_party/test_fonts/BUILD.gn"
+        )
+        if body is None:
+            raise StageError(
+                "third_party/test_fonts/BUILD.gn is absent from "
+                "the tarball tree and could not be fetched from "
+                f"the Chromium mirrors at tag {tag}."
+            )
+        build_gn_path.parent.mkdir(parents=True, exist_ok=True)
+        build_gn_path.write_bytes(body)
+        build_gn_text = body.decode("utf-8", "replace")
+    wanted = _test_fonts_sources(build_gn_text)
+    if not wanted:
+        raise StageError(
+            "Parsed no sources from third_party/test_fonts/"
+            "BUILD.gn; refusing to continue with an incomplete "
+            "test_fonts tree."
+        )
+    missing = [
+        rel for rel in wanted if not (fonts_root / rel).is_file()
+    ]
+    if not missing:
+        log(f"\ntest_fonts: all {len(wanted)} files already present.")
+        return 0
+    log(f"\nFetching {len(missing)} test_fonts files the tarballs "
+        f"do not ship (tag {tag})...")
+    fetched = 0
+    needs_archive = False
+    for rel_path in missing:
+        if rel_path.startswith("test_fonts/"):
+            needs_archive = True
+            continue
+        body = _fetch_chromium_file(
+            tag, f"third_party/test_fonts/{rel_path}"
+        )
+        if body is None:
+            raise StageError(
+                f"test_fonts file no mirror has at {tag}: {rel_path}"
+            )
+        dest = fonts_root / rel_path
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(body)
+        fetched += 1
+    if needs_archive:
+        fetched += _fetch_test_fonts_archive(chromium_src, tag)
+    still_missing = [
+        rel for rel in wanted if not (fonts_root / rel).is_file()
+    ]
+    if still_missing:
+        shown = ", ".join(still_missing[:5])
+        if len(still_missing) > 5:
+            shown += f", ... ({len(still_missing)} files)"
+        raise StageError(
+            f"test_fonts still incomplete after fetching: {shown}"
+        )
+    log(f"test_fonts complete: {len(wanted)} files present "
+        f"({fetched} fetched).")
+    return fetched
+
+
 def filter_unappliable_series(thorium_root, chromium_src):
     """Drop Thorium series entries that still cannot apply.
 
@@ -1260,6 +1449,7 @@ def phase_setup(args, ctx, deadline):
     fetch_missing_series_files(
         thorium_root, chromium_src, args.chromium_tag
     )
+    fetch_missing_test_fonts(chromium_src, args.chromium_tag)
     filter_unappliable_series(thorium_root, chromium_src)
     log(f"\nApplying Thorium setup for profile --{args.profile} "
         "(overlays, patch series, GRD rebase).")
