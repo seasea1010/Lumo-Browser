@@ -10,8 +10,10 @@
 # GOOGLE_DEFAULT_CLIENT_SECRET）からのみ注入する。
 
 # Lumo の x86 プロファイル。setup.py のプロファイルと一致させること。
-# avx2 ビルドの場合は "avx2"、SSE3 フォールバックの場合は "sse3" にする。
-thorium_x86_profile = "avx2"
+# Thorium 本来の AVX2 リリースは "avx2_fma"（FMA/F16C あり）。
+# "avx2" は FMA/F16C なしの AVX2-min で、Skia の SkOpts.cpp が
+# コンパイルエラーになるため使わない。SSE3 フォールバックは "sse3"。
+thorium_x86_profile = "avx2_fma"
 target_os = "win"
 target_cpu = "x64"
 
