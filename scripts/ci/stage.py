@@ -40,8 +40,10 @@ Resume model (mirrors Helium's stage action):
     the build root as siblings: Thorium's tooling treats the Chromium
     root as the parent of the src dir and refuses overlapping
     checkout paths, so thorium/depot_tools must not sit under
-    C:/lumo-build. They are re-cloned by each stage's bootstrap phase
-    when missing.
+    C:/lumo-build. They are re-cloned when missing — by the
+    bootstrap phase, or by the ensure step in main() when a stage
+    resumes past bootstrap (run #11's build-2 resumed into the
+    build phase with no depot_tools and died immediately).
   * Exit code 42 means "build incomplete, resume in the next stage"
     (Helium's convention). It is NOT a failure.
   * Exit code 0 means the build finished; thorium.exe was verified to
@@ -959,14 +961,17 @@ def free_disk_space(build_root):
         log(f"Free disk: {before:.0f} GiB -> {after:.0f} GiB after cleanup.")
 
 
-def phase_bootstrap(args, ctx, deadline):
-    """Clone depot_tools + Thorium, unpack the Chromium tarballs."""
-    build_root = ctx["build_root"]
-    chromium_src = ctx["chromium_src"]
-    thorium_root = ctx["thorium_root"]
-    depot_tools = ctx["depot_tools"]
-    env = ctx["env"]
+def ensure_depot_tools(depot_tools, env, deadline):
+    """Clone depot_tools if missing, then initialize it (idempotent).
 
+    A present, initialized checkout is left completely alone.
+    depot_tools lives OUTSIDE the checkpoint zip, so this must run
+    not only in the bootstrap phase but also when a stage resumes
+    past bootstrap: the phase loop starts at the recorded phase and
+    never re-runs bootstrap, so run #11's build-2 resumed straight
+    into the build phase on a fresh runner and died with
+    'autoninja.py not found in depot_tools' — ninja never started.
+    """
     if not depot_tools.is_dir():
         log(f"\nCloning depot_tools into {depot_tools}")
         git_clone(DEPOT_TOOLS_REPO, depot_tools)
@@ -977,20 +982,42 @@ def phase_bootstrap(args, ctx, deadline):
     # after gclient / update_depot_tools runs once.
     initialize_depot_tools(depot_tools, env, deadline)
 
-    if not thorium_root.is_dir():
-        log(f"\nCloning Thorium into {thorium_root}")
-        git_clone(THORIUM_REPO, thorium_root, recursive=True)
-        git = find_executable("git")
-        run_checked(
-            [git, "checkout", args.thorium_commit], thorium_root, env=env
-        )
-        run_checked(
-            [git, "submodule", "update", "--init", "--recursive"],
-            thorium_root,
-            env=env,
-        )
-    else:
+
+def ensure_thorium(args, ctx, deadline):
+    """Clone Thorium at the pinned commit if missing (idempotent).
+
+    Thorium also lives outside the checkpoint zip, and the setup
+    phase needs its patch series — a stage resuming at (or before)
+    setup on a fresh runner must re-clone it first, the same hole
+    as depot_tools in run #11. `deadline` is unused today (the
+    clone is not budget-checked, exactly as in the bootstrap phase
+    this was extracted from); it keeps the ensure signatures alike.
+    """
+    thorium_root = ctx["thorium_root"]
+    env = ctx["env"]
+    if thorium_root.is_dir():
         log(f"\nUsing existing Thorium checkout: {thorium_root}")
+        return
+    log(f"\nCloning Thorium into {thorium_root}")
+    git_clone(THORIUM_REPO, thorium_root, recursive=True)
+    git = find_executable("git")
+    run_checked(
+        [git, "checkout", args.thorium_commit], thorium_root, env=env
+    )
+    run_checked(
+        [git, "submodule", "update", "--init", "--recursive"],
+        thorium_root,
+        env=env,
+    )
+
+
+def phase_bootstrap(args, ctx, deadline):
+    """Clone depot_tools + Thorium, unpack the Chromium tarballs."""
+    build_root = ctx["build_root"]
+    chromium_src = ctx["chromium_src"]
+
+    ensure_depot_tools(ctx["depot_tools"], ctx["env"], deadline)
+    ensure_thorium(args, ctx, deadline)
 
     if tarball_tree_complete(build_root, chromium_src, args.chromium_tag):
         log("Chromium tarball tree already complete; skipping download.")
@@ -1548,6 +1575,18 @@ def phase_build(args, ctx, deadline):
     """
     chromium_src = ctx["chromium_src"]
     out_dir = chromium_src / OUT_DIR_NAME
+    # Fail clearly when the tree this stage resumed from has no gn
+    # output (e.g. the checkpoint zip lost files to a 7z warning, or
+    # the state file advanced past a gn phase that never ran here):
+    # autoninja's own error for a missing build.ninja does not say
+    # the checkpoint is incomplete.
+    if not (out_dir / "build.ninja").is_file():
+        raise StageError(
+            f"gn output missing: {out_dir / 'build.ninja'} does not "
+            "exist, but the recorded phase is build. The checkpoint "
+            "this stage resumed from is incomplete; the gn phase "
+            "would have to run again to regenerate it."
+        )
     autoninja = ctx["depot_tools"] / "autoninja.py"
     if not autoninja.is_file():
         raise StageError(f"autoninja.py not found in depot_tools: {autoninja}")
@@ -1576,8 +1615,9 @@ def phase_build(args, ctx, deadline):
     if code != 0:
         raise StageError(
             f"autoninja failed with exit code {code}; fix the build "
-            f"error before re-running (the next stage resumes from the "
-            f"same tree, it does not start over)."
+            f"error before re-running. A failure uploads no "
+            f"checkpoint, so the next workflow run starts over "
+            f"from stage 1 — it does not resume this tree."
         )
     exe = out_dir / "thorium.exe"
     if not exe.is_file():
@@ -1778,8 +1818,8 @@ def main():
     #   Chromium root: C:/lumo-build        (src + marker + state)
     #   Thorium:       C:/thorium           (sibling, re-cloned per stage)
     #   depot_tools:   C:/depot_tools       (sibling, re-cloned per stage)
-    # The checkpoint only covers the build root; bootstrap re-clones
-    # Thorium/depot_tools when they are missing.
+    # The checkpoint only covers the build root; the ensure step
+    # re-clones Thorium/depot_tools when they are missing.
     depot_tools = build_root.parent / "depot_tools"
     thorium_root = build_root.parent / "thorium"
     chromium_src = build_root / "src"
@@ -1857,6 +1897,21 @@ def main():
     }
     try:
         index = PHASES.index(state["phase"])
+        if 0 < index < PHASES.index("done"):
+            # Resuming past bootstrap on a fresh runner: depot_tools
+            # and Thorium live outside the checkpoint zip and are
+            # gone, but the phase loop below starts at the recorded
+            # phase and never re-runs bootstrap. Re-create them
+            # (idempotently) before dispatching — run #11's build-2
+            # died because the build phase ran with no depot_tools.
+            # Thorium is only needed up to the setup phase.
+            log("Resuming past bootstrap; ensuring the out-of-"
+                "checkpoint prerequisites (depot_tools"
+                + (", Thorium" if index <= PHASES.index("setup") else "")
+                + ") are present.")
+            ensure_depot_tools(depot_tools, env, deadline)
+            if index <= PHASES.index("setup"):
+                ensure_thorium(args, ctx, deadline)
         for phase in PHASES[index:-1]:
             _CURRENT_PHASE["phase"] = phase
             phase_fns[phase](args, ctx, deadline)
@@ -1885,6 +1940,18 @@ def main():
         return 130
 
     write_state(build_root, {"phase": "done"})
+    # Zip the finished tree: build-final downloads THIS stage's
+    # build-state artifact to package lumo-windows-x64.zip, and the
+    # upload step in build-stage.yml uploads whatever zip this
+    # script leaves at --state-zip. Without this call the success
+    # path produced no zip at all (only the BudgetExpired path
+    # checkpointed), so build-final would have found no artifact
+    # the first time a stage actually finished the build.
+    try:
+        checkpoint(args, ctx)
+    except StageError as error:
+        log(f"error: final checkpoint failed: {error}", file=sys.stderr)
+        return EXIT_FAILURE
     set_output("finished", "true")
     log("\nStage complete: build finished.")
     return 0
