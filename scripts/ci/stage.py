@@ -1594,7 +1594,26 @@ def checkpoint(args, ctx):
 
     The zip contains the build-root directory itself (lumo-build/...),
     so the next stage extracts it with `7z x build-state.zip -oC:\\`.
+
+    Run #10 showed why this must be forgiving: the budget expired as
+    designed, autoninja stopped at 23774/81963 targets (~29%), and
+    then 7z exited 1 after writing 729,494 files (~6,280 MiB) because
+    12 files could not be opened. 7z exit 1 is only a *warning*
+    (some files unreadable); the old code treated any non-zero exit
+    as fatal via run_checked, so the whole checkpoint was discarded
+    and build-2 never started. This version therefore:
+
+    * closes stage.log before zipping -- stage.py itself holds it
+      open for append, and on Windows that handle can block 7z from
+      reading it (one of the likely locked files);
+    * passes -ssw so 7z still compresses files open for writing;
+    * accepts exit 0 and 1 (warning: some files missing from the
+      zip, which ninja can regenerate/rebuild on resume -- the bulk
+      of the compiled objects is preserved);
+    * retries once after 60s on a fatal exit (>= 2), giving
+      lingering ninja/siso/clang processes time to release files.
     """
+    global _LOG_FILE
     build_root = ctx["build_root"]
     zip_path = Path(args.state_zip)
     if zip_path.is_file():
@@ -1612,21 +1631,62 @@ def checkpoint(args, ctx):
     # conflicting checkouts can be gigabytes) and the tarball
     # download dir (archives are deleted after unpacking anyway; an
     # interrupted download is repeated by the next stage).
-    run_checked(
-        [
-            seven_zip,
-            "a",
-            "-tzip",
-            str(zip_path),
-            build_root.name,
-            "-mx=3",
-            "-mtc=on",
-            "-xr!_bad_scm",
-            f"-xr!{TARBALL_DIR_NAME}",
-        ],
-        build_root.parent,
-        env=ctx["env"],
-    )
+    # Close the mirrored log first: it lives inside the build root
+    # and this process holds it open for append. Reopen it after
+    # zipping so later log lines still land in the file.
+    if _LOG_FILE is not None:
+        try:
+            _LOG_FILE.flush()
+            _LOG_FILE.close()
+        except (OSError, ValueError):
+            pass
+        _LOG_FILE = None
+    try:
+        code = None
+        for attempt in (1, 2):
+            if zip_path.is_file():
+                zip_path.unlink()
+            code = run(
+                [
+                    seven_zip,
+                    "a",
+                    "-tzip",
+                    str(zip_path),
+                    build_root.name,
+                    "-mx=3",
+                    "-mtc=on",
+                    "-ssw",
+                    "-xr!_bad_scm",
+                    f"-xr!{TARBALL_DIR_NAME}",
+                ],
+                build_root.parent,
+                env=ctx["env"],
+            )
+            if code in (0, 1):
+                break
+            log(f"7z checkpoint attempt {attempt} failed with exit "
+                f"code {code}; {'retrying in 60s' if attempt == 1 else 'no retries left'}.")
+            if attempt == 1:
+                time.sleep(60)
+        if code not in (0, 1):
+            raise StageError(
+                f"7z checkpoint failed with exit code {code} after "
+                f"2 attempts: {seven_zip}"
+            )
+        if code == 1:
+            log("WARNING: 7z exited 1 (some files could not be read "
+                "and are missing from the checkpoint). The zip below "
+                "is still usable: ninja regenerates missing state "
+                "and rebuilds only the affected targets on resume.")
+    finally:
+        try:
+            _LOG_FILE = open(
+                build_root / "stage.log", "a", encoding="utf-8"
+            )
+        except OSError:
+            _LOG_FILE = None
+    if not zip_path.is_file() or zip_path.stat().st_size == 0:
+        raise StageError(f"checkpoint zip missing or empty: {zip_path}")
     size_gb = zip_path.stat().st_size / (1024 ** 3)
     log(f"Checkpoint written: {zip_path} ({size_gb:.1f} GiB).")
     if size_gb > 9:
