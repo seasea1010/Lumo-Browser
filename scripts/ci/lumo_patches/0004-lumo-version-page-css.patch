@@ -1,0 +1,16 @@
+diff --git a/components/webui/version/resources/about_version.css b/components/webui/version/resources/about_version.css
+index 40ec7ce..f6eddd7 100644
+--- a/components/webui/version/resources/about_version.css
++++ b/components/webui/version/resources/about_version.css
+@@ -79,6 +79,11 @@ body {
+   text-align: end;
+ }
+ 
++#lumo_credits {
++  font-size: 1.0em;
++  text-align: end;
++}
++
+ #useragent {
+   font-family: monospace;
+ }
