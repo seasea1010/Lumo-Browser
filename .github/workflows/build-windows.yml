@@ -23,8 +23,12 @@
 # confirmed). No SSE3 build is produced. The Thorium patches build
 # thorium.exe; build-final renames it to lumo.exe in the package.
 #
-# UNVERIFIED (has never run on GitHub Actions): see scripts/ci/stage.py.
-# The first real run will almost certainly need fixes.
+# Status: the stage chain ran end to end in run #12 (2026-11-15)
+# and the build completed in build-4. build-final failed in #12 on
+# disk space (it extracted the whole ~20.7 GiB tree next to the
+# ~10 GB checkpoint zip) and was rewritten afterwards to extract
+# only out/thorium and prune the build-only files; the rewritten
+# build-final has not run in CI yet. See scripts/ci/stage.py.
 name: Build Lumo for Windows
 
 on:
@@ -257,10 +261,48 @@ jobs:
           }
           if ($lastStage -eq 0) { throw 'No build stage ran successfully.' }
           if ($finished -ne 'true') {
-            throw "Build did not finish within 15 stages (last ran stage: $lastStage). Re-run the workflow; stage.py resumes from the checkpoint."
+            throw "Build did not finish within 15 stages (last ran stage: $lastStage). A new workflow run starts over from stage 1 — it cannot resume from this run's checkpoints (build-state artifacts are only chained inside a single run). Investigate why the build outgrew 15 stages before re-running."
           }
           "stage=$lastStage" >> $env:GITHUB_OUTPUT
           Write-Host "Build finished in stage $lastStage; packaging its build-state artifact."
+
+      - name: Free disk space for packaging
+        shell: pwsh
+        run: |
+          # Run #12's Package Lumo died of a full disk: the usable
+          # space on these runners is small and this job downloads a
+          # ~10 GB checkpoint zip. Show the starting point, remove
+          # large preinstalled tooling this job never uses (exact
+          # paths only, each guarded and non-fatal — the same
+          # allowlist philosophy as stage.py's free_disk_space),
+          # then show what it bought. The extraction below targets
+          # C:, so C: is the drive that matters most.
+          if (-not (Get-Command 7z -ErrorAction SilentlyContinue)) {
+            throw '7z is not available on this runner'
+          }
+          Write-Host 'Free space before cleanup:'
+          Get-PSDrive -PSProvider FileSystem |
+            Select-Object Name, @{n='FreeGiB';e={[math]::Round($_.Free / 1GB, 1)}} |
+            Format-Table -AutoSize
+          $candidates = @(
+            'C:\Android\android-sdk',
+            'C:\Program Files (x86)\Android',
+            'C:\Program Files\dotnet',
+            'C:\hostedtoolcache',
+            'C:\Program Files\MongoDB',
+            'C:\Program Files\MySQL',
+            'C:\Program Files\Microsoft SQL Server'
+          )
+          foreach ($p in $candidates) {
+            if (Test-Path $p) {
+              Write-Host "Removing unused preinstalled tooling: $p"
+              Remove-Item $p -Recurse -Force -ErrorAction SilentlyContinue
+            }
+          }
+          Write-Host 'Free space after cleanup:'
+          Get-PSDrive -PSProvider FileSystem |
+            Select-Object Name, @{n='FreeGiB';e={[math]::Round($_.Free / 1GB, 1)}} |
+            Format-Table -AutoSize
 
       - name: Download finished build state
         uses: actions/download-artifact@v4
@@ -268,44 +310,218 @@ jobs:
           name: lumo-build-state-${{ steps.last.outputs.stage }}
           path: build-state
 
-      - name: Extract finished build state
+      - name: Check disk space before extraction
         shell: pwsh
-        run: 7z x build-state/build-state.zip -oC:\ -y
+        run: |
+          $zip = Get-Item 'build-state\build-state.zip'
+          Write-Host "Checkpoint zip: $($zip.Name), $([math]::Round($zip.Length / 1GB, 2)) GiB"
+          7z l $zip.FullName | Select-Object -Last 4
+          # Integrity gate: verify every entry's CRC before
+          # packaging from this tree, so a checkpoint corrupted in
+          # upload/storage/download cannot quietly put a broken
+          # DLL into the shipped zip. Exit 1 is a warning only;
+          # exit >= 2 is fatal.
+          7z t $zip.FullName
+          if ($LASTEXITCODE -ge 2) { throw "Checkpoint integrity check failed (7z t exit $LASTEXITCODE): the checkpoint zip is corrupt or truncated; refusing to package from it." }
+          if ($LASTEXITCODE -eq 1) { Write-Host 'WARNING: 7z t exited 1 (warnings only); continuing.' }
+          $freeC = (Get-PSDrive C).Free / 1GB
+          $wsDrive = (Get-Item $env:GITHUB_WORKSPACE).PSDrive.Name
+          $freeWs = (Get-PSDrive $wsDrive).Free / 1GB
+          Write-Host "Free space: C: $([math]::Round($freeC, 1)) GiB, workspace drive ${wsDrive}: $([math]::Round($freeWs, 1)) GiB"
+          # The selective extraction below writes only the pruned
+          # browser tree (~4 GiB for run #12's tree) to C:, but if
+          # the 7z exclusion patterns ever miss, the raw out/thorium
+          # subtree is ~15 GiB. Fail early and clearly instead of
+          # dying halfway through the extraction like run #12 did.
+          if ($freeC -lt 10) {
+            throw "Not enough free space on C: for packaging: $([math]::Round($freeC, 1)) GiB free, need at least 10 GiB (the browser tree is extracted to C:\lumo-package)."
+          }
+
+      - name: Extract only the browser tree (out/thorium)
+        shell: pwsh
+        run: |
+          # NEVER extract the whole checkpoint like the old step
+          # did (`7z x build-state.zip -oC:\`): the full tree is
+          # ~20.7 GiB / 888k files, and holding it next to the
+          # ~10 GB zip is what filled the disk in run #12. Extract
+          # only lumo-build/src/out/thorium, excluding the
+          # build-only bulk (obj/, gen/, toolchains, intermediates,
+          # build-tool caches) already at extraction time. The
+          # prune step below then guarantees the exact package
+          # contents even if one of these patterns misses.
+          $tree = 'lumo-build/src/out/thorium'
+          $excludeDirs = @(
+            'obj', 'gen', 'toolchain',
+            'win_clang_x64_for_rust_host_build_tools',
+            'win_clang_x64_host_with_system_allocator',
+            'win_clang_x64_with_system_allocator',
+            'local_rustc_sysroot', 'test_fonts', 'pyproto', 'jsproto',
+            'ui', 'signing', 'initialexe'
+          )
+          $excludeFiles = @(
+            '*.ninja', '*.ninja_log', '*.ninja_deps', '*.lib', '*.exp',
+            '*.ilk', '*.pdb', '*.stamp', '*.rsp', '*.o', '*.obj',
+            '*.a', '*.d', '*mini_installer.exe', '*.runtime_deps',
+            '*_generator.exe', 'siso*', '.siso*'
+          )
+          $xargs = @('x', 'build-state\build-state.zip', '-oC:\lumo-package', '-y', "$tree/*")
+          foreach ($d in $excludeDirs) { $xargs += "-x!$tree/$d/*" }
+          foreach ($f in $excludeFiles) { $xargs += "-x!$f" }
+          & 7z @xargs
+          if ($LASTEXITCODE -ge 2) { throw "7z selective extraction failed: $LASTEXITCODE" }
+          if ($LASTEXITCODE -eq 1) { Write-Host 'WARNING: 7z exited 1 (some files could not be extracted); the package verification below decides whether the tree is usable.' }
+          $exe = 'C:\lumo-package\lumo-build\src\out\thorium\thorium.exe'
+          if (-not (Test-Path $exe)) {
+            Write-Host 'thorium.exe not found after selective extraction; top of the archive listing:'
+            7z l build-state\build-state.zip | Select-Object -First 40
+            throw "Built binary not found: $exe"
+          }
+          Get-Item $exe | Select-Object Name, Length | Format-List
+          # The ~10 GB checkpoint zip is no longer needed; free the
+          # workspace drive before the final zip is written there.
+          Remove-Item 'build-state' -Recurse -Force
+          Write-Host 'Free space after extraction and checkpoint deletion:'
+          Get-PSDrive -PSProvider FileSystem |
+            Select-Object Name, @{n='FreeGiB';e={[math]::Round($_.Free / 1GB, 1)}} |
+            Format-Table -AutoSize
+
+      - name: Prune build-only files from the tree
+        shell: pwsh
+        run: |
+          # Mirror the salvage packaging that produced the zip
+          # seasea1010 verified by launching lumo.exe on 2026-11-15
+          # (lumo-salvage/extract_dist.py + make_package.py, run
+          # against the same run #12 checkpoint: 552 files,
+          # 641,938,482 bytes unpacked). Deliberate differences
+          # from the salvage: setup.exe and setup.ex_ are also
+          # dropped (they are Chromium's installer binaries — the
+          # portable package runs lumo.exe directly, and an
+          # accidental setup.exe run would try to install the
+          # build AS Thorium and fight the user's existing Thorium
+          # install/profile), and the pruning happens in place
+          # instead of via a robocopy copy (a copy would double
+          # the tree's disk footprint for no benefit).
+          $outDir = 'C:\lumo-package\lumo-build\src\out\thorium'
+          # Top-level directories that are build tooling, not the
+          # browser (salvage DROP_DIRS, which include the old
+          # workflow's obj/gen/toolchain).
+          $dropDirs = @(
+            'obj', 'gen', 'toolchain',
+            'win_clang_x64_for_rust_host_build_tools',
+            'win_clang_x64_host_with_system_allocator',
+            'win_clang_x64_with_system_allocator',
+            'local_rustc_sysroot', 'test_fonts', 'pyproto', 'jsproto',
+            'ui', 'signing', 'initialexe'
+          )
+          foreach ($d in $dropDirs) {
+            $p = Join-Path $outDir $d
+            if (Test-Path $p) { Remove-Item $p -Recurse -Force }
+          }
+          # Intermediate/build files at ANY depth (salvage
+          # extract_dist.py's pattern list, matched on the name).
+          $intermediates = @(
+            '*.ninja', '*.ninja_log', '*.ninja_deps', '*.lib', '*.exp',
+            '*.ilk', '*.pdb', '*.stamp', '*.rsp', '*.o', '*.obj',
+            '*.a', '*.d', '*mini_installer.exe'
+          )
+          Get-ChildItem $outDir -Recurse -File | Where-Object {
+            $name = $_.Name
+            $hit = $false
+            foreach ($pat in $intermediates) { if ($name -like $pat) { $hit = $true; break } }
+            $hit
+          } | Remove-Item -Force
+          # Top-level files that are tools/caches, not the browser
+          # (salvage make_package.py's DROP_FILES + its prefix/
+          # suffix rules, plus setup.exe / setup.ex_ — see above).
+          $dropFiles = @(
+            'chrome.7z', 'chrome.packed.7z', 'policy_templates.zip',
+            'thorium_shell.exe', 'chromedriver.exe',
+            'LICENSE.chromedriver', 'THIRD_PARTY_NOTICES.chromedriver',
+            'content_shell.pak', 'content_shell.pak.info',
+            'shell_resources.pak',
+            'thorium-shell', 'thorium-shell.desktop',
+            'thorium_shell.ico', 'thorium_shell.png',
+            'headless_shell.exe',
+            'VkLayer_khronos_validation.dll',
+            'VkICD_mock_icd.dll', 'test_trace_processor.dll',
+            'protoc.exe', 'protoc-gen-js.exe', 'protozero_plugin.exe',
+            'protozero_descriptor_diff.exe', 'proto_extras_plugin.exe',
+            'flatc.exe', 'torque.exe', 'nasm.exe', 'clang-tblgen.exe',
+            'llvm-tblgen.exe', 'cppgen_plugin.exe',
+            'gen-regexp-special-case.exe', 'brotli.exe',
+            'pak_mingw32.exe', 'pak_mingw64.exe',
+            'make_top_domain_list_variables.exe',
+            'generate_colors_info.exe', 'signer_set_tool.exe',
+            'root_store_tool.exe', 'mksnapshot.exe',
+            'setup.exe', 'setup.ex_',
+            'args.gn', '.gitignore', '.thorium-setup-files.json',
+            'README.md', 'Logo.png', 'SmallLogo.png'
+          )
+          Get-ChildItem $outDir -File | Where-Object {
+            $name = $_.Name
+            ($dropFiles -contains $name) -or
+            $name.StartsWith('siso') -or $name.StartsWith('.siso') -or
+            $name.EndsWith('.runtime_deps') -or
+            $name.EndsWith('_generator.exe') -or
+            # Thorium Shell / content_shell companions: the shell
+            # is a separate developer app, not part of Lumo, and
+            # seasea1010 asked for its files to never ship in the
+            # portable zip (2026-11-15). thorium_shell.exe and
+            # content_shell.pak are in $dropFiles above; these
+            # patterns cover the rest (icons, launchers, paks).
+            $name -like 'thorium_shell*' -or
+            $name -like 'thorium-shell*' -or
+            $name -like 'content_shell*' -or
+            $name -like 'headless_shell*'
+          } | Remove-Item -Force
+          # Fail loudly if any shell file survived the prune, so a
+          # future build cannot silently ship them again.
+          $shellLeft = Get-ChildItem $outDir -File | Where-Object { $_.Name -like '*shell*' }
+          if ($shellLeft) { throw "Thorium Shell files still present after prune: $($shellLeft.Name -join ', ')" }
+          $files = Get-ChildItem $outDir -Recurse -File
+          $bytes = ($files | Measure-Object Length -Sum).Sum
+          Write-Host "Pruned tree: $($files.Count) files, $bytes bytes (salvage reference: 552 files / 641938482 bytes, minus setup.exe, setup.ex_ and the Thorium Shell companion files)."
 
       - name: Package portable zip
         shell: pwsh
         run: |
-          $outDir = 'C:\lumo-build\src\out\thorium'
+          $outDir = 'C:\lumo-package\lumo-build\src\out\thorium'
           $exe = Join-Path $outDir 'thorium.exe'
           if (-not (Test-Path $exe)) { throw "Built binary not found: $exe" }
-          $dist = Join-Path $env:GITHUB_WORKSPACE 'dist'
-          if (Test-Path $dist) { Remove-Item $dist -Recurse -Force }
-          New-Item $dist -ItemType Directory | Out-Null
-          # Copy the whole output dir except build-only intermediates.
-          # robocopy exit codes 0-7 mean success (copied / extra files);
-          # 8 and above mean failure.
-          robocopy $outDir $dist /MIR `
-            /XD obj gen toolchain `
-            /XF *.ninja *.ninja_log *.ninja_deps *.lib *.exp *.ilk *.pdb `
-               *.stamp *.rsp *.o *.obj *.a *.d `
-               *mini_installer.exe
-          if ($LASTEXITCODE -ge 8) { throw "robocopy failed: $LASTEXITCODE" }
-          # Thorium's patches name the binary thorium.exe; the portable
-          # package ships it as lumo.exe. UNVERIFIED: renaming has never
-          # been tested (see scripts/ci/stage.py). The mini installer is
-          # NOT included: it installs the product as Thorium until
-          # Lumo rebranding patches exist (see PLAN.md).
-          Rename-Item (Join-Path $dist 'thorium.exe') 'lumo.exe'
+          # Thorium's patches name the binary thorium.exe; the
+          # portable package ships it as lumo.exe. The rename is
+          # VERIFIED: the run #12 salvage package with this rename
+          # launched on seasea1010's Windows PC (2026-11-15). The
+          # mini installer is NOT included, and setup.exe is
+          # pruned above: both would install the product as
+          # Thorium until Lumo rebranding patches exist (see
+          # PLAN.md).
+          Rename-Item $exe 'lumo.exe'
           @'
           Lumo — pre-release portable build (AVX2, Windows x64).
           Built from a Thorium-style Chromium fork (Chromium 156).
           Proprietary software, Copyright (c) 2026 seasea1010.
           All rights reserved. Do not use, copy, or redistribute.
           See LICENSE.md in the Lumo-Browser repository.
-          '@ | Set-Content -Path (Join-Path $dist 'README-LUMO.txt') -Encoding UTF8
-          if (-not (Test-Path (Join-Path $dist 'lumo.exe'))) { throw 'lumo.exe missing after rename' }
-          if (Test-Path (Join-Path $dist 'thorium.exe')) { throw 'thorium.exe still present after rename' }
-          7z a -tzip lumo-windows-x64.zip .\dist\* -mx=3 -mtc=on
+          '@ | Set-Content -Path (Join-Path $outDir 'README-LUMO.txt') -Encoding UTF8
+          if (-not (Test-Path (Join-Path $outDir 'lumo.exe'))) { throw 'lumo.exe missing after rename' }
+          if (Test-Path (Join-Path $outDir 'thorium.exe')) { throw 'thorium.exe still present after rename' }
+          if (Test-Path (Join-Path $outDir 'setup.exe')) { throw 'setup.exe still present after prune' }
+          # Core runtime files (the salvage package's assertions):
+          # the browser cannot start without these. The locales
+          # entry doubles as a canary that the extraction really
+          # recursed into subdirectories.
+          $core = @(
+            'lumo.exe', 'chrome.dll', 'chrome_elf.dll', 'icudtl.dat',
+            'resources.pak', 'chrome_100_percent.pak',
+            'chrome_200_percent.pak', 'snapshot_blob.bin',
+            'v8_context_snapshot.bin', 'libEGL.dll', 'libGLESv2.dll',
+            'locales\en-US.pak'
+          )
+          $missing = $core | Where-Object { -not (Test-Path (Join-Path $outDir $_)) }
+          if ($missing) { throw "Core runtime files missing from the extracted tree: $($missing -join ', ')" }
+          7z a -tzip lumo-windows-x64.zip "$outDir\*" -mx=3 -mtc=on
+          if ($LASTEXITCODE -ne 0) { throw "7z packaging failed: $LASTEXITCODE" }
           Get-Item lumo-windows-x64.zip | Select-Object Name, Length | Format-List
 
       - name: Upload portable package

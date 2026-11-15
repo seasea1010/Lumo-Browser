@@ -11,15 +11,20 @@
 #   * stage.py exits 0 when the build finishes, 42 when the time
 #     budget expires (resume in the next stage), anything else on a
 #     real failure.
-#   * The build-state artifact is uploaded after EVERY stage that ran
-#     (finished or not), named lumo-build-state-<this stage>, so
-#     build-final can download the tree from the stage that finished.
-#     Per-stage names avoid the "multiple artifacts with the same name"
-#     problem of reusing one name.
+#   * The build-state artifact is uploaded after every stage whose
+#     stage step SUCCEEDED — stage.py exited 0 (finished) or 42
+#     (budget expired) — named lumo-build-state-<this stage>, so the
+#     next stage (or build-final, for the finishing stage) can
+#     download the tree. Per-stage names avoid the "multiple
+#     artifacts with the same name" problem of reusing one name.
+#     On a real failure (any other exit code) the upload step is
+#     skipped (the default success() condition): no checkpoint is
+#     carried over, the stage chain stops, and a new workflow run
+#     starts over from stage 1.
 #   * The job timeout is 330 minutes; stage.py stops work after ~4h45m
 #     so there is time left to zip and upload the checkpoint.
 #
-# UNVERIFIED (has never run on GitHub Actions): see scripts/ci/stage.py.
+# Ran end to end in run #12 (2026-11-15); see scripts/ci/stage.py.
 name: Lumo build stage
 
 on:
@@ -109,7 +114,19 @@ jobs:
       - name: Extract previous build state
         if: inputs.from-artifact
         shell: pwsh
-        run: 7z x build-state/${{ env.BUILD_STATE_ZIP }} -oC:\ -y
+        run: |
+          # Integrity gate: nothing else verifies the checkpoint
+          # hand-off between stages. `7z t` checks every entry's
+          # CRC, so a checkpoint truncated or corrupted in upload,
+          # storage, or download fails HERE, loudly, instead of
+          # resuming a quietly incomplete tree (stage.py only
+          # verifies the zip it wrote exists and is non-empty).
+          # Exit 1 is a warning only — the same tolerance
+          # checkpoint() applies when writing; exit >= 2 is fatal.
+          7z t build-state/${{ env.BUILD_STATE_ZIP }}
+          if ($LASTEXITCODE -ge 2) { throw "Checkpoint integrity check failed (7z t exit $LASTEXITCODE): build-state/${{ env.BUILD_STATE_ZIP }} is corrupt or truncated; refusing to resume from it." }
+          if ($LASTEXITCODE -eq 1) { Write-Host 'WARNING: 7z t exited 1 (warnings only); continuing to extraction.' }
+          7z x build-state/${{ env.BUILD_STATE_ZIP }} -oC:\ -y
 
       - name: Run build stage
         id: stage
@@ -134,8 +151,11 @@ jobs:
           else echo "finished=false" >> "$GITHUB_OUTPUT"; exit "$code"; fi
 
       - name: Upload build state for the next stage
-        # Uploaded whether the stage finished or not: if it finished,
-        # build-final downloads this artifact to package the tree.
+        # Runs only when the stage step above succeeded (stage.py
+        # exit 0 = finished, 42 = budget expired): this artifact is
+        # what the next stage resumes from, and build-final downloads
+        # the finishing stage's one to package the tree. On a real
+        # failure this step is skipped and no state is uploaded.
         uses: actions/upload-artifact@v4
         with:
           name: lumo-build-state-${{ inputs.stage }}
