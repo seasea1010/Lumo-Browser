@@ -19,7 +19,10 @@ Pipeline (all inside the job's time budget):
      the pinned tag (156.0.8078.80). The tarballs are published per
      exact version, so there is nothing to check out.
   3. setup     -- Thorium's setup.py --avx2: copy overlays, apply the
-     Thorium patch series, GRD/XTB rebase.
+     Thorium patch series, GRD/XTB rebase. Lumo's series overrides
+     (audit corrections) run just before setup.py and Lumo's
+     branding (patches, icon, strings) just after it; see the
+     "Lumo series overrides and branding" section below.
   4. gn        -- write out/thorium/args.gn from args.gn.example, injecting
      the Google API keys from the environment (Secrets), then `gn gen`.
   5. build     -- autoninja thorium_all + thorium_installer with a time
@@ -51,23 +54,28 @@ Resume model (mirrors Helium's stage action):
     download the finished tree.
   * Any other non-zero exit code is a real failure and fails the job.
 
-UNVERIFIED (has never run on GitHub Actions):
-  * The full build has never completed; every run so far died in
-    build-1 on disk space, and later problems (SDK/toolchain
-    versions, artifact size limits, patch application on the pinned
-    tag, gn args, ninja edge cases) are still waiting behind it.
-  * Run #8's tarball acquisition is new. The two archives and their
-    SHA-256 hashes were verified locally (2026-11-13) against the
-    release's official SHA256SUMS, and their listings contain the
-    complete tree (587,942 + 78,486 entries). Unpacked, the combined
-    tree measured 14.4 GiB / ~640k files locally. Unpacking uses the
-    runner's bsdtar (zstd-capable on Windows Server 2025) with a 7z
-    streaming fallback; neither path has run in CI yet.
+Status after run #12 (2026-11-15):
+  * The full build COMPLETED in CI: run #12's build-4 finished the
+    compile and checkpointed the finished tree (lumo-build-state-4,
+    9.19 GiB). The tarball acquisition, setup, gn gen and the stage
+    chain all ran end to end. build-final (Package Lumo) then
+    failed on DISK SPACE — it extracted the whole ~20.7 GiB tree
+    next to the ~10 GB checkpoint zip — and was rewritten to
+    extract only out/thorium and prune the build-only files (see
+    build-windows.yml). The rewritten build-final has not run in
+    CI yet.
+  * Renaming thorium.exe to lumo.exe at packaging time is VERIFIED:
+    a package salvaged from the run #12 checkpoint with that rename
+    was launched by seasea1010 on Windows (2026-11-15;
+    chrome://version showed lumo.exe, 156.0.8078.80).
+  * The build-state zip is large (5.9 GiB at stage 1, growing to
+    9.19 GiB for the finished tree in run #12). Zipping and
+    uploading it must fit the reserve after the work deadline —
+    see MAX_SECONDS_AFTER_JOB_START.
   * The tarball tree has no .git and no .gclient. Thorium's
     setup.py only checks that src/.git exists and its patch series
     runs `git apply` inside the tree, so bootstrap creates a bare
-    `git init` repo there. Whether every Thorium script accepts
-    that shim is unverified.
+    `git init` repo there.
   * Thorium's patch series modifies ~51 files the tarballs do not
     ship (chrome/android/java/** and friends, which only an
     Android checkout carries). phase_setup fetches those from the
@@ -76,13 +84,11 @@ UNVERIFIED (has never run on GitHub Actions):
     safety net). Locally validated 2026-11-13 against the pinned
     Thorium commit: fetch 51/51, filter dropped nothing, and
     setup.py completed end to end on the tarball tree.
-  * The build-state zip can be tens of GB. GitHub Artifacts may refuse
-    it, and zipping/uploading may eat the time reserve.
-  * Renaming thorium.exe to lumo.exe at packaging time is assumed to
-    work for a portable build; it has never been tested.
-  * Thorium's own branding (About page, installer product name, etc.)
-    still says Thorium. Full Lumo rebranding needs separate patches
-    (see PLAN.md).
+  * Thorium's own branding (About page, installer product name,
+    user-data folder name) still says Thorium, so the packaged
+    browser shares an installed Thorium's profile. Full Lumo
+    rebranding (product name, user-data dir, icon, About credits)
+    is the build #13 work (see PLAN.md).
 """
 
 import argparse
@@ -191,10 +197,19 @@ TARBALL_MARKER = ".lumo-tarball-tree.json"
 # (5.5h); the remaining ~45 minutes are reserved for zipping the build
 # state and uploading the artifact. Tunable via --budget-seconds.
 DEFAULT_BUDGET_SECONDS = 4 * 60 * 60 + 45 * 60
-# Absolute cap: never work past 5h after the job started, even if the
-# per-stage budget would allow more (mirrors Helium's 5.5h cap, tightened
-# for our 330-minute job timeout).
-MAX_SECONDS_AFTER_JOB_START = 5 * 60 * 60
+# Absolute cap: never work past 4h45m after the job started, even if
+# the per-stage budget would allow more. Together with the job
+# timeout below this guarantees at least ~45 minutes for zipping
+# the checkpoint and uploading the artifact. Run #12's zip + upload
+# took ~10-15 minutes at 6-9 GiB, but the zip grows with the tree,
+# and a checkpoint lost to the job timeout loses the whole stage —
+# the reserve is worth more than the last compile minutes before
+# the cap (audit before run #13; previously 5h, a ~30 minute
+# worst-case reserve).
+MAX_SECONDS_AFTER_JOB_START = 4 * 60 * 60 + 45 * 60
+# The Actions job timeout (build-stage.yml: timeout-minutes: 330).
+# Used only to log the checkpoint/upload reserve; keep in sync.
+JOB_TIMEOUT_SECONDS = 330 * 60
 
 PHASES = ("bootstrap", "version", "setup", "gn", "build", "done")
 
@@ -1469,8 +1484,435 @@ def filter_unappliable_series(thorium_root, chromium_src):
     return dropped
 
 
+# ---------------------------------------------------------------------------
+# Lumo series overrides and branding (run #13)
+#
+# Two adjustments happen around Thorium's setup.py:
+#
+#  * BEFORE setup.py: apply_lumo_series_overrides() edits the fresh
+#    Thorium clone's patch series. The 2026-11-15 audit of Thorium's
+#    152 patches found four whose behavior Lumo does not ship
+#    (download quarantine removal, FTP on by default, DoH bypassing
+#    managed/parental DNS controls, and the first-run auto-open of
+#    thorium.rocks), plus one patch (#121) whose UNCONDITIONAL part
+#    (silencing Safe Browsing dangerous-download reports) must be
+#    undone while its switch-gated part may stay. Dropping a series
+#    entry means Thorium's setup never applies that patch at all.
+#
+#  * AFTER setup.py: apply_lumo_branding() turns the Thorium tree
+#    into Lumo: Lumo's own git patches (scripts/ci/lumo_patches/ —
+#    install_static identity incl. the Lumo_Browser user-data
+#    directory, the BRANDING file, the version page credits), the
+#    decided flat "L" icon copied over Thorium's theme resources,
+#    and targeted GRD/XTB string replacements (product name, About
+#    company/copyright, first-profile name, the Chrome Labs title).
+#    GRD strings are edited by message name rather than by patch
+#    because Thorium's GRD rebase rewrites them during setup.py, so
+#    their exact post-setup wording is Thorium-version data, not
+#    something a static patch context should depend on.
+#
+# Idempotency (the setup phase may re-run after a budget expiry):
+# the series overrides re-derive from the fresh Thorium clone (and
+# are no-ops on an already-edited clone), the git patches use a
+# both-ways check like Thorium's apply_series.py (reverse check
+# passes = already applied, skip), the icon
+# copies are plain overwrites, and every string replacement treats
+# "already replaced" as success.
+# ---------------------------------------------------------------------------
+
+LUMO_SERIES_DROPS = (
+    # Thorium patch audit (2026-11-15) corrections; the numbers are
+    # the audit's patch indices.
+    "other/disable-download-quarantine.patch",        # #122
+    "other/ftp-support-thorium.patch",                # #67
+    "other/keep-doh-enabled-on-managed-devices.patch",  # #112
+    "other/thorium-first-run-welcome.patch",          # #71
+)
+
+LUMO_SB_REPORT_PATCH = "other/allow-insecure-downloads.patch"  # #121
+LUMO_SB_REPORT_TARGET = (
+    "chrome/browser/download/chrome_download_manager_delegate.cc"
+)
+
+
+def drop_lumo_series_entries(thorium_root):
+    """Drop the LUMO_SERIES_DROPS entries from Thorium's series."""
+    series_path = thorium_root / "patch_scripts" / "series" / "series"
+    if not series_path.is_file():
+        raise StageError(f"Thorium patch series not found: {series_path}")
+    kept_lines = []
+    dropped = []
+    for raw in series_path.read_text(encoding="utf-8").splitlines():
+        line = raw.split("#", 1)[0].strip()
+        rel = None
+        if line and not line.startswith("["):
+            parts = line.split(":")
+            if len(parts) == 2 and not parts[0].endswith(".patch"):
+                rel = parts[1].strip()
+            else:
+                rel = line
+        if rel in LUMO_SERIES_DROPS:
+            dropped.append(rel)
+            continue
+        kept_lines.append(raw)
+    if dropped:
+        series_path.write_text(
+            "\n".join(kept_lines) + "\n", encoding="utf-8"
+        )
+        for rel in dropped:
+            log(f"Lumo series override: dropping {rel} "
+                "(audit correction; see stage.py header).")
+    return dropped
+
+
+def restore_safe_browsing_reporting(thorium_root):
+    """Undo the unconditional part of Thorium patch #121.
+
+    allow-insecure-downloads.patch gates most of its behavior
+    behind the --allow-insecure-downloads switch (acceptable), but
+    one hunk stubs MaybeSendDangerousDownloadOpenedReport /
+    MaybeSendDangerousDownloadCanceledReport to `return;`
+    UNCONDITIONALLY, so Safe Browsing never hears about dangerous
+    downloads even without the switch. Remove exactly that hunk
+    from the clone's copy of the patch; the rest of the patch is
+    untouched. Returns True when the hunk was removed.
+    """
+    patch_path = thorium_root / LUMO_SB_REPORT_PATCH
+    if not patch_path.is_file():
+        raise StageError(f"Thorium patch not found: {patch_path}")
+    text = patch_path.read_text(encoding="utf-8")
+    if "MaybeSendDangerousDownloadOpenedReport" not in text:
+        log("Safe Browsing reporting already restored in "
+            f"{LUMO_SB_REPORT_PATCH}; skipping.")
+        return False
+    sections = re.split(r"(?m)^(?=diff --git )", text)
+    out = []
+    removed = 0
+    for section in sections:
+        if not section.startswith("diff --git "):
+            out.append(section)
+            continue
+        header = section.split("\n", 1)[0]
+        if f" b/{LUMO_SB_REPORT_TARGET}" not in header:
+            out.append(section)
+            continue
+        chunks = re.split(r"(?m)^(?=@@ )", section)
+        kept_chunks = []
+        for chunk in chunks:
+            if (chunk.startswith("@@")
+                    and "MaybeSendDangerousDownload" in chunk):
+                removed += 1
+                continue
+            kept_chunks.append(chunk)
+        out.append("".join(kept_chunks))
+    if removed != 1:
+        raise StageError(
+            f"expected to remove exactly 1 Safe Browsing report hunk "
+            f"from {LUMO_SB_REPORT_PATCH}, removed {removed}; the "
+            "pinned Thorium patch format may have changed.")
+    new_text = "".join(out)
+    if ("MaybeSendDangerousDownloadOpenedReport" in new_text
+            or "ShouldBlockFile" not in new_text):
+        raise StageError(
+            "Safe Browsing report restoration produced an "
+            "unexpected patch; refusing to continue.")
+    patch_path.write_text(new_text, encoding="utf-8")
+    log("Lumo series override: restored Safe Browsing "
+        "dangerous-download reporting (removed the unconditional "
+        f"stub hunk from {LUMO_SB_REPORT_PATCH}; the "
+        "--allow-insecure-downloads switch behavior is unchanged).")
+    return True
+
+
+def apply_lumo_series_overrides(thorium_root):
+    """All pre-setup edits to the Thorium clone (audit corrections)."""
+    drop_lumo_series_entries(thorium_root)
+    restore_safe_browsing_reporting(thorium_root)
+
+
+LUMO_ICON_COPIES = (
+    # (asset in scripts/ci/lumo_branding/, destination in the tree)
+    ("app.ico", "chrome/app/theme/chromium/win/chromium.ico"),
+    ("app.ico", "chrome/app/theme/chromium/win/chromium_doc.ico"),
+    ("app.ico", "chrome/app/theme/chromium/win/chromium_pdf.ico"),
+    ("product_logo_16.png",
+     "chrome/app/theme/chromium/product_logo_16.png"),
+    ("product_logo_24.png",
+     "chrome/app/theme/chromium/product_logo_24.png"),
+    ("product_logo_48.png",
+     "chrome/app/theme/chromium/product_logo_48.png"),
+    ("product_logo_64.png",
+     "chrome/app/theme/chromium/product_logo_64.png"),
+    ("product_logo_128.png",
+     "chrome/app/theme/chromium/product_logo_128.png"),
+    ("product_logo_256.png",
+     "chrome/app/theme/chromium/product_logo_256.png"),
+    ("product_logo_16.png",
+     "chrome/app/theme/default_100_percent/chromium/product_logo_16.png"),
+    ("product_logo_32.png",
+     "chrome/app/theme/default_100_percent/chromium/product_logo_32.png"),
+    # The 200% directory stores physical pixels: its "16" file is
+    # 32px and its "32" file is 64px (verified against Thorium's
+    # overlay), so the assets shift one size up.
+    ("product_logo_32.png",
+     "chrome/app/theme/default_200_percent/chromium/product_logo_16.png"),
+    ("product_logo_64.png",
+     "chrome/app/theme/default_200_percent/chromium/product_logo_32.png"),
+    ("tiles_logo.png", "chrome/app/theme/chromium/win/tiles/Logo.png"),
+    ("tiles_small_logo.png",
+     "chrome/app/theme/chromium/win/tiles/SmallLogo.png"),
+)
+
+# grit translation fingerprint of the message "Experiments"
+# (IDS_WINDOW_TITLE_EXPERIMENTS, the Chrome Labs bubble title):
+# int(md5("Experiments").hexdigest()[:16], 16). Thorium's rebase
+# turns the Japanese title into "Thorium 試験運用機能"; Lumo's
+# decided form keeps Thorium visible in parentheses.
+LUMO_LABS_TITLE_XTB_ID = "5199729219167945352"
+LUMO_LABS_TITLE_JA = "Lumo 試験運用機能（Thorium 試験運用機能）"
+
+
+def _replace_grd_message(text, name, expected_bodies, new_body, desc):
+    """Replace the body of every <message name=...> whose stripped
+    body is in expected_bodies. Returns (new_text, count). Raises
+    StageError when no matching message exists and the new body is
+    not already present (i.e. the string drifted unexpectedly)."""
+    pattern = re.compile(
+        r'(<message name="' + re.escape(name) + r'"[^>]*>)(.*?)(</message>)',
+        re.S,
+    )
+    count = 0
+    already = 0
+
+    def repl(match):
+        nonlocal count, already
+        body = match.group(2)
+        stripped = body.strip()
+        if stripped == new_body:
+            already += 1
+            return match.group(0)
+        if stripped in expected_bodies:
+            count += 1
+            return (match.group(1)
+                    + body.replace(stripped, new_body, 1)
+                    + match.group(3))
+        return match.group(0)
+
+    new_text = pattern.sub(repl, text)
+    if count == 0 and already == 0:
+        raise StageError(
+            f"{desc}: no <message name=\"{name}\"> with an expected "
+            f"body {sorted(expected_bodies)} found; the string may "
+            "have drifted in the pinned Thorium/Chromium.")
+    return new_text, count
+
+
+def _replace_copyright_message(text, desc):
+    """IDS_ABOUT_VERSION_COPYRIGHT: keep the <ph name="YEAR">
+    element, replace the author tail after it."""
+    pattern = re.compile(
+        r'(<message name="IDS_ABOUT_VERSION_COPYRIGHT"[^>]*>)'
+        r"(.*?)"
+        r"(</message>)",
+        re.S,
+    )
+    new_tail = (" seasea1010. Based on Thorium and Chromium "
+                "(BSD License).")
+    count = 0
+    already = 0
+
+    def repl(match):
+        nonlocal count, already
+        body = match.group(2)
+        if new_tail in body:
+            already += 1
+            return match.group(0)
+        if "The Chromium Authors" not in body \
+                and "The Thorium Authors" not in body:
+            return match.group(0)  # e.g. the Google-branded variant
+        new_body, n = re.subn(
+            r"(</ph>)[^<]*", lambda m: m.group(1) + new_tail, body)
+        if n != 1:
+            return match.group(0)
+        count += 1
+        return match.group(1) + new_body + match.group(3)
+
+    new_text = pattern.sub(repl, text)
+    if count == 0 and already == 0:
+        raise StageError(
+            f"{desc}: IDS_ABOUT_VERSION_COPYRIGHT with a Chromium/"
+            "Thorium author tail not found; the string may have "
+            "drifted in the pinned Thorium/Chromium.")
+    return new_text, count
+
+
+def _replace_xtb_translation(text, translation_id, new_body, desc):
+    """Replace one <translation id=...> body in an XTB file."""
+    pattern = re.compile(
+        r'(<translation id="' + re.escape(translation_id) + r'">)'
+        r"(.*?)"
+        r"(</translation>)",
+        re.S,
+    )
+    match = pattern.search(text)
+    if not match:
+        raise StageError(
+            f"{desc}: translation id {translation_id} not found; "
+            "the string may have drifted in the pinned Thorium.")
+    if match.group(2) == new_body:
+        return text, 0
+    return (text[:match.start(2)] + new_body + text[match.end(2):]), 1
+
+
+def lumo_string_replacements(chromium_src):
+    """Targeted GRD/XTB string edits for the Lumo brand (post-setup).
+
+    Returns a list of (description, replacements) for logging.
+    Raises StageError on unexpected drift — a loud failure here is
+    better than silently shipping Thorium strings.
+    """
+    results = []
+
+    path = chromium_src / "chrome/app/chromium_strings.grd"
+    text = path.read_text(encoding="utf-8")
+    total = 0
+    for name, expected, new in (
+        ("IDS_PRODUCT_NAME", ("Chromium", "Thorium"), "Lumo"),
+        ("IDS_SHORT_PRODUCT_NAME", ("Chromium", "Thorium"), "Lumo"),
+        ("IDS_ABOUT_VERSION_COMPANY_NAME",
+         ("The Chromium Authors", "The Thorium Authors"), "seasea1010"),
+    ):
+        text, n = _replace_grd_message(
+            text, name, set(expected), new, str(path))
+        total += n
+    text, n = _replace_copyright_message(text, str(path))
+    total += n
+    if total:
+        path.write_text(text, encoding="utf-8")
+    results.append(("chromium_strings.grd (product name, About "
+                     "company/copyright)", total))
+
+    path = chromium_src / "chrome/app/generated_resources.grd"
+    text = path.read_text(encoding="utf-8")
+    text, n = _replace_grd_message(
+        text, "IDS_WINDOW_TITLE_EXPERIMENTS", {"Experiments"},
+        "Lumo Experiments (Thorium Experiments)", str(path))
+    if n:
+        path.write_text(text, encoding="utf-8")
+    results.append(("generated_resources.grd (Chrome Labs title)", n))
+
+    path = chromium_src / "chrome/app/profiles_strings.grdp"
+    text = path.read_text(encoding="utf-8")
+    text, n = _replace_grd_message(
+        text, "IDS_DEFAULT_PROFILE_NAME", {"First user"},
+        "Lumo-Test-Account", str(path))
+    if n:
+        path.write_text(text, encoding="utf-8")
+    results.append(("profiles_strings.grdp (first profile name)", n))
+
+    path = (chromium_src
+            / "chrome/app/resources/generated_resources_ja.xtb")
+    text = path.read_text(encoding="utf-8")
+    text, n = _replace_xtb_translation(
+        text, LUMO_LABS_TITLE_XTB_ID, LUMO_LABS_TITLE_JA, str(path))
+    if n:
+        path.write_text(text, encoding="utf-8")
+    results.append(("generated_resources_ja.xtb (Labs title, ja)", n))
+
+    return results
+
+
+def _git_apply_both_ways(git, chromium_src, patch_path, env, deadline):
+    """git apply with a both-ways idempotency check.
+
+    The REVERSE check runs first: a patch whose result is already
+    in the tree is skipped, even if its context would also match
+    somewhere else in the forward direction (a small hunk with
+    common context lines, e.g. a CSS rule appended after a repeated
+    pattern, could otherwise be applied twice at a wrong offset).
+    """
+    rel = patch_path.name
+    code = run(
+        [git, "apply", "--check", "--reverse", str(patch_path)],
+        chromium_src, env=env, timeout_at=deadline)
+    if code == 0:
+        log(f"Lumo branding: {rel} already applied; skipping.")
+        return False
+    code = run(
+        [git, "apply", "--check", str(patch_path)],
+        chromium_src, env=env, timeout_at=deadline)
+    if code == 0:
+        run_checked(
+            [git, "apply", str(patch_path)],
+            chromium_src, env=env, timeout_at=deadline)
+        log(f"Lumo branding: applied {rel}.")
+        return True
+    raise StageError(
+        f"Lumo branding patch {rel} neither applies nor is already "
+        "applied; the post-Thorium tree may have drifted.")
+
+
+def apply_lumo_branding(args, ctx, deadline):
+    """Turn the post-setup Thorium tree into Lumo (see header)."""
+    repo_root = ctx["repo_root"]
+    chromium_src = ctx["chromium_src"]
+    env = ctx["env"]
+    git = find_executable("git")
+
+    patch_dir = repo_root.joinpath(*("scripts", "ci", "lumo_patches"))
+    patches = sorted(patch_dir.glob("*.patch"))
+    if not patches:
+        raise StageError(f"no Lumo branding patches found in {patch_dir}")
+    for patch_path in patches:
+        _git_apply_both_ways(git, chromium_src, patch_path, env, deadline)
+
+    asset_dir = repo_root.joinpath(*("scripts", "ci", "lumo_branding"))
+    for asset_name, dest_rel in LUMO_ICON_COPIES:
+        source = asset_dir / asset_name
+        dest = chromium_src / dest_rel
+        if not source.is_file():
+            raise StageError(f"Lumo branding asset missing: {source}")
+        if not dest.parent.is_dir():
+            raise StageError(
+                f"Lumo icon destination directory missing: {dest.parent}")
+        shutil.copyfile(source, dest)
+    log(f"Lumo branding: copied the Lumo icon over "
+        f"{len(LUMO_ICON_COPIES)} theme resource files.")
+
+    for desc, n in lumo_string_replacements(chromium_src):
+        log(f"Lumo branding: {desc}: {n} replacement(s).")
+    log("Lumo branding complete.")
+
+
 def phase_setup(args, ctx, deadline):
-    """Thorium's setup.py: overlays + patch series + GRD rebase."""
+    """Thorium's setup.py: overlays + patch series + GRD rebase.
+
+    Re-running this phase after a budget expiry is safe by design
+    (audited before run #13 against the pinned Thorium):
+      * the fetch/filter steps below skip files that already exist
+        and re-derive everything from the fresh Thorium clone;
+      * setup.py copies its overlays with plain overwrites and
+        writes its ownership manifest (.thorium-setup-files.json)
+        BEFORE mutating the tree, so an interrupted run leaves a
+        manifest the next run can clean up from;
+      * apply_series.py checks every patch both ways: when the
+        forward `git apply --check` fails but the reverse check
+        passes, the patch is reported "already applied" and
+        SKIPPED, not an error — so a series interrupted halfway
+        resumes cleanly instead of dying on the first patch.
+    The one step not proven idempotent is the GRD/XTB rebase at
+    the end of setup.py: a budget expiry inside it makes the next
+    stage re-run it on an already-rebased tree. The window is
+    narrow (the rebase takes minutes; setup as a whole is a small
+    fraction of a stage's budget) and there is no marker to resume
+    it by; if it ever breaks, it fails loudly here in the setup
+    phase rather than corrupting the build silently.
+    The Lumo steps wrapped around setup.py are idempotent by
+    construction (see the branding section header): the series
+    overrides re-derive from the Thorium clone, the branding
+    patches use a both-ways git apply check, and the string
+    replacements treat "already replaced" as success.
+    """
     thorium_root = ctx["thorium_root"]
     chromium_src = ctx["chromium_src"]
     fetch_missing_series_files(
@@ -1478,6 +1920,7 @@ def phase_setup(args, ctx, deadline):
     )
     fetch_missing_test_fonts(chromium_src, args.chromium_tag)
     filter_unappliable_series(thorium_root, chromium_src)
+    apply_lumo_series_overrides(thorium_root)
     log(f"\nApplying Thorium setup for profile --{args.profile} "
         "(overlays, patch series, GRD rebase).")
     run_checked(
@@ -1492,6 +1935,7 @@ def phase_setup(args, ctx, deadline):
         env=ctx["env"],
         timeout_at=deadline,
     )
+    apply_lumo_branding(args, ctx, deadline)
     log("\nSetup phase complete.")
 
 
@@ -1521,11 +1965,32 @@ def write_args_gn(args, ctx):
         ),
     }
     for name, value in keys.items():
+        # The value is embedded verbatim in a GN string literal.
+        # A quote or backslash in it would be reinterpreted by
+        # GN's own string escapes (or break the literal), so the
+        # key compiled into the browser would silently differ
+        # from the Secret — a successful build with broken Sync
+        # and no error anywhere. Real Google API keys and OAuth
+        # client secrets never contain these characters; refuse
+        # loudly instead of shipping a quietly wrong value.
+        if any(c in value for c in '"\\') or any(
+            ord(c) < 0x20 or ord(c) == 0x7F for c in value
+        ):
+            raise StageError(
+                f"the secret for {name} contains a character that "
+                "cannot be embedded verbatim in a GN string "
+                "(quote, backslash, or control character); "
+                "refusing to write a mangled args.gn"
+            )
         pattern = re.compile(
             rf'^{re.escape(name)}\s*=\s*".*"$', re.MULTILINE
         )
         replacement = f'{name} = "{value}"'
-        new_text, count = pattern.subn(replacement, text)
+        # A function replacement: re.subn would otherwise treat
+        # backslash escapes in the replacement string specially.
+        new_text, count = pattern.subn(
+            lambda _m: replacement, text
+        )
         if count != 1:
             raise StageError(
                 f"expected exactly one {name} line in {template}, "
@@ -1534,6 +1999,19 @@ def write_args_gn(args, ctx):
         text = new_text
     args_gn = out_dir / "args.gn"
     args_gn.write_text(text, encoding="utf-8")
+    # Read the file back and verify every injected line survived
+    # byte-for-byte. The values are never printed; a mismatch is
+    # reported by key name only.
+    written = args_gn.read_text(encoding="utf-8")
+    for name, value in keys.items():
+        expected = f'{name} = "{value}"'
+        if written.count(expected) != 1:
+            raise StageError(
+                f"args.gn verification failed for {name}: the "
+                "written file does not contain the injected line "
+                "exactly once; refusing to build with an "
+                "unverified API key configuration"
+            )
     set_keys = [name for name, value in keys.items() if value]
     if set_keys:
         log(f"args.gn written; API keys injected for: "
@@ -1647,6 +2125,10 @@ def checkpoint(args, ctx):
       open for append, and on Windows that handle can block 7z from
       reading it (one of the likely locked files);
     * passes -ssw so 7z still compresses files open for writing;
+    * passes -mmt=on so 7z deflates with all runner cores, and logs
+      how long the zip took -- zipping a ~20 GiB tree sits on the
+      critical path of the job-timeout reserve (see
+      MAX_SECONDS_AFTER_JOB_START), so its cost stays visible;
     * accepts exit 0 and 1 (warning: some files missing from the
       zip, which ninja can regenerate/rebuild on resume -- the bulk
       of the compiled objects is preserved);
@@ -1665,8 +2147,8 @@ def checkpoint(args, ctx):
         log(f"Removing quarantined conflicting checkouts: {bad_scm}")
         shutil.rmtree(bad_scm, ignore_errors=True)
     seven_zip = find_executable("7z")
-    log(f"\nCheckpointing build root to {zip_path} (7z, -mx=3; "
-        f"this can take a while for a tens-of-GB tree)...")
+    log(f"\nCheckpointing build root to {zip_path} (7z, -mx=3, "
+        f"multithreaded; this can take a while for a tens-of-GB tree)...")
     # Exclude any _bad_scm quarantine dirs (a gclient-era leftover;
     # conflicting checkouts can be gigabytes) and the tarball
     # download dir (archives are deleted after unpacking anyway; an
@@ -1681,6 +2163,7 @@ def checkpoint(args, ctx):
         except (OSError, ValueError):
             pass
         _LOG_FILE = None
+    zip_started = time.time()
     try:
         code = None
         for attempt in (1, 2):
@@ -1695,6 +2178,7 @@ def checkpoint(args, ctx):
                     build_root.name,
                     "-mx=3",
                     "-mtc=on",
+                    "-mmt=on",
                     "-ssw",
                     "-xr!_bad_scm",
                     f"-xr!{TARBALL_DIR_NAME}",
@@ -1728,7 +2212,9 @@ def checkpoint(args, ctx):
     if not zip_path.is_file() or zip_path.stat().st_size == 0:
         raise StageError(f"checkpoint zip missing or empty: {zip_path}")
     size_gb = zip_path.stat().st_size / (1024 ** 3)
-    log(f"Checkpoint written: {zip_path} ({size_gb:.1f} GiB).")
+    zip_minutes = (time.time() - zip_started) / 60
+    log(f"Checkpoint written: {zip_path} ({size_gb:.1f} GiB, "
+        f"zip took {zip_minutes:.1f} minutes).")
     if size_gb > 9:
         log("WARNING: the checkpoint is over ~9 GiB; GitHub Artifacts "
             "may refuse to upload it. If the upload fails, the build "
@@ -1863,6 +2349,10 @@ def main():
     log(f"Chromium tag:    {args.chromium_tag}")
     log(f"Profile:         {args.profile} (AVX2 only)")
     log(f"Time budget:     {(deadline - started) / 60:.0f} minutes")
+    reserve_seconds = job_started + JOB_TIMEOUT_SECONDS - deadline
+    log(f"Reserve after the work deadline for checkpoint + upload: "
+        f"~{reserve_seconds / 60:.0f} minutes "
+        f"(job timeout is {JOB_TIMEOUT_SECONDS // 60} minutes).")
     free_gb = disk_free_gb(build_root)
     if free_gb >= 0:
         log(f"Free disk:       {free_gb:.0f} GiB")
