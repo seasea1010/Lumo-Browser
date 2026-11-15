@@ -1,0 +1,23 @@
+diff --git a/chrome/app/theme/chromium/BRANDING b/chrome/app/theme/chromium/BRANDING
+index b06454a..2ef5f65 100644
+--- a/chrome/app/theme/chromium/BRANDING
++++ b/chrome/app/theme/chromium/BRANDING
+@@ -1,10 +1,10 @@
+-COMPANY_FULLNAME=Alex313031
+-COMPANY_SHORTNAME=Alex313031
+-PRODUCT_FULLNAME=Thorium
+-PRODUCT_SHORTNAME=Thorium
+-PRODUCT_INSTALLER_FULLNAME=Thorium Installer
+-PRODUCT_INSTALLER_SHORTNAME=Thorium Installer
+-COPYRIGHT=Copyright @LASTCHANGE_YEAR@ The Chromium Authors and Alex313031.
+-MAC_BUNDLE_ID=org.chromium.Thorium
++COMPANY_FULLNAME=seasea1010
++COMPANY_SHORTNAME=seasea1010
++PRODUCT_FULLNAME=Lumo
++PRODUCT_SHORTNAME=Lumo
++PRODUCT_INSTALLER_FULLNAME=Lumo Installer
++PRODUCT_INSTALLER_SHORTNAME=Lumo Installer
++COPYRIGHT=Copyright @LASTCHANGE_YEAR@ seasea1010. Based on Thorium and Chromium (BSD License).
++MAC_BUNDLE_ID=org.chromium.Lumo
+ MAC_CREATOR_CODE=Cr24
+ MAC_TEAM_ID=
