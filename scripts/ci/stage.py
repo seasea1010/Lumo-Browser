@@ -1556,8 +1556,12 @@ def drop_lumo_series_entries(thorium_root):
             continue
         kept_lines.append(raw)
     if dropped:
-        series_path.write_text(
-            "\n".join(kept_lines) + "\n", encoding="utf-8"
+        # Write bytes, not text: on the Windows CI runner, text-mode
+        # writes translate "\n" to "\r\n", and a CRLF series file
+        # would still parse, but keeping the file LF-only avoids any
+        # strict downstream consumer tripping over carriage returns.
+        series_path.write_bytes(
+            ("\n".join(kept_lines) + "\n").encode("utf-8")
         )
         for rel in dropped:
             log(f"Lumo series override: dropping {rel} "
@@ -1616,7 +1620,12 @@ def restore_safe_browsing_reporting(thorium_root):
         raise StageError(
             "Safe Browsing report restoration produced an "
             "unexpected patch; refusing to continue.")
-    patch_path.write_text(new_text, encoding="utf-8")
+    # Write bytes, not text: on the Windows CI runner, text-mode
+    # writes translate "\n" to "\r\n", and git apply cannot apply a
+    # CRLF patch (this is what failed build #13: the edited patch
+    # failed `git apply --check` although its content was correct).
+    # write_bytes is newline-translation-free on every platform.
+    patch_path.write_bytes(new_text.encode("utf-8"))
     log("Lumo series override: restored Safe Browsing "
         "dangerous-download reporting (removed the unconditional "
         f"stub hunk from {LUMO_SB_REPORT_PATCH}; the "
