@@ -1,0 +1,15 @@
+# Files the CI consumes byte-exactly keep LF endings on every
+# checkout. On the Windows runner, git's default core.autocrlf=true
+# otherwise rewrites text files to CRLF in the worktree:
+#   * git apply matches patch context byte-for-byte, so a CRLF
+#     patch file can never apply to the LF tree. Build #14 failed
+#     exactly this way at scripts/ci/lumo_patches/0001 (forward and
+#     reverse checks both failed at the first hunk), while
+#     Thorium's own patches were immune because Thorium's
+#     .gitattributes pins this same rule. Pin it here too.
+#   * The branding images are copied into the browser tree
+#     verbatim by stage.py; keep git from ever treating them as
+#     text.
+*.patch text eol=lf
+scripts/ci/lumo_branding/*.ico binary
+scripts/ci/lumo_branding/*.png binary
