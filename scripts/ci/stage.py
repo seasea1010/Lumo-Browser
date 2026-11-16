@@ -105,6 +105,7 @@ import signal
 import subprocess
 import sys
 import tarfile
+import tempfile
 import threading
 import time
 import urllib.error
@@ -1839,26 +1840,54 @@ def _git_apply_both_ways(git, chromium_src, patch_path, env, deadline):
     somewhere else in the forward direction (a small hunk with
     common context lines, e.g. a CSS rule appended after a repeated
     pattern, could otherwise be applied twice at a wrong offset).
+
+    A patch file with CRLF line endings can never apply to the LF
+    tree (git apply matches context byte-for-byte), so it is
+    repaired first and the LF-normalized copy is applied instead.
+    This is not theoretical: build #14 failed at
+    0001-lumo-install-static.patch with "patch does not apply"
+    although the patch content was exact against the real
+    post-Thorium tree, because the Windows checkout had rewritten
+    the repo's patch files to CRLF (the Lumo repo had no
+    .gitattributes pinning *.patch to eol=lf, unlike Thorium's).
+    The repo now pins that rule; this normalization is the second
+    line of defense for any future ending-mangling path.
     """
     rel = patch_path.name
-    code = run(
-        [git, "apply", "--check", "--reverse", str(patch_path)],
-        chromium_src, env=env, timeout_at=deadline)
-    if code == 0:
-        log(f"Lumo branding: {rel} already applied; skipping.")
-        return False
-    code = run(
-        [git, "apply", "--check", str(patch_path)],
-        chromium_src, env=env, timeout_at=deadline)
-    if code == 0:
-        run_checked(
-            [git, "apply", str(patch_path)],
+    patch_arg = patch_path
+    temp_dir = None
+    data = patch_path.read_bytes()
+    if b"\r\n" in data:
+        temp_dir = tempfile.TemporaryDirectory(
+            prefix="lumo-patch-lf-")
+        patch_arg = Path(temp_dir.name) / rel
+        patch_arg.write_bytes(data.replace(b"\r\n", b"\n"))
+        log(f"Lumo branding: {rel} has CRLF line endings; "
+            "applying an LF-normalized copy instead (a CRLF "
+            "patch cannot apply to the LF tree).")
+    try:
+        code = run(
+            [git, "apply", "--check", "--reverse", str(patch_arg)],
             chromium_src, env=env, timeout_at=deadline)
-        log(f"Lumo branding: applied {rel}.")
-        return True
-    raise StageError(
-        f"Lumo branding patch {rel} neither applies nor is already "
-        "applied; the post-Thorium tree may have drifted.")
+        if code == 0:
+            log(f"Lumo branding: {rel} already applied; skipping.")
+            return False
+        code = run(
+            [git, "apply", "--check", str(patch_arg)],
+            chromium_src, env=env, timeout_at=deadline)
+        if code == 0:
+            run_checked(
+                [git, "apply", str(patch_arg)],
+                chromium_src, env=env, timeout_at=deadline)
+            log(f"Lumo branding: applied {rel}.")
+            return True
+        raise StageError(
+            f"Lumo branding patch {rel} neither applies nor is "
+            "already applied; the post-Thorium tree may have "
+            "drifted.")
+    finally:
+        if temp_dir is not None:
+            temp_dir.cleanup()
 
 
 def apply_lumo_branding(args, ctx, deadline):
