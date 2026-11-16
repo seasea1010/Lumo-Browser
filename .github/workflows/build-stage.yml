@@ -95,9 +95,9 @@ jobs:
             throw '7z is not available on this runner'
           }
           # Chromium 156 needs the Windows 11 SDK 10.0.28000.x
-          # (Helium installs 10.0.28000.0 the same way). UNVERIFIED:
-          # the exact SDK version Chromium 156 wants has not been
-          # confirmed against the 156.0.8078.80 tag.
+          # (Helium installs 10.0.28000.0 the same way). Verified in
+          # practice by runs #11/#12 (2026-11-15), which completed
+          # gn gen and the full compile with this SDK in place.
           if (-not (Test-Path "${env:ProgramFiles(x86)}\Windows Kits\10\Include\10.0.28000.0\um\Windows.h")) {
             Invoke-WebRequest 'https://go.microsoft.com/fwlink/?linkid=2370315' -OutFile "$env:RUNNER_TEMP\winsdksetup.exe"
             $installer = Start-Process "$env:RUNNER_TEMP\winsdksetup.exe" -ArgumentList '/quiet', '/norestart', '/features', '+' -Wait -PassThru
@@ -127,6 +127,7 @@ jobs:
           if ($LASTEXITCODE -ge 2) { throw "Checkpoint integrity check failed (7z t exit $LASTEXITCODE): build-state/${{ env.BUILD_STATE_ZIP }} is corrupt or truncated; refusing to resume from it." }
           if ($LASTEXITCODE -eq 1) { Write-Host 'WARNING: 7z t exited 1 (warnings only); continuing to extraction.' }
           7z x build-state/${{ env.BUILD_STATE_ZIP }} -oC:\ -y
+          if ($LASTEXITCODE -ge 2) { throw "Checkpoint extraction failed (7z x exit $LASTEXITCODE); refusing to resume from a partially extracted tree." }
 
       - name: Run build stage
         id: stage
