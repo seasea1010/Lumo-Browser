@@ -1673,12 +1673,20 @@ LUMO_ICON_COPIES = (
      "chrome/app/theme/chromium/win/tiles/SmallLogo.png"),
 )
 
-# grit translation fingerprint of the message "Experiments"
-# (IDS_WINDOW_TITLE_EXPERIMENTS, the Chrome Labs bubble title):
-# int(md5("Experiments").hexdigest()[:16], 16). Thorium's rebase
-# turns the Japanese title into "Thorium 試験運用機能"; Lumo's
-# decided form keeps Thorium visible in parentheses.
-LUMO_LABS_TITLE_XTB_ID = "5199729219167945352"
+# grit translation fingerprint of the message "Thorium Experiments"
+# (IDS_WINDOW_TITLE_EXPERIMENTS, the Chrome Labs bubble title), as
+# a signed-md5 grit id: int(md5(...).hexdigest()[:16], 16) with the
+# sign masked off. The fingerprint is of the POST-rebase English
+# body: Thorium's GRD rebase (sync_grd_strings.py, run by setup.py
+# before this branding step) rewrites the GRD body "Experiments"
+# to "Thorium Experiments", which changes the message's grit id,
+# and copies the ja translation to the NEW id with the body
+# "Thorium 試験運用機能" (it prepends "Thorium" for this message).
+# The pre-rebase id 5199729219167945352 (fingerprint of
+# "Experiments") stays behind in the XTB as an orphaned entry with
+# the body "試験運用機能" and must NOT be targeted. Lumo's decided
+# form keeps Thorium visible in parentheses.
+LUMO_LABS_TITLE_XTB_ID = "3668957331916824695"
 LUMO_LABS_TITLE_JA = "Lumo 試験運用機能（Thorium 試験運用機能）"
 
 
@@ -1804,8 +1812,14 @@ def lumo_string_replacements(chromium_src):
 
     path = chromium_src / "chrome/app/generated_resources.grd"
     text = path.read_text(encoding="utf-8")
+    # Thorium's GRD rebase has already rewritten the body to
+    # "Thorium Experiments" by the time this runs (build #15
+    # failed here when only the pristine body was accepted);
+    # accept the pristine "Experiments" too, in case the rebase
+    # ever stops renaming it.
     text, n = _replace_grd_message(
-        text, "IDS_WINDOW_TITLE_EXPERIMENTS", {"Experiments"},
+        text, "IDS_WINDOW_TITLE_EXPERIMENTS",
+        {"Experiments", "Thorium Experiments"},
         "Lumo Experiments (Thorium Experiments)", str(path))
     if n:
         path.write_text(text, encoding="utf-8")
