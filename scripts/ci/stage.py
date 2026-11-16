@@ -1477,8 +1477,14 @@ def filter_unappliable_series(thorium_root, chromium_src):
             log(f"WARNING: dropping Thorium series entry {rel}: it "
                 f"modifies files absent from this tree ({shown}). "
                 "Keeping it would fail the entire setup phase.")
-        series_path.write_text(
-            "\n".join(kept_lines) + "\n", encoding="utf-8"
+        # write_bytes, never write_text: text mode on Windows would
+        # rewrite this build input with CRLF line endings (the
+        # run #13/#14 bug class). Thorium's apply_series.py reads
+        # with splitlines() and would tolerate CRLF today, but the
+        # file's bytes are pinned to LF so no future byte-exact
+        # consumer can be surprised by them.
+        series_path.write_bytes(
+            ("\n".join(kept_lines) + "\n").encode("utf-8")
         )
         log(f"Patch series filtered: dropped {len(dropped)} "
             "unappliable entries (see warnings above).")
@@ -1936,35 +1942,136 @@ def apply_lumo_branding(args, ctx, deadline):
     log("Lumo branding complete.")
 
 
+# Marker phase_setup drops in the build root (which the checkpoint
+# archives carry from stage to stage) once Thorium's setup.py has
+# returned successfully. See _thorium_setup_done().
+SETUP_DONE_MARKER_NAME = "lumo-thorium-setup-done.json"
+
+# Thorium setup.py's SIMD profile -> directory under other/ holding
+# its thorium_version.txt (setup.py's SIMD_PROFILES; stage.py only
+# ever passes avx2 or sse3, enforced by --profile's choices).
+SETUP_PROFILE_VERSION_DIRS = {"avx2": "AVX2", "sse3": "SSE3"}
+
+
+def _record_thorium_setup_done(ctx, args):
+    marker = ctx["build_root"] / SETUP_DONE_MARKER_NAME
+    payload = {
+        "thorium_commit": args.thorium_commit,
+        "chromium_tag": args.chromium_tag,
+    }
+    marker.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _thorium_setup_done(ctx, args):
+    """Has Thorium's setup.py already completed on this tree?
+
+    Returns a short reason string when it has, else None. Two kinds
+    of evidence, strongest first:
+
+    1. The marker _record_thorium_setup_done() writes into the
+       build root right after setup.py returns (the checkpoint
+       archives carry it into the next stage).
+    2. Completion evidence inside the tree itself, covering a stage
+       that died after setup.py finished but before the marker
+       could be recorded — or a tree set up outside this phase:
+       setup.py publishes its ownership manifest before mutating,
+       and its LAST mutation for the SIMD profiles is copying
+       other/<PROFILE>/thorium_version.txt over
+       ui/webui/resources/text/thorium_version.txt, so that
+       destination holding exactly the profile source's bytes,
+       together with the manifest, means every mutation landed.
+    """
+    marker = ctx["build_root"] / SETUP_DONE_MARKER_NAME
+    try:
+        data = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        data = None
+    if (
+        isinstance(data, dict)
+        and data.get("thorium_commit") == args.thorium_commit
+        and data.get("chromium_tag") == args.chromium_tag
+    ):
+        return "completion marker recorded by a previous stage"
+    chromium_src = ctx["chromium_src"]
+    manifest = (
+        chromium_src / "out" / "thorium" / ".thorium-setup-files.json"
+    )
+    version_dir = SETUP_PROFILE_VERSION_DIRS.get(args.profile)
+    if version_dir is None or not manifest.is_file():
+        return None
+    source = (
+        ctx["thorium_root"] / "other" / version_dir
+        / "thorium_version.txt"
+    )
+    destination = (
+        chromium_src / "ui" / "webui" / "resources" / "text"
+        / "thorium_version.txt"
+    )
+    try:
+        if (
+            destination.is_file()
+            and source.is_file()
+            and destination.read_bytes() == source.read_bytes()
+        ):
+            return "completion evidence in the tree"
+    except OSError:
+        return None
+    return None
+
+
 def phase_setup(args, ctx, deadline):
     """Thorium's setup.py: overlays + patch series + GRD rebase.
 
-    Re-running this phase after a budget expiry is safe by design
-    (audited before run #13 against the pinned Thorium):
-      * the fetch/filter steps below skip files that already exist
-        and re-derive everything from the fresh Thorium clone;
+    Re-running this phase after a budget expiry needs care, because
+    Thorium's setup.py is only MOSTLY re-runnable (verified
+    empirically against the pinned Thorium, 2026-11-16):
+
+      * The fetch/filter steps below skip files that already exist
+        and re-derive everything from the fresh Thorium clone.
       * setup.py copies its overlays with plain overwrites and
         writes its ownership manifest (.thorium-setup-files.json)
         BEFORE mutating the tree, so an interrupted run leaves a
-        manifest the next run can clean up from;
+        manifest the next run can clean up from.
       * apply_series.py checks every patch both ways: when the
         forward `git apply --check` fails but the reverse check
         passes, the patch is reported "already applied" and
-        SKIPPED, not an error — so a series interrupted halfway
-        resumes cleanly instead of dying on the first patch.
-    The one step not proven idempotent is the GRD/XTB rebase at
-    the end of setup.py: a budget expiry inside it makes the next
-    stage re-run it on an already-rebased tree. The window is
-    narrow (the rebase takes minutes; setup as a whole is a small
-    fraction of a stage's budget) and there is no marker to resume
-    it by; if it ever breaks, it fails loudly here in the setup
-    phase rather than corrupting the build silently.
-    The Lumo steps wrapped around setup.py are idempotent by
-    construction (see the branding section header): the series
-    overrides re-derive from the Thorium clone, the branding
-    patches use a both-ways git apply check, and the string
-    replacements treat "already replaced" as success.
+        SKIPPED, so a series interrupted halfway resumes cleanly.
+      * THE EXCEPTION: third_party/ffmpeg's
+        other/add-hevc-ffmpeg-decoder-parser.patch, the first of
+        four series entries that edit the same generated ffmpeg
+        files. Once the later entries (the AC-3 decoders, the HEVC
+        nasm fix, ffmpeg branding) have landed on top of it, its
+        reverse check no longer matches either, apply_series
+        reports it "failed", and setup.py exits 1 — re-running
+        setup.py on a tree whose series COMPLETED is fatal.
+
+    This phase therefore never re-runs setup.py on a completed
+    tree: _thorium_setup_done() recognizes completion (the marker
+    recorded here after setup.py returns, or failing that,
+    completion evidence inside the tree) and skips straight to
+    the Lumo branding steps, which are idempotent by construction
+    (see the branding section header). The one residual window is
+    a kill DURING setup.py after the ffmpeg entries landed but
+    before its final profile copy: no marker or evidence exists
+    yet, and the re-run dies in apply_series as described. That
+    window is minutes wide inside a phase that starts with hours
+    of budget; if it ever happens, it fails loudly here in the
+    setup phase and the run must restart from stage 1.
     """
+    done_reason = _thorium_setup_done(ctx, args)
+    if done_reason is not None:
+        log(
+            "\nThorium's setup.py already completed on this tree "
+            f"({done_reason}); skipping it and re-running only "
+            "the idempotent Lumo branding steps. (Re-running "
+            "setup.py on a completed tree is NOT safe: the first "
+            "ffmpeg series patch can no longer be recognized as "
+            "applied once the later ffmpeg patches land on it.)"
+        )
+        _record_thorium_setup_done(ctx, args)
+        apply_lumo_branding(args, ctx, deadline)
+        log("\nSetup phase complete.")
+        return
     thorium_root = ctx["thorium_root"]
     chromium_src = ctx["chromium_src"]
     fetch_missing_series_files(
@@ -1987,6 +2094,7 @@ def phase_setup(args, ctx, deadline):
         env=ctx["env"],
         timeout_at=deadline,
     )
+    _record_thorium_setup_done(ctx, args)
     apply_lumo_branding(args, ctx, deadline)
     log("\nSetup phase complete.")
 
