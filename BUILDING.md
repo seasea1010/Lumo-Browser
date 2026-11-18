@@ -16,8 +16,8 @@ Chromium 公式の要件は次の通りです。
 - Git、Python 3.11 以上
 - `depot_tools`（Chromium のツール集）
 
-**せあの PC はビルドしません。** GitHub Actions の `windows-2025` ランナーが
-ビルドします。せあの PC に必要なのは、できあがった `lumo.exe` を動かすだけです
+**オーナーの PC はビルドしません。** GitHub Actions の `windows-2025` ランナーが
+ビルドします。オーナーの PC に必要なのは、できあがった `lumo.exe` を動かすだけです
 （Thorium の実行要件は RAM 4GB 以上・数百 MB の空き程度）。
 
 ## 1. ソースの取得（CI がやること）
