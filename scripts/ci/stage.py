@@ -2430,7 +2430,30 @@ def main():
         default=DEFAULT_CHROMIUM_TAG,
         help="Pinned Chromium tag (from Thorium's version.py)",
     )
+    parser.add_argument(
+        "--free-disk-only",
+        action="store_true",
+        help="Only run the preinstalled-toolchain cleanup "
+        "(free_disk_space) and exit. The workflow calls this BEFORE "
+        "extracting a checkpoint, because run #17 died extracting "
+        "build-5's checkpoint (7.7 GiB zip + 25.3 GiB tree) before "
+        "stage.py's own cleanup ever ran.",
+    )
     args = parser.parse_args()
+
+    if args.free_disk_only:
+        # Reuse free_disk_space() exactly (same allowlist, same
+        # _safe_to_delete guard as the in-stage cleanup), so this
+        # mode can never delete anything the normal stage would not.
+        free_root = Path(args.build_root).expanduser()
+        before = disk_free_gb(free_root)
+        if before >= 0:
+            log(f"Free disk before cleanup: {before:.1f} GiB")
+        free_disk_space(free_root)
+        after = disk_free_gb(free_root)
+        if after >= 0:
+            log(f"Free disk after cleanup: {after:.1f} GiB")
+        return 0
 
     started = time.time()
     job_started = args.job_started_at or int(started)
