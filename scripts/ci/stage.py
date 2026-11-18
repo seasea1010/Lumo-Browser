@@ -301,7 +301,10 @@ def set_output(name, value):
     if out:
         with open(out, "a", encoding="utf-8") as f:
             f.write(f"{name}={value}\n")
-    log(f"::set-output name={name}::{value}")
+    # The legacy "::set-output" workflow command used to be echoed
+    # here as a fallback; GitHub deprecated it (it now raises a
+    # deprecation annotation on every run), and the GITHUB_OUTPUT
+    # file above is the supported channel, so it was removed.
 
 
 def read_state(build_root):
