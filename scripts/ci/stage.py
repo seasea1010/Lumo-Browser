@@ -1512,10 +1512,15 @@ def filter_unappliable_series(thorium_root, chromium_src):
 #  * AFTER setup.py: apply_lumo_branding() turns the Thorium tree
 #    into Lumo: Lumo's own git patches (scripts/ci/lumo_patches/ —
 #    install_static identity incl. the Lumo_Browser user-data
-#    directory, the BRANDING file, the version page credits), the
-#    decided flat "L" icon copied over Thorium's theme resources,
-#    and targeted GRD/XTB string replacements (product name, About
-#    company/copyright, first-profile name, the Chrome Labs title).
+#    directory, the BRANDING file, the version page credits, the
+#    Thorium 2024 UI default-on flip), the decided flat "L" icon
+#    copied over Thorium's theme resources (plus the FRE logos
+#    and the version-page wordmarks), and targeted GRD/XTB string
+#    replacements (product name, About company/copyright,
+#    first-profile name, the Chrome Labs title, the flags page
+#    title, the FRE sign-in title — the last two with their ja
+#    translations re-keyed to the new grit ids, since a body edit
+#    moves the fingerprint the runtime looks translations up by).
 #    GRD strings are edited by message name rather than by patch
 #    because Thorium's GRD rebase rewrites them during setup.py, so
 #    their exact post-setup wording is Thorium-version data, not
@@ -1680,6 +1685,32 @@ LUMO_ICON_COPIES = (
     ("tiles_logo.png", "chrome/app/theme/chromium/win/tiles/Logo.png"),
     ("tiles_small_logo.png",
      "chrome/app/theme/chromium/win/tiles/SmallLogo.png"),
+    # First-run (FRE) logos: Thorium ships its circular logo as
+    # product_logo.svg, shown on the sign-in page; #13 left the
+    # SVG form untouched and the #18 build's FRE still showed it.
+    # The animation variant (FRE refresh) gets the same static
+    # Lumo mark — a static logo in place of the animation is a
+    # deliberate simplification, not an oversight.
+    ("product_logo.svg", "chrome/app/theme/chromium/product_logo.svg"),
+    ("product_logo.svg",
+     "chrome/app/theme/chromium/product_logo_animation.svg"),
+    # Version-page wordmarks (icon + "Lumo" text, 342x64; the
+    # white variant is shown on dark backgrounds). Thorium's
+    # overlay plants these under components/resources and #13
+    # only covered chrome/app/theme, so the #18 version page
+    # still showed the "thorium" wordmark. The 200% files are
+    # the same 342x64 in Thorium's overlay (verified), so the
+    # same assets serve both densities.
+    ("wordmark.png",
+     "components/resources/default_100_percent/chromium/product_logo.png"),
+    ("wordmark_white.png",
+     "components/resources/default_100_percent/chromium/"
+     "product_logo_white.png"),
+    ("wordmark.png",
+     "components/resources/default_200_percent/chromium/product_logo.png"),
+    ("wordmark_white.png",
+     "components/resources/default_200_percent/chromium/"
+     "product_logo_white.png"),
 )
 
 # grit translation fingerprint of the message "Thorium Experiments"
@@ -1697,6 +1728,35 @@ LUMO_ICON_COPIES = (
 # form keeps Thorium visible in parentheses.
 LUMO_LABS_TITLE_XTB_ID = "3668957331916824695"
 LUMO_LABS_TITLE_JA = "Lumo 試験運用機能（Thorium 試験運用機能）"
+
+# Lumo's GRD edit renames the Labs title body itself to
+# "Lumo Experiments (Thorium Experiments)", which moves its grit
+# fingerprint AGAIN: the runtime looks the ja translation up
+# under the NEW id, so the XTB entry at LUMO_LABS_TITLE_XTB_ID is
+# orphaned by Lumo's own edit and the title falls back to English
+# (seen on the #18 build: the Labs bubble title rendered in
+# English). The XTB entry must be re-keyed to the new id; see
+# _retarget_xtb_translation. Both ids below are grit fingerprints
+# in the tclib.GenerateMessageId form (no meaning for this
+# message), recomputed and cross-checked against the real files.
+LUMO_LABS_TITLE_EN = "Lumo Experiments (Thorium Experiments)"
+LUMO_LABS_TITLE_XTB_ID_NEW = "8435388291773966912"
+
+# The first-run (FRE) sign-in heading, IDS_FRE_SIGN_IN_TITLE_0 in
+# chromium_strings.grd: Thorium's rebase rewrote the body to
+# "Sign in to Thorium" directly (not a product-name placeholder),
+# so the product-name replacements never touched it and the #18
+# build's FRE still said "Thorium にログイン". The message carries
+# meaning="Title", which grit folds into the fingerprint
+# (tclib.GenerateMessageId combines the message and meaning
+# fingerprints), so the ids differ from a plain-body fingerprint.
+# Old id: GenerateMessageId("Sign in to Thorium", "Title"); new
+# id: GenerateMessageId("Sign in to Lumo", "Title"). Both were
+# recomputed with grit's own formula and the old one matches the
+# entry actually present in chromium_strings_ja.xtb.
+LUMO_FRE_TITLE_XTB_ID = "9205156301846564163"
+LUMO_FRE_TITLE_XTB_ID_NEW = "4827836723507820919"
+LUMO_FRE_TITLE_JA = "Lumo にログイン"
 
 
 def _replace_grd_message(text, name, expected_bodies, new_body, desc):
@@ -1791,6 +1851,53 @@ def _replace_xtb_translation(text, translation_id, new_body, desc):
     return (text[:match.start(2)] + new_body + text[match.end(2):]), 1
 
 
+def _retarget_xtb_translation(text, old_id, new_id, new_body, desc):
+    """Re-key one <translation> entry to a new grit id, setting
+    its body. Returns (new_text, changes).
+
+    Needed whenever Lumo edits an English GRD body whose ja
+    translation must follow: grit derives the translation id from
+    the English body (plus the meaning, when the message has one),
+    so after the body edit the runtime looks the translation up
+    under the NEW id. An entry left at the old id is orphaned and
+    the string falls back to English — this is exactly what
+    happened to the Chrome Labs title on the #18 build.
+
+    Idempotent: an entry already at new_id with new_body is
+    success (a stale entry still sitting at old_id is dropped);
+    an entry at new_id with a different body has its body
+    replaced; otherwise the entry at old_id is re-keyed. Raises
+    StageError when neither id is present.
+    """
+    entry_re = r'<translation id="%s">(.*?)</translation>'
+
+    def find(tid):
+        return re.search(entry_re % re.escape(tid), text, re.S)
+
+    new_match = find(new_id)
+    old_match = find(old_id) if old_id != new_id else None
+    if new_match is not None:
+        changes = 0
+        if old_match is not None:
+            text = (text[:old_match.start()] + text[old_match.end():])
+            changes += 1
+            new_match = find(new_id)
+        if new_match.group(1) != new_body:
+            text = (text[:new_match.start(1)] + new_body
+                    + text[new_match.end(1):])
+            changes += 1
+        return text, changes
+    if old_match is None:
+        raise StageError(
+            f"{desc}: neither translation id {old_id} nor {new_id} "
+            "found; the string may have drifted in the pinned "
+            "Thorium.")
+    text = (text[:old_match.start()]
+            + f'<translation id="{new_id}">{new_body}</translation>'
+            + text[old_match.end():])
+    return text, 1
+
+
 def lumo_string_replacements(chromium_src):
     """Targeted GRD/XTB string edits for the Lumo brand (post-setup).
 
@@ -1819,6 +1926,19 @@ def lumo_string_replacements(chromium_src):
     results.append(("chromium_strings.grd (product name, About "
                      "company/copyright)", total))
 
+    # Same file: the first-run sign-in heading names the product
+    # directly in its body (see LUMO_FRE_TITLE_XTB_ID), so it
+    # needs its own replacement; counted separately from the
+    # product-name block above.
+    text = path.read_text(encoding="utf-8")
+    text, n = _replace_grd_message(
+        text, "IDS_FRE_SIGN_IN_TITLE_0",
+        {"Sign in to Thorium", "Sign in to Chromium"},
+        "Sign in to Lumo", str(path))
+    if n:
+        path.write_text(text, encoding="utf-8")
+    results.append(("chromium_strings.grd (FRE sign-in title)", n))
+
     path = chromium_src / "chrome/app/generated_resources.grd"
     text = path.read_text(encoding="utf-8")
     # Thorium's GRD rebase has already rewritten the body to
@@ -1829,10 +1949,27 @@ def lumo_string_replacements(chromium_src):
     text, n = _replace_grd_message(
         text, "IDS_WINDOW_TITLE_EXPERIMENTS",
         {"Experiments", "Thorium Experiments"},
-        "Lumo Experiments (Thorium Experiments)", str(path))
+        LUMO_LABS_TITLE_EN, str(path))
     if n:
         path.write_text(text, encoding="utf-8")
     results.append(("generated_resources.grd (Chrome Labs title)", n))
+
+    # The chrome://flags page heading is a DIFFERENT string from
+    # the Labs title: IDS_FLAGS_UI_TITLE in
+    # components/flags_strings.grdp (the #18 build still showed
+    # "Thorium Experiments" there). It is translateable="false",
+    # so the English body is what every locale renders and no
+    # XTB entry exists to re-key. Same decided form as the Labs
+    # title, for one consistent experiments brand.
+    path = chromium_src / "components/flags_strings.grdp"
+    text = path.read_text(encoding="utf-8")
+    text, n = _replace_grd_message(
+        text, "IDS_FLAGS_UI_TITLE",
+        {"Experiments", "Thorium Experiments"},
+        LUMO_LABS_TITLE_EN, str(path))
+    if n:
+        path.write_text(text, encoding="utf-8")
+    results.append(("flags_strings.grdp (flags page title)", n))
 
     path = chromium_src / "chrome/app/profiles_strings.grdp"
     text = path.read_text(encoding="utf-8")
@@ -1846,11 +1983,27 @@ def lumo_string_replacements(chromium_src):
     path = (chromium_src
             / "chrome/app/resources/generated_resources_ja.xtb")
     text = path.read_text(encoding="utf-8")
-    text, n = _replace_xtb_translation(
-        text, LUMO_LABS_TITLE_XTB_ID, LUMO_LABS_TITLE_JA, str(path))
+    # Re-key, not just re-body: Lumo's GRD edit moved the Labs
+    # title's grit id to LUMO_LABS_TITLE_XTB_ID_NEW, so replacing
+    # the body at the old id (the #13 approach) left the ja
+    # translation orphaned and the title fell back to English.
+    text, n = _retarget_xtb_translation(
+        text, LUMO_LABS_TITLE_XTB_ID, LUMO_LABS_TITLE_XTB_ID_NEW,
+        LUMO_LABS_TITLE_JA, str(path))
     if n:
         path.write_text(text, encoding="utf-8")
     results.append(("generated_resources_ja.xtb (Labs title, ja)", n))
+
+    path = (chromium_src
+            / "chrome/app/resources/chromium_strings_ja.xtb")
+    text = path.read_text(encoding="utf-8")
+    text, n = _retarget_xtb_translation(
+        text, LUMO_FRE_TITLE_XTB_ID, LUMO_FRE_TITLE_XTB_ID_NEW,
+        LUMO_FRE_TITLE_JA, str(path))
+    if n:
+        path.write_text(text, encoding="utf-8")
+    results.append(("chromium_strings_ja.xtb (FRE sign-in title, "
+                    "ja)", n))
 
     return results
 
@@ -1863,6 +2016,20 @@ def _git_apply_both_ways(git, chromium_src, patch_path, env, deadline):
     somewhere else in the forward direction (a small hunk with
     common context lines, e.g. a CSS rule appended after a repeated
     pattern, could otherwise be applied twice at a wrong offset).
+
+    Batch 2 (patches 0006-0011) made several Lumo patches insert
+    lines into adjacent regions of the same files (the Lumo
+    string block in generated_resources.grd, the Lumo feature
+    block in ui_features.h/.cc, the flag-entry and Labs blocks).
+    Once a later patch has inserted lines inside an earlier
+    patch's context window, the earlier patch no longer
+    reverse-checks with full context even though its result is
+    fully present. The reverse check therefore falls back to a
+    zero-context (-C0) check, which only requires each hunk's
+    post-image lines to be present contiguously. The added lines
+    are Lumo-unique (string ids, feature names), so a false
+    positive would require that exact content to already exist
+    in the pristine tree. The forward path is unchanged.
 
     A patch file with CRLF line endings can never apply to the LF
     tree (git apply matches context byte-for-byte), so it is
@@ -1894,6 +2061,14 @@ def _git_apply_both_ways(git, chromium_src, patch_path, env, deadline):
             chromium_src, env=env, timeout_at=deadline)
         if code == 0:
             log(f"Lumo branding: {rel} already applied; skipping.")
+            return False
+        code = run(
+            [git, "apply", "--check", "--reverse", "-C0",
+             str(patch_arg)],
+            chromium_src, env=env, timeout_at=deadline)
+        if code == 0:
+            log(f"Lumo branding: {rel} already applied "
+                "(zero-context reverse check); skipping.")
             return False
         code = run(
             [git, "apply", "--check", str(patch_arg)],
