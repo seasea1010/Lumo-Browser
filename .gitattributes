@@ -13,3 +13,4 @@
 *.patch text eol=lf
 scripts/ci/lumo_branding/*.ico binary
 scripts/ci/lumo_branding/*.png binary
+scripts/ci/lumo_branding/*.svg text eol=lf
