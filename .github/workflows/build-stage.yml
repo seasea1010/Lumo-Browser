@@ -7,7 +7,11 @@
 #   * from_artifact=false (stage 1): start from an empty build root.
 #   * from_artifact=true (stages 2-15): download the previous stage's
 #     build-state artifact (named lumo-build-state-<prev stage>) and
-#     extract it to C:\, then resume from the recorded phase.
+#     extract it to C:\, then resume from the recorded phase. Before
+#     downloading, the workflow frees disk with stage.py
+#     --free-disk-only: run #17's build-5 died extracting its
+#     checkpoint (7.7 GiB zip + 25.3 GiB tree) because stage.py's own
+#     cleanup runs only after extraction.
 #   * stage.py exits 0 when the build finishes, 42 when the time
 #     budget expires (resume in the next stage), anything else on a
 #     real failure.
@@ -23,6 +27,10 @@
 #     starts over from stage 1.
 #   * The job timeout is 330 minutes; stage.py stops work after ~4h45m
 #     so there is time left to zip and upload the checkpoint.
+#
+# Cross-run resume (2026-11-18): a stage may download its
+# checkpoint from an earlier run via the run-id input; used once to
+# resume run #18 at stage 5 from run #17's lumo-build-state-4.
 #
 # Ran end to end in run #12 (2026-11-15); see scripts/ci/stage.py.
 name: Lumo build stage
@@ -48,6 +56,11 @@ on:
         required: false
         type: string
         default: windows-2025
+      run-id:
+        description: 'Run id to download the checkpoint from (empty = current run; set only for a cross-run resume entry stage)'
+        required: false
+        type: string
+        default: ""
     outputs:
       finished:
         description: "true when the build finished in this stage"
@@ -58,6 +71,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 env:
   BUILD_ROOT: C:/lumo-build
@@ -104,17 +118,54 @@ jobs:
             if ($installer.ExitCode -notin @(0, 3010)) { throw "Windows SDK installation failed: $($installer.ExitCode)" }
           }
 
+      - name: Free disk space before extraction
+        # Run #17 died extracting build-5's checkpoint: the zip
+        # (7.7 GiB) plus the expanded tree (25.3 GiB) did not fit
+        # because the runner starts with only ~28 GiB free and
+        # stage.py's own cleanup runs AFTER extraction. build-4's
+        # extraction had already left only 3 GiB free; build-5's
+        # slightly larger checkpoint tipped it over. Free the same
+        # allowlisted toolchains first via stage.py --free-disk-only,
+        # which reuses free_disk_space() exactly (no new paths are
+        # ever deleted). Runs before Download so the download itself
+        # also has room.
+        if: inputs.from-artifact
+        shell: bash
+        run: |
+          python scripts/ci/stage.py --free-disk-only \
+            --build-root "$BUILD_ROOT"
+
       - name: Download previous build state
         if: inputs.from-artifact
         uses: actions/download-artifact@v4
         with:
           name: ${{ inputs.artifact-name }}
           path: build-state
+          # Cross-run resume: the entry stage of a resumed run
+          # downloads its checkpoint from the earlier run named by
+          # run-id (e.g. run #17's lumo-build-state-4). Empty run-id
+          # falls back to the current run, so the normal in-run
+          # stage chain is unchanged.
+          run-id: ${{ inputs.run-id || github.run_id }}
+          github-token: ${{ github.token }}
 
       - name: Extract previous build state
         if: inputs.from-artifact
         shell: pwsh
         run: |
+          # Free-space gate: fail fast with numbers instead of dying
+          # 16 minutes into extraction (run #17, build-5). Peak need
+          # is the zip plus the expanded tree; state-4 was 7.7 GiB +
+          # 25.3 GiB, so require zip + 30 GiB (the 30 GiB covers the
+          # expanded tree with room for it to keep growing). This is
+          # a tripwire, not a guarantee — the 7z x exit check below
+          # remains the backstop if the tree outgrows the allowance.
+          $zipPath = "build-state/${{ env.BUILD_STATE_ZIP }}"
+          $zipGiB = (Get-Item $zipPath).Length / 1GB
+          $freeGiB = (Get-PSDrive C).Free / 1GB
+          Write-Host "Free disk before extraction: $([math]::Round($freeGiB, 1)) GiB; checkpoint zip: $([math]::Round($zipGiB, 1)) GiB"
+          $needGiB = $zipGiB + 30
+          if ($freeGiB -lt $needGiB) { throw "Not enough free disk to extract the checkpoint: $([math]::Round($freeGiB, 1)) GiB free, need $([math]::Round($needGiB, 1)) GiB (zip $([math]::Round($zipGiB, 1)) GiB + 30 GiB for the expanded tree). The pre-extraction cleanup did not free enough; rerun the stage." }
           # Integrity gate: nothing else verifies the checkpoint
           # hand-off between stages. `7z t` checks every entry's
           # CRC, so a checkpoint truncated or corrupted in upload,
@@ -128,6 +179,11 @@ jobs:
           if ($LASTEXITCODE -eq 1) { Write-Host 'WARNING: 7z t exited 1 (warnings only); continuing to extraction.' }
           7z x build-state/${{ env.BUILD_STATE_ZIP }} -oC:\ -y
           if ($LASTEXITCODE -ge 2) { throw "Checkpoint extraction failed (7z x exit $LASTEXITCODE); refusing to resume from a partially extracted tree." }
+          # The downloaded zip is no longer needed once extracted;
+          # deleting it frees ~7.7 GiB before the compile starts.
+          # (stage.py writes its own fresh checkpoint zip to
+          # $GITHUB_WORKSPACE/build-state.zip, a different path.)
+          Remove-Item build-state -Recurse -Force
 
       - name: Run build stage
         id: stage

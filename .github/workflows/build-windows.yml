@@ -38,12 +38,23 @@ on:
         required: false
         description: Runner image name
         default: windows-2025
+      resume-run-id:
+        required: false
+        description: 'Resume from this run id (e.g. 44018615694 for #17 state-4). Empty = fresh build.'
+        default: ''
+      resume-stage:
+        required: false
+        description: 'Stage to resume at (e.g. 5 for state-4). 0 = fresh build.'
+        type: number
+        default: 0
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   build-1:
+    if: ${{ inputs.resume-stage == 0 }}
     uses: ./.github/workflows/build-stage.yml
     secrets: inherit
     with:
@@ -53,7 +64,7 @@ jobs:
 
   build-2:
     needs: build-1
-    if: needs.build-1.outputs.finished == 'false'
+    if: ${{ !cancelled() && !failure() && (needs.build-1.outputs.finished == 'false' || inputs.resume-stage == 2) }}
     uses: ./.github/workflows/build-stage.yml
     secrets: inherit
     with:
@@ -64,7 +75,7 @@ jobs:
 
   build-3:
     needs: build-2
-    if: needs.build-2.outputs.finished == 'false'
+    if: ${{ !cancelled() && !failure() && (needs.build-2.outputs.finished == 'false' || inputs.resume-stage == 3) }}
     uses: ./.github/workflows/build-stage.yml
     secrets: inherit
     with:
@@ -75,7 +86,7 @@ jobs:
 
   build-4:
     needs: build-3
-    if: needs.build-3.outputs.finished == 'false'
+    if: ${{ !cancelled() && !failure() && (needs.build-3.outputs.finished == 'false' || inputs.resume-stage == 4) }}
     uses: ./.github/workflows/build-stage.yml
     secrets: inherit
     with:
@@ -86,7 +97,7 @@ jobs:
 
   build-5:
     needs: build-4
-    if: needs.build-4.outputs.finished == 'false'
+    if: ${{ !cancelled() && !failure() && (needs.build-4.outputs.finished == 'false' || inputs.resume-stage == 5) }}
     uses: ./.github/workflows/build-stage.yml
     secrets: inherit
     with:
@@ -94,10 +105,11 @@ jobs:
       from-artifact: true
       artifact-name: lumo-build-state-4
       runner: ${{ inputs.runner || 'windows-2025' }}
+      run-id: ${{ inputs.resume-run-id }}
 
   build-6:
     needs: build-5
-    if: needs.build-5.outputs.finished == 'false'
+    if: ${{ !cancelled() && !failure() && (needs.build-5.outputs.finished == 'false' || inputs.resume-stage == 6) }}
     uses: ./.github/workflows/build-stage.yml
     secrets: inherit
     with:
@@ -108,7 +120,7 @@ jobs:
 
   build-7:
     needs: build-6
-    if: needs.build-6.outputs.finished == 'false'
+    if: ${{ !cancelled() && !failure() && (needs.build-6.outputs.finished == 'false' || inputs.resume-stage == 7) }}
     uses: ./.github/workflows/build-stage.yml
     secrets: inherit
     with:
@@ -119,7 +131,7 @@ jobs:
 
   build-8:
     needs: build-7
-    if: needs.build-7.outputs.finished == 'false'
+    if: ${{ !cancelled() && !failure() && (needs.build-7.outputs.finished == 'false' || inputs.resume-stage == 8) }}
     uses: ./.github/workflows/build-stage.yml
     secrets: inherit
     with:
@@ -130,7 +142,7 @@ jobs:
 
   build-9:
     needs: build-8
-    if: needs.build-8.outputs.finished == 'false'
+    if: ${{ !cancelled() && !failure() && (needs.build-8.outputs.finished == 'false' || inputs.resume-stage == 9) }}
     uses: ./.github/workflows/build-stage.yml
     secrets: inherit
     with:
@@ -141,7 +153,7 @@ jobs:
 
   build-10:
     needs: build-9
-    if: needs.build-9.outputs.finished == 'false'
+    if: ${{ !cancelled() && !failure() && (needs.build-9.outputs.finished == 'false' || inputs.resume-stage == 10) }}
     uses: ./.github/workflows/build-stage.yml
     secrets: inherit
     with:
@@ -152,7 +164,7 @@ jobs:
 
   build-11:
     needs: build-10
-    if: needs.build-10.outputs.finished == 'false'
+    if: ${{ !cancelled() && !failure() && (needs.build-10.outputs.finished == 'false' || inputs.resume-stage == 11) }}
     uses: ./.github/workflows/build-stage.yml
     secrets: inherit
     with:
@@ -163,7 +175,7 @@ jobs:
 
   build-12:
     needs: build-11
-    if: needs.build-11.outputs.finished == 'false'
+    if: ${{ !cancelled() && !failure() && (needs.build-11.outputs.finished == 'false' || inputs.resume-stage == 12) }}
     uses: ./.github/workflows/build-stage.yml
     secrets: inherit
     with:
@@ -174,7 +186,7 @@ jobs:
 
   build-13:
     needs: build-12
-    if: needs.build-12.outputs.finished == 'false'
+    if: ${{ !cancelled() && !failure() && (needs.build-12.outputs.finished == 'false' || inputs.resume-stage == 13) }}
     uses: ./.github/workflows/build-stage.yml
     secrets: inherit
     with:
@@ -185,7 +197,7 @@ jobs:
 
   build-14:
     needs: build-13
-    if: needs.build-13.outputs.finished == 'false'
+    if: ${{ !cancelled() && !failure() && (needs.build-13.outputs.finished == 'false' || inputs.resume-stage == 14) }}
     uses: ./.github/workflows/build-stage.yml
     secrets: inherit
     with:
@@ -196,7 +208,7 @@ jobs:
 
   build-15:
     needs: build-14
-    if: needs.build-14.outputs.finished == 'false'
+    if: ${{ !cancelled() && !failure() && (needs.build-14.outputs.finished == 'false' || inputs.resume-stage == 15) }}
     uses: ./.github/workflows/build-stage.yml
     secrets: inherit
     with:
