@@ -23,10 +23,10 @@
    - 調査時点の Thorium は 156.0.8078.80（Chromium 156）。追従するバージョンを
      リポジトリ作成時に改めて確認して固定する。
 3. **AVX2 版か SSE3 版か（あるいは両方か）**
-   - 決定（2026-11-10）：**AVX2 のみ**。せあの PC の CPU は Intel Core i5-8350U
+   - 決定（2026-11-10）：**AVX2 のみ**。オーナーの PC の CPU は Intel Core i5-8350U
      で、Intel 公式仕様で AVX2 対応を確認済み。SSE3 版は作らない。
 4. **Google API キーの取得**
-   - せあ自身のキーが必要。Chromium-dev グループ参加、Google Cloud Console での
+   - オーナー自身のキーが必要。Chromium-dev グループ参加、Google Cloud Console での
      プロジェクト作成、OAuth クライアント作成、Secrets への登録が必要。
    - キーがなくてもブラウザ自体はビルドできる（Sync だけ使えない）。
 5. **ブランディング**
