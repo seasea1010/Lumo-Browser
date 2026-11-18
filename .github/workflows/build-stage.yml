@@ -93,10 +93,10 @@ jobs:
         shell: pwsh
         run: '"LUMO_JOB_STARTED_AT=$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())" >> $env:GITHUB_ENV'
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -137,7 +137,7 @@ jobs:
 
       - name: Download previous build state
         if: inputs.from-artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: ${{ inputs.artifact-name }}
           path: build-state
@@ -213,7 +213,7 @@ jobs:
         # what the next stage resumes from, and build-final downloads
         # the finishing stage's one to package the tree. On a real
         # failure this step is skipped and no state is uploaded.
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: lumo-build-state-${{ inputs.stage }}
           path: ${{ env.BUILD_STATE_ZIP }}

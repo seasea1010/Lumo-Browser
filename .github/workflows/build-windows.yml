@@ -255,7 +255,7 @@ jobs:
       STAGE_15_RESULT: ${{ needs.build-15.result }}
       STAGE_15_FINISHED: ${{ needs.build-15.outputs.finished }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Find the stage that finished the build
         id: last
@@ -317,7 +317,7 @@ jobs:
             Format-Table -AutoSize
 
       - name: Download finished build state
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: lumo-build-state-${{ steps.last.outputs.stage }}
           path: build-state
@@ -537,7 +537,7 @@ jobs:
           Get-Item lumo-windows-x64.zip | Select-Object Name, Length | Format-List
 
       - name: Upload portable package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: lumo-windows-x64
           path: lumo-windows-x64.zip
