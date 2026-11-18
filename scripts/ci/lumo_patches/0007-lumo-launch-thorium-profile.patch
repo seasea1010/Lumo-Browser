@@ -1,0 +1,118 @@
+diff --git a/chrome/app/chrome_command_ids.h b/chrome/app/chrome_command_ids.h
+index 13f1670..b8e2810 100644
+--- a/chrome/app/chrome_command_ids.h
++++ b/chrome/app/chrome_command_ids.h
+@@ -287,6 +287,9 @@
+ #define IDC_SHOW_COMMENTS_SIDE_PANEL  40297
+ #define IDC_RECENT_TABS_SEE_DEVICE_TABS  40298
+ #define IDC_SHOW_AI_MODE_OMNIBOX_BUTTON 40299
++// Lumo: launch a separate process with the original Thorium user
++// profile data directory (Lumo patch 0007).
++#define IDC_LUMO_LAUNCH_THORIUM_PROFILE 40300
+ #define IDC_CONTENT_CONTEXT_INSPECTELEMENT_WITH_DEVTOOLS 40301
+ #define IDC_REPORT_UNSAFE_SITE 40302
+ #define IDC_SHOW_READING_MODE_KEYBOARD 40303
+diff --git a/chrome/app/generated_resources.grd b/chrome/app/generated_resources.grd
+index 06c63a0..28c42dd 100644
+--- a/chrome/app/generated_resources.grd
++++ b/chrome/app/generated_resources.grd
+@@ -19127,6 +19127,9 @@ Please help our engineers fix this problem. Tell us what happened right before y
+     <message name="IDS_CHROMELABS_LUMO_GLIC_MENU_DESCRIPTION" desc="Description of the Lumo experiment that restores the Open Gemini menu item, shown in Chrome Labs.">
+       Lumo が既定で抹消しているアプリメニューの「Open Gemini in Thorium」項目を復活させます。
+     </message>
++    <message name="IDS_LUMO_LAUNCH_THORIUM_PROFILE" desc="App menu item that launches Lumo with the original Thorium user profile data directory.">
++      もともとのThoriumのユーザープロファイルデータの保存場所から起動
++    </message>
+     <message name="IDS_CHROMELABS_RELAUNCH_BUTTON_LABEL"
+              desc="Label on the button in the footer of the Thorium Labs bubble which will relaunch the browser.">
+       Relaunch
+diff --git a/chrome/browser/ui/browser_command_controller.cc b/chrome/browser/ui/browser_command_controller.cc
+index 05ee7b0..4776e92 100644
+--- a/chrome/browser/ui/browser_command_controller.cc
++++ b/chrome/browser/ui/browser_command_controller.cc
+@@ -12,6 +12,9 @@
+ #include "base/check_deref.h"
+ #include "base/command_line.h"
+ #include "base/debug/debugging_buildflags.h"
++#include "base/files/file_path.h"
++#include "base/path_service.h"
++#include "base/process/launch.h"
+ #include "base/debug/profiler.h"
+ #include "base/feature_list.h"
+ #include "base/functional/bind.h"
+@@ -107,6 +110,7 @@
+ #include "chrome/browser/web_applications/web_app_install_params.h"
+ #include "chrome/browser/web_applications/web_app_utils.h"
+ #include "chrome/common/channel_info.h"
++#include "chrome/common/chrome_switches.h"
+ #include "chrome/common/chrome_features.h"
+ #include "chrome/common/content_restriction.h"
+ #include "chrome/common/pref_names.h"
+@@ -1598,6 +1602,30 @@ void BrowserCommandController::HandleCommandWithDisposition(
+           !profile_prefs->GetBoolean(glic::prefs::kGlicPinnedToTabstrip));
+       break;
+     }
++#if BUILDFLAG(IS_WIN)
++    case IDC_LUMO_LAUNCH_THORIUM_PROFILE: {
++      // Lumo: start a separate browser process that uses the
++      // original Thorium user profile data directory
++      // (%LOCALAPPDATA%\Thorium\User Data). The user-data-dir
++      // differs from this process's, so the new process is
++      // independent of the profile singleton and can run alongside
++      // this window.
++      base::FilePath exe_path;
++      base::FilePath local_app_data;
++      if (base::PathService::Get(base::FILE_EXE, &exe_path) &&
++          base::PathService::Get(base::DIR_LOCAL_APP_DATA,
++                                 &local_app_data)) {
++        const base::FilePath thorium_user_data =
++            local_app_data.Append(FILE_PATH_LITERAL("Thorium"))
++                .Append(FILE_PATH_LITERAL("User Data"));
++        base::CommandLine command_line(exe_path);
++        command_line.AppendSwitchPath(switches::kUserDataDir,
++                                      thorium_user_data);
++        base::LaunchProcess(command_line, base::LaunchOptions());
++      }
++      break;
++    }
++#endif  // BUILDFLAG(IS_WIN)
+     case IDC_OPEN_GLIC: {
+       auto* service =
+           glic::GlicKeyedServiceFactory::GetGlicKeyedService(profile());
+@@ -1865,6 +1893,12 @@ void BrowserCommandController::InitCommandState() {
+       TabsFromOtherDevicesSidePanelCoordinator::IsSupported(profile()));
+   command_updater_->UpdateCommandEnabled(IDC_SHOW_DOWNLOADS, true);
+   command_updater_->UpdateCommandEnabled(IDC_SHOW_COMMENTS_SIDE_PANEL, true);
++#if BUILDFLAG(IS_WIN)
++  // Lumo: launches a separate process with the original Thorium
++  // user profile data directory (Lumo patch 0007).
++  command_updater_->UpdateCommandEnabled(IDC_LUMO_LAUNCH_THORIUM_PROFILE,
++                                         true);
++#endif
+   command_updater_->UpdateCommandEnabled(IDC_FIND_AND_EDIT_MENU, true);
+   command_updater_->UpdateCommandEnabled(IDC_SAVE_AND_SHARE_MENU, true);
+   command_updater_->UpdateCommandEnabled(IDC_SHOW_READING_MODE_SIDE_PANEL,
+diff --git a/chrome/browser/ui/toolbar/app_menu_model.cc b/chrome/browser/ui/toolbar/app_menu_model.cc
+index a8216d6..277a7d9 100644
+--- a/chrome/browser/ui/toolbar/app_menu_model.cc
++++ b/chrome/browser/ui/toolbar/app_menu_model.cc
+@@ -2205,6 +2205,19 @@ void AppMenuModel::Build() {
+   AddSeparator(ui::SPACING_SEPARATOR);
+ #endif
+ 
++#if BUILDFLAG(IS_WIN)
++  // Lumo: launch a separate process that uses the original Thorium
++  // user profile data directory (%LOCALAPPDATA%\Thorium\User Data).
++  // The different user-data-dir lets it run alongside this window,
++  // so the item sits with the profile-related rows at the top of
++  // the menu. Executed as IDC_LUMO_LAUNCH_THORIUM_PROFILE.
++  if (!browser_->GetProfile()->IsGuestSession() &&
++      !browser_->GetProfile()->IsOffTheRecord()) {
++    AddItemWithStringId(IDC_LUMO_LAUNCH_THORIUM_PROFILE,
++                        IDS_LUMO_LAUNCH_THORIUM_PROFILE);
++  }
++#endif
++
+   if (!browser_->GetProfile()->IsGuestSession()) {
+     sub_menus_.push_back(
+         std::make_unique<PasswordsAndAutofillSubMenuModel>(this));

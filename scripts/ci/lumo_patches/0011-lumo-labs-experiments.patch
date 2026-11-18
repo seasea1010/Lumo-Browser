@@ -1,0 +1,217 @@
+diff --git a/chrome/app/generated_resources.grd b/chrome/app/generated_resources.grd
+index a40d871..5bd9413 100644
+--- a/chrome/app/generated_resources.grd
++++ b/chrome/app/generated_resources.grd
+@@ -19127,6 +19127,36 @@ Please help our engineers fix this problem. Tell us what happened right before y
+     <message name="IDS_CHROMELABS_LUMO_GLIC_MENU_DESCRIPTION" desc="Description of the Lumo experiment that restores the Open Gemini menu item, shown in Chrome Labs.">
+       Lumo が既定で抹消しているアプリメニューの「Open Gemini in Thorium」項目を復活させます。
+     </message>
++    <message name="IDS_CHROMELABS_LUMO_HOVER_CARD_MEMORY_USAGE_NAME" desc="Name of the Lumo Labs experiment shown in the Labs bubble.">
++      タブのホバーカードにメモリ使用量を表示
++    </message>
++    <message name="IDS_CHROMELABS_LUMO_HOVER_CARD_MEMORY_USAGE_DESCRIPTION" desc="Description of the Lumo Labs experiment shown in the Labs bubble.">
++      タブのホバーカードに、そのタブのメモリ使用量を表示します。
++    </message>
++    <message name="IDS_CHROMELABS_LUMO_DARK_MODE_SCHEDULE_NAME" desc="Name of the Lumo Labs experiment shown in the Labs bubble.">
++      ダークモードの時間帯自動切替
++    </message>
++    <message name="IDS_CHROMELABS_LUMO_DARK_MODE_SCHEDULE_DESCRIPTION" desc="Description of the Lumo Labs experiment shown in the Labs bubble.">
++      時間帯に応じてライトテーマとダークテーマを自動で切り替えます（実験中：現在はフラグ登録のみで、切替処理は未実装です）。
++    </message>
++    <message name="IDS_CHROMELABS_LUMO_TRACKING_PROTECTION_STRICT_NAME" desc="Name of the Lumo Labs experiment shown in the Labs bubble.">
++      トラッキング防止の厳格モード
++    </message>
++    <message name="IDS_CHROMELABS_LUMO_TRACKING_PROTECTION_STRICT_DESCRIPTION" desc="Description of the Lumo Labs experiment shown in the Labs bubble.">
++      トラッキング防止を標準より厳しくします（実験中：現在はフラグ登録のみです）。
++    </message>
++    <message name="IDS_CHROMELABS_LUMO_FULL_PAGE_SCREENSHOT_NAME" desc="Name of the Lumo Labs experiment shown in the Labs bubble.">
++      ページ全体スクリーンショット
++    </message>
++    <message name="IDS_CHROMELABS_LUMO_FULL_PAGE_SCREENSHOT_DESCRIPTION" desc="Description of the Lumo Labs experiment shown in the Labs bubble.">
++      表示範囲を超えたページ全体のスクリーンショットを撮れるようにします（実験中：現在はフラグ登録のみです）。
++    </message>
++    <message name="IDS_CHROMELABS_LUMO_TAB_GROUP_SESSION_SAVE_NAME" desc="Name of the Lumo Labs experiment shown in the Labs bubble.">
++      タブグループのセッション保存／復元
++    </message>
++    <message name="IDS_CHROMELABS_LUMO_TAB_GROUP_SESSION_SAVE_DESCRIPTION" desc="Description of the Lumo Labs experiment shown in the Labs bubble.">
++      タブグループをセッションとして保存し、後で復元できるようにします（実験中：現在はフラグ登録のみです）。
++    </message>
+     <message name="IDS_LUMO_LAUNCH_THORIUM_PROFILE" desc="App menu item that launches Lumo with the original Thorium user profile data directory.">
+       もともとのThoriumのユーザープロファイルデータの保存場所から起動
+     </message>
+diff --git a/chrome/browser/thorium_flag_entries.h b/chrome/browser/thorium_flag_entries.h
+index cdf6898..c6b2b9f 100644
+--- a/chrome/browser/thorium_flag_entries.h
++++ b/chrome/browser/thorium_flag_entries.h
+@@ -27,6 +27,31 @@
+      "which Lumo removes by default.",
+      kOsDesktop, FEATURE_VALUE_TYPE(features::kLumoGlicMenu)},
+ 
++    {"lumo-hover-card-memory-usage",
++     "Hover Card Memory Usage",
++     "Shows the tab's memory usage on the tab hover card. Backed by the existing hover-card memory display; the experiment forces it on without changing the underlying preference.",
++     kOsDesktop, FEATURE_VALUE_TYPE(features::kLumoHoverCardMemoryUsage)},
++
++    {"lumo-dark-mode-schedule",
++     "Dark Mode Time Schedule",
++     "Switches between the light and dark themes based on the time of day. Reserved experiment: currently only registers the flag; the scheduling itself is not implemented yet.",
++     kOsDesktop, FEATURE_VALUE_TYPE(features::kLumoDarkModeSchedule)},
++
++    {"lumo-tracking-protection-strict",
++     "Strict Tracking Protection",
++     "Applies stricter tracking protection than the standard mode. Reserved experiment: currently only registers the flag.",
++     kOsDesktop, FEATURE_VALUE_TYPE(features::kLumoTrackingProtectionStrict)},
++
++    {"lumo-full-page-screenshot",
++     "Full Page Screenshot",
++     "Captures a screenshot of the whole page, beyond the visible viewport. Reserved experiment: currently only registers the flag.",
++     kOsDesktop, FEATURE_VALUE_TYPE(features::kLumoFullPageScreenshot)},
++
++    {"lumo-tab-group-session-save",
++     "Tab Group Session Save and Restore",
++     "Saves tab groups as sessions and restores them later. Reserved experiment: currently only registers the flag.",
++     kOsDesktop, FEATURE_VALUE_TYPE(features::kLumoTabGroupSessionSave)},
++
+     {"thorium-2024",
+      "Enable Experimental Thorium 2024 (Th24) UI",
+      "Enable a new \"hybrid\" UI, which restores many parts of the pre-Chrome Refresh 2023 UI. Good for people "
+diff --git a/chrome/browser/ui/toolbar/chrome_labs/chrome_labs_model.cc b/chrome/browser/ui/toolbar/chrome_labs/chrome_labs_model.cc
+index 1130faa..00bbd6e 100644
+--- a/chrome/browser/ui/toolbar/chrome_labs/chrome_labs_model.cc
++++ b/chrome/browser/ui/toolbar/chrome_labs/chrome_labs_model.cc
+@@ -64,6 +64,66 @@ const std::vector<LabInfo>& GetData() {
+         kLumoGlicMenuFlagDescription,
+         "chrome-labs-lumo-glic-menu", version_info::Channel::BETA);
+ 
++    const char kLumoHoverCardMemoryUsageFlagId[] = "lumo-hover-card-memory-usage";
++    const std::u16string kLumoHoverCardMemoryUsageFlagName =
++        l10n_util::GetStringUTF16(IDS_CHROMELABS_LUMO_HOVER_CARD_MEMORY_USAGE_NAME);
++    const std::u16string kLumoHoverCardMemoryUsageFlagDescription =
++        l10n_util::GetStringUTF16(IDS_CHROMELABS_LUMO_HOVER_CARD_MEMORY_USAGE_DESCRIPTION);
++
++    lab_info.emplace_back(
++        kLumoHoverCardMemoryUsageFlagId,
++        kLumoHoverCardMemoryUsageFlagName,
++        kLumoHoverCardMemoryUsageFlagDescription,
++        "chrome-labs-lumo-hover-card-memory-usage", version_info::Channel::BETA);
++
++    const char kLumoDarkModeScheduleFlagId[] = "lumo-dark-mode-schedule";
++    const std::u16string kLumoDarkModeScheduleFlagName =
++        l10n_util::GetStringUTF16(IDS_CHROMELABS_LUMO_DARK_MODE_SCHEDULE_NAME);
++    const std::u16string kLumoDarkModeScheduleFlagDescription =
++        l10n_util::GetStringUTF16(IDS_CHROMELABS_LUMO_DARK_MODE_SCHEDULE_DESCRIPTION);
++
++    lab_info.emplace_back(
++        kLumoDarkModeScheduleFlagId,
++        kLumoDarkModeScheduleFlagName,
++        kLumoDarkModeScheduleFlagDescription,
++        "chrome-labs-lumo-dark-mode-schedule", version_info::Channel::BETA);
++
++    const char kLumoTrackingProtectionStrictFlagId[] = "lumo-tracking-protection-strict";
++    const std::u16string kLumoTrackingProtectionStrictFlagName =
++        l10n_util::GetStringUTF16(IDS_CHROMELABS_LUMO_TRACKING_PROTECTION_STRICT_NAME);
++    const std::u16string kLumoTrackingProtectionStrictFlagDescription =
++        l10n_util::GetStringUTF16(IDS_CHROMELABS_LUMO_TRACKING_PROTECTION_STRICT_DESCRIPTION);
++
++    lab_info.emplace_back(
++        kLumoTrackingProtectionStrictFlagId,
++        kLumoTrackingProtectionStrictFlagName,
++        kLumoTrackingProtectionStrictFlagDescription,
++        "chrome-labs-lumo-tracking-protection-strict", version_info::Channel::BETA);
++
++    const char kLumoFullPageScreenshotFlagId[] = "lumo-full-page-screenshot";
++    const std::u16string kLumoFullPageScreenshotFlagName =
++        l10n_util::GetStringUTF16(IDS_CHROMELABS_LUMO_FULL_PAGE_SCREENSHOT_NAME);
++    const std::u16string kLumoFullPageScreenshotFlagDescription =
++        l10n_util::GetStringUTF16(IDS_CHROMELABS_LUMO_FULL_PAGE_SCREENSHOT_DESCRIPTION);
++
++    lab_info.emplace_back(
++        kLumoFullPageScreenshotFlagId,
++        kLumoFullPageScreenshotFlagName,
++        kLumoFullPageScreenshotFlagDescription,
++        "chrome-labs-lumo-full-page-screenshot", version_info::Channel::BETA);
++
++    const char kLumoTabGroupSessionSaveFlagId[] = "lumo-tab-group-session-save";
++    const std::u16string kLumoTabGroupSessionSaveFlagName =
++        l10n_util::GetStringUTF16(IDS_CHROMELABS_LUMO_TAB_GROUP_SESSION_SAVE_NAME);
++    const std::u16string kLumoTabGroupSessionSaveFlagDescription =
++        l10n_util::GetStringUTF16(IDS_CHROMELABS_LUMO_TAB_GROUP_SESSION_SAVE_DESCRIPTION);
++
++    lab_info.emplace_back(
++        kLumoTabGroupSessionSaveFlagId,
++        kLumoTabGroupSessionSaveFlagName,
++        kLumoTabGroupSessionSaveFlagDescription,
++        "chrome-labs-lumo-tab-group-session-save", version_info::Channel::BETA);
++
+     const char kRestoreTabsFlagId[] = "restore-tab-button";
+     const std::u16string kRestoreTabsFlagName =
+         l10n_util::GetStringUTF16(IDS_CHROMELABS_RESTORE_TAB_BUTTON_NAME);
+diff --git a/chrome/browser/ui/ui_features.cc b/chrome/browser/ui/ui_features.cc
+index 9900309..cb77a87 100644
+--- a/chrome/browser/ui/ui_features.cc
++++ b/chrome/browser/ui/ui_features.cc
+@@ -57,6 +57,20 @@ BASE_FEATURE(kThoriumDownloadsShowFullUrl, base::FEATURE_ENABLED_BY_DEFAULT);
+ // Lumo Labs by users who want the Gemini entry point back.
+ BASE_FEATURE(kLumoGlicMenu, base::FEATURE_DISABLED_BY_DEFAULT);
+ 
++// Lumo Labs experiments (Lumo patch 0011). All default to off and
++// are toggled from Lumo Labs / chrome://flags. Only
++// kLumoHoverCardMemoryUsage has a behavioral hook so far; the
++// others are registered placeholders for staged implementation.
++BASE_FEATURE(kLumoHoverCardMemoryUsage, base::FEATURE_DISABLED_BY_DEFAULT);
++
++BASE_FEATURE(kLumoDarkModeSchedule, base::FEATURE_DISABLED_BY_DEFAULT);
++
++BASE_FEATURE(kLumoTrackingProtectionStrict, base::FEATURE_DISABLED_BY_DEFAULT);
++
++BASE_FEATURE(kLumoFullPageScreenshot, base::FEATURE_DISABLED_BY_DEFAULT);
++
++BASE_FEATURE(kLumoTabGroupSessionSave, base::FEATURE_DISABLED_BY_DEFAULT);
++
+ // Kill switch for crbug.com/559656985. When enabled, the press-and-hold Esc
+ // timer also exits tab fullscreen (unless browser fullscreen is underneath)
+ // when it fires while Esc is locked via the Keyboard Lock API. When disabled,
+diff --git a/chrome/browser/ui/ui_features.h b/chrome/browser/ui/ui_features.h
+index 82a9fc2..d3c6e40 100644
+--- a/chrome/browser/ui/ui_features.h
++++ b/chrome/browser/ui/ui_features.h
+@@ -43,6 +43,21 @@ BASE_DECLARE_FEATURE(kThoriumDownloadsShowFullUrl);
+ // removes by default. Enabled from Lumo Labs; see patch 0006.
+ BASE_DECLARE_FEATURE(kLumoGlicMenu);
+ 
++// Lumo Labs experiment (Lumo patch 0011): Hover Card Memory Usage.
++BASE_DECLARE_FEATURE(kLumoHoverCardMemoryUsage);
++
++// Lumo Labs experiment (Lumo patch 0011): Dark Mode Time Schedule.
++BASE_DECLARE_FEATURE(kLumoDarkModeSchedule);
++
++// Lumo Labs experiment (Lumo patch 0011): Strict Tracking Protection.
++BASE_DECLARE_FEATURE(kLumoTrackingProtectionStrict);
++
++// Lumo Labs experiment (Lumo patch 0011): Full Page Screenshot.
++BASE_DECLARE_FEATURE(kLumoFullPageScreenshot);
++
++// Lumo Labs experiment (Lumo patch 0011): Tab Group Session Save and Restore.
++BASE_DECLARE_FEATURE(kLumoTabGroupSessionSave);
++
+ BASE_DECLARE_FEATURE(kKeyboardLockHeldEscExitsTabFullscreen);
+ 
+ // All feature flags associated with Glow Up, apart from those in
+diff --git a/chrome/browser/ui/views/tabs/hovercard/tab_hover_card_controller.cc b/chrome/browser/ui/views/tabs/hovercard/tab_hover_card_controller.cc
+index a10a64e..bd08f63 100644
+--- a/chrome/browser/ui/views/tabs/hovercard/tab_hover_card_controller.cc
++++ b/chrome/browser/ui/views/tabs/hovercard/tab_hover_card_controller.cc
+@@ -890,9 +890,12 @@ void TabHoverCardController::OnHovercardImagesEnabledChanged() {
+ }
+ 
+ void TabHoverCardController::OnHovercardMemoryUsageEnabledChanged() {
++  // Lumo: the Lumo Labs experiment forces the memory usage footer
++  // on, without changing the underlying preference (patch 0011).
+   hover_card_memory_usage_enabled_ =
+       g_browser_process->local_state()->GetBoolean(
+-          prefs::kHoverCardMemoryUsageEnabled);
++          prefs::kHoverCardMemoryUsageEnabled) ||
++      base::FeatureList::IsEnabled(features::kLumoHoverCardMemoryUsage);
+ }
+ 
+ views::Widget* TabHoverCardController::GetCardWidget() const {

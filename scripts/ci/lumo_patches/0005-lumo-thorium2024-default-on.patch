@@ -1,0 +1,13 @@
+diff --git a/ui/base/ui_base_features.cc b/ui/base/ui_base_features.cc
+index 8867bc4..c543ba8 100644
+--- a/ui/base/ui_base_features.cc
++++ b/ui/base/ui_base_features.cc
+@@ -416,7 +416,7 @@ bool IsVariableRefreshRateAlwaysOn() {
+   return base::FeatureList::IsEnabled(kEnableVariableRefreshRateAlwaysOn);
+ }
+ 
+-BASE_FEATURE(kThorium2024, "Thorium2024", base::FEATURE_DISABLED_BY_DEFAULT);
++BASE_FEATURE(kThorium2024, "Thorium2024", base::FEATURE_ENABLED_BY_DEFAULT);
+ 
+ bool IsThorium2024() {
+   static const bool th24_flag =

@@ -1,0 +1,559 @@
+diff --git a/chrome/browser/resources/settings/people_page/sync_page.html.ts b/chrome/browser/resources/settings/people_page/sync_page.html.ts
+index bab5906..8fcdb82 100644
+--- a/chrome/browser/resources/settings/people_page/sync_page.html.ts
++++ b/chrome/browser/resources/settings/people_page/sync_page.html.ts
+@@ -76,6 +76,33 @@ export function getHtml(this: SettingsSyncPageElement) {
+       </div>
+       <div id="${PageStatus.CONFIGURE}"
+           ?hidden="${!this.isStatus_(PageStatus.CONFIGURE)}">
++        <!-- Lumo: Sync self-test (Lumo patch 0009). -->
++        <div id="lumo-sync-test" class="list-frame">
++          <div class="list-item">
++            <div class="start cr-padded-text">
++              <div>Sync の動作をテスト</div>
++              <div class="secondary">
++                自前 API キーで Sync が動いているかを6項目で確認します。
++                テスト用ブックマークを作成して同期を確認し、削除します。
++              </div>
++            </div>
++            <cr-button id="lumoSyncTestButton" class="action-button"
++                ?disabled="${this.lumoSyncTestRunning_}"
++                @click="${this.onLumoSyncTestClick_}">
++              ${this.lumoSyncTestRunning_ ? 'テスト中…' :
++                                            'Sync の動作をテスト'}
++            </cr-button>
++          </div>
++          ${this.lumoSyncTestRows_.map(row => html`
++            <div class="list-item">
++              <div class="start cr-padded-text">
++                <div>${row.ok ? '✓' : '✗'} ${row.label}</div>
++                <div class="secondary">${row.detail}</div>
++              </div>
++            </div>
++          `)}
++        </div>
++
+         <div id="other-sync-items" class="list-frame">
+           <cr-link-row id="sync-advanced-row"
+               label="$i18n{syncAdvancedPageTitle}"
+diff --git a/chrome/browser/resources/settings/people_page/sync_page.ts b/chrome/browser/resources/settings/people_page/sync_page.ts
+index de2ff9f..a80d2a2 100644
+--- a/chrome/browser/resources/settings/people_page/sync_page.ts
++++ b/chrome/browser/resources/settings/people_page/sync_page.ts
+@@ -31,7 +31,7 @@ import {assert, assertNotReached} from '//resources/js/assert.js';
+ import {focusWithoutInk} from '//resources/js/focus_without_ink.js';
+ import {CrLitElement} from '//resources/lit/v3_0/lit.rollup.js';
+ import type {PropertyValues} from '//resources/lit/v3_0/lit.rollup.js';
+-import type {SyncBrowserProxy, SyncPrefs, SyncStatus} from '/shared/settings/people_page/sync_browser_proxy.js';
++import type {LumoSyncTestResult, SyncBrowserProxy, SyncPrefs, SyncStatus} from '/shared/settings/people_page/sync_browser_proxy.js';
+ import {shouldShowSyncTogglesForStatusAction, PageStatus, SignedInState, StatusAction, SyncBrowserProxyImpl} from '/shared/settings/people_page/sync_browser_proxy.js';
+ import {I18nMixinLit} from 'chrome://resources/cr_elements/i18n_mixin_lit.js';
+ import {OpenWindowProxyImpl} from 'chrome://resources/js/open_window_proxy.js';
+@@ -62,6 +62,13 @@ import {getHtml} from './sync_page.html.js';
+  * 'settings-sync-page' is the settings page containing sync settings.
+  */
+ 
++/** Lumo: one row of the Sync self-test result list (patch 0009). */
++interface LumoSyncTestRow {
++  label: string;
++  ok: boolean;
++  detail: string;
++}
++
+ const SettingsSyncPageElementBase =
+     SettingsViewMixinLit(WebUiListenerMixinLit(I18nMixinLit(CrLitElement)));
+ 
+@@ -130,6 +137,10 @@ export class SettingsSyncPageElement extends SettingsSyncPageElementBase {
+       isEeaChoiceCountry_: {type: Boolean},
+ 
+       personalizationCollapseExpanded_: {type: Boolean},
++
++      // Lumo: Sync self-test state (Lumo patch 0009).
++      lumoSyncTestRunning_: {type: Boolean},
++      lumoSyncTestRows_: {type: Array},
+     };
+   }
+ 
+@@ -150,6 +161,10 @@ export class SettingsSyncPageElement extends SettingsSyncPageElementBase {
+       loadTimeData.getBoolean('isEeaChoiceCountry');
+   protected accessor personalizationCollapseExpanded_: boolean = false;
+ 
++  // Lumo: Sync self-test state (Lumo patch 0009).
++  protected accessor lumoSyncTestRunning_: boolean = false;
++  protected accessor lumoSyncTestRows_: LumoSyncTestRow[] = [];
++
+   // <if expr="not is_chromeos">
+   protected accessor showSetupCancelDialog_: boolean = false;
+   // </if>
+@@ -283,6 +298,67 @@ export class SettingsSyncPageElement extends SettingsSyncPageElementBase {
+     }
+   }
+ 
++  /**
++   * Lumo: runs the Sync self-test in the browser and renders the
++   * six checks as a result list (Lumo patch 0009).
++   */
++  protected onLumoSyncTestClick_() {
++    this.lumoSyncTestRunning_ = true;
++    this.lumoSyncTestRows_ = [];
++    this.syncBrowserProxy_.lumoSyncTest().then(result => {
++      this.lumoSyncTestRunning_ = false;
++      this.lumoSyncTestRows_ = this.buildLumoSyncTestRows_(result);
++    });
++  }
++
++  private buildLumoSyncTestRows_(result: LumoSyncTestResult):
++      LumoSyncTestRow[] {
++    const lastSyncDetail = result.lastSyncTimeMs > 0 ?
++        new Date(result.lastSyncTimeMs).toLocaleString() :
++        '同期実績なし';
++    return [
++      {
++        label: '自前 API キーの組み込み',
++        ok: result.apiKeyConfigured && result.oauthClientConfigured,
++        detail: !result.apiKeyConfigured ?
++            'API キーが組み込まれていません' :
++            (result.oauthClientConfigured ?
++                 'API キーと OAuth クライアントが組み込まれています' :
++                 'OAuth クライアントが組み込まれていません'),
++      },
++      {
++        label: 'サインイン状態',
++        ok: result.signedIn,
++        detail: result.signedIn ? 'サインインしています' :
++                                  'サインインしていません',
++      },
++      {
++        label: 'Sync エンジンの稼働状態',
++        ok: result.syncActive,
++        detail: `状態: ${result.transportState}`,
++      },
++      {
++        label: 'Sync サーバーへの接続',
++        ok: result.serverConnected,
++        detail: result.serverConnected ?
++            '直近の同期サイクルが完了しています' :
++            '接続を確認できませんでした',
++      },
++      {
++        label: 'テスト用ブックマークの往復',
++        ok: result.bookmarkRoundTrip,
++        detail: result.bookmarkRoundTripDetail,
++      },
++      {
++        label: '最終同期時刻とエラー',
++        ok: !result.hasError,
++        detail: result.serverConflicts > 0 ?
++            `${lastSyncDetail}（競合 ${result.serverConflicts} 件）` :
++            lastSyncDetail,
++      },
++    ];
++  }
++
+   private onSyncStatusChanged_(syncStatus: SyncStatus) {
+     this.syncStatus_ = syncStatus;
+ 
+diff --git a/chrome/browser/resources/settings_shared/people_page/sync_browser_proxy.ts b/chrome/browser/resources/settings_shared/people_page/sync_browser_proxy.ts
+index 3ee5452..a977624 100644
+--- a/chrome/browser/resources/settings_shared/people_page/sync_browser_proxy.ts
++++ b/chrome/browser/resources/settings_shared/people_page/sync_browser_proxy.ts
+@@ -34,6 +34,25 @@ export enum SignedInState {
+ /**
+  * @see chrome/browser/ui/webui/settings/people_handler.cc
+  */
++/**
++ * Lumo: result of the Sync self-test run by the browser
++ * (Lumo patch 0009). Field names mirror the dictionary built by
++ * PeopleHandler::BuildLumoSyncTestResult.
++ */
++export interface LumoSyncTestResult {
++  apiKeyConfigured: boolean;
++  oauthClientConfigured: boolean;
++  signedIn: boolean;
++  syncActive: boolean;
++  transportState: string;
++  serverConnected: boolean;
++  bookmarkRoundTrip: boolean;
++  bookmarkRoundTripDetail: string;
++  lastSyncTimeMs: number;
++  hasError: boolean;
++  serverConflicts: number;
++}
++
+ export interface SyncStatus {
+   statusAction?: StatusAction;
+   disabled?: boolean;
+@@ -308,6 +327,12 @@ export interface SyncBrowserProxy {
+    */
+   getSyncStatus(): Promise<SyncStatus>;
+ 
++  /**
++   * Lumo: runs the Sync self-test in the browser and resolves
++   * with the check results (Lumo patch 0009).
++   */
++  lumoSyncTest(): Promise<LumoSyncTestResult>;
++
+   /**
+    * Gets a list of stored accounts.
+    */
+@@ -448,6 +473,10 @@ export class SyncBrowserProxyImpl implements SyncBrowserProxy {
+     return sendWithPromise<SyncStatus>('SyncSetupGetSyncStatus');
+   }
+ 
++  lumoSyncTest() {
++    return sendWithPromise<LumoSyncTestResult>('LumoSyncTest');
++  }
++
+   getStoredAccounts() {
+     return sendWithPromise<StoredAccount[]>('SyncSetupGetStoredAccounts');
+   }
+diff --git a/chrome/browser/ui/webui/settings/people_handler.cc b/chrome/browser/ui/webui/settings/people_handler.cc
+index 1169a40..829b132 100644
+--- a/chrome/browser/ui/webui/settings/people_handler.cc
++++ b/chrome/browser/ui/webui/settings/people_handler.cc
+@@ -2,6 +2,7 @@
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
+ 
++#include "chrome/browser/bookmarks/bookmark_model_factory.h"
+ #include "chrome/browser/ui/webui/settings/people_handler.h"
+ 
+ #include <memory>
+@@ -19,6 +20,7 @@
+ #include "base/metrics/user_metrics.h"
+ #include "base/notimplemented.h"
+ #include "base/notreached.h"
++#include "base/strings/string_number_conversions.h"
+ #include "base/strings/utf_string_conversions.h"
+ #include "base/values.h"
+ #include "build/build_config.h"
+@@ -53,6 +55,7 @@
+ #include "chrome/common/pref_names.h"
+ #include "chrome/common/url_constants.h"
+ #include "chrome/common/webui_url_constants.h"
++#include "components/bookmarks/browser/bookmark_model.h"
+ #include "components/prefs/pref_change_registrar.h"
+ #include "components/prefs/pref_service.h"
+ #include "components/signin/core/browser/signin_error_controller.h"
+@@ -76,6 +79,7 @@
+ #include "content/public/browser/render_view_host.h"
+ #include "content/public/browser/web_contents.h"
+ #include "content/public/browser/web_contents_delegate.h"
++#include "google_apis/google_api_keys.h"
+ #include "google_apis/gaia/gaia_auth_util.h"
+ #include "third_party/skia/include/core/SkBitmap.h"
+ #include "ui/base/l10n/l10n_util.h"
+@@ -353,6 +357,11 @@ void PeopleHandler::RegisterMessages() {
+       "SyncSetupGetSyncStatus",
+       base::BindRepeating(&PeopleHandler::HandleGetSyncStatus,
+                           base::Unretained(this)));
++  // Lumo: Sync self-test for the sync settings page (patch 0009).
++  web_ui()->RegisterMessageCallback(
++      "LumoSyncTest",
++      base::BindRepeating(&PeopleHandler::HandleLumoSyncTest,
++                          base::Unretained(this)));
+   web_ui()->RegisterMessageCallback(
+       "SyncPrefsDispatch",
+       base::BindRepeating(&PeopleHandler::HandleSyncPrefsDispatch,
+@@ -479,6 +488,14 @@ void PeopleHandler::OnJavascriptAllowed() {
+ }
+ 
+ void PeopleHandler::OnJavascriptDisallowed() {
++  // Lumo: abandon a pending Sync self-test (Lumo patch 0009). The
++  // JavaScript callback is gone, so the result is dropped, but
++  // the test bookmark is still removed.
++  if (lumo_sync_test_timer_) {
++    lumo_sync_test_timer_.reset();
++    DeleteLumoSyncTestBookmark();
++    lumo_sync_test_callback_id_ = base::Value();
++  }
+   profile_pref_registrar_.reset();
+   identity_manager_observation_.Reset();
+   sync_service_observation_.Reset();
+@@ -1020,6 +1037,213 @@ void PeopleHandler::HandleGetSyncStatus(const base::ListValue& args) {
+   ResolveJavascriptCallback(callback_id, GetSyncStatusDictionary());
+ }
+ 
++namespace {
++
++// Lumo: string form of a Sync transport state, for the Sync
++// self-test result details (Lumo patch 0009).
++const char* LumoTransportStateToString(
++    syncer::SyncService::TransportState state) {
++  using TransportState = syncer::SyncService::TransportState;
++  switch (state) {
++    case TransportState::DISABLED:
++      return "DISABLED";
++    case TransportState::PAUSED:
++      return "PAUSED";
++    case TransportState::START_DEFERRED:
++      return "START_DEFERRED";
++    case TransportState::INITIALIZING:
++      return "INITIALIZING";
++    case TransportState::PENDING_DESIRED_CONFIGURATION:
++      return "PENDING_DESIRED_CONFIGURATION";
++    case TransportState::CONFIGURING:
++      return "CONFIGURING";
++    case TransportState::ACTIVE:
++      return "ACTIVE";
++  }
++}
++
++}  // namespace
++
++void PeopleHandler::HandleLumoSyncTest(const base::ListValue& args) {
++  AllowJavascript();
++
++  CHECK_EQ(1U, args.size());
++  const base::Value& callback_id = args[0];
++
++  // A second click while a test is running resolves immediately
++  // instead of starting a competing test.
++  if (lumo_sync_test_timer_) {
++    ResolveJavascriptCallback(
++        callback_id,
++        BuildLumoSyncTestResult(false, "テストが既に実行中です"));
++    return;
++  }
++
++  syncer::SyncService* service = GetSyncService();
++  signin::IdentityManager* identity_manager =
++      IdentityManagerFactory::GetForProfile(profile_);
++  bookmarks::BookmarkModel* model =
++      BookmarkModelFactory::GetForProfile(profile_);
++  const bool round_trip_possible =
++      service && identity_manager &&
++      identity_manager->HasPrimaryAccount(signin::ConsentLevel::kSync) &&
++      service->IsSyncFeatureActive() &&
++      service->GetTransportState() ==
++          syncer::SyncService::TransportState::ACTIVE &&
++      service->GetUserSettings()->GetSelectedTypes().Has(
++          syncer::UserSelectableType::kBookmarks) &&
++      model && model->loaded();
++  if (!round_trip_possible) {
++    ResolveJavascriptCallback(
++        callback_id,
++        BuildLumoSyncTestResult(
++            false,
++            "Sync が有効でないため、往復テストは実行できませんでした"));
++    return;
++  }
++
++  // Create the test bookmark in "Other bookmarks". The URL is
++  // unique to this test run, so FinishLumoSyncTest() can find and
++  // delete exactly this bookmark again; the host is an .invalid
++  // TLD and is never visited.
++  lumo_sync_test_callback_id_ = callback_id.Clone();
++  lumo_sync_test_bookmark_url_ = GURL(
++      "https://sync-test.lumo.invalid/?t=" +
++      base::NumberToString(
++          base::Time::Now().InMillisecondsFSinceUnixEpoch()));
++  lumo_sync_test_commits_before_ =
++      service->GetLastCycleSnapshotForDebugging()
++          .model_neutral_state()
++          .num_successful_commits;
++  model->AddURL(model->other_node(),
++                model->other_node()->children().size(),
++                u"Lumo Sync Test", lumo_sync_test_bookmark_url_);
++
++  // Completion is detected in OnStateChanged(): a finished cycle
++  // whose successful-commit count grew past the recorded value
++  // and that leaves no unsynced local changes means the bookmark
++  // reached the server. The timer bounds the wait.
++  lumo_sync_test_timer_ = std::make_unique<base::OneShotTimer>();
++  lumo_sync_test_timer_->Start(
++      FROM_HERE, base::Seconds(45),
++      base::BindOnce(&PeopleHandler::OnLumoSyncTestTimeout,
++                     weak_factory_.GetWeakPtr()));
++}
++
++base::DictValue PeopleHandler::BuildLumoSyncTestResult(
++    bool bookmark_round_trip,
++    const std::string& bookmark_round_trip_detail) const {
++  base::DictValue result;
++
++  // (1) The browser's own Google API key and OAuth client are
++  // baked into the build (Lumo injects them from its own Google
++  // Cloud project at build time). Only their presence is
++  // reported; the values themselves are never exposed.
++  result.Set("apiKeyConfigured", !google_apis::GetAPIKey().empty());
++  result.Set("oauthClientConfigured",
++             !google_apis::GetOAuth2ClientID(google_apis::CLIENT_MAIN)
++                  .empty() &&
++                 !google_apis::GetOAuth2ClientSecret(
++                      google_apis::CLIENT_MAIN)
++                      .empty());
++
++  signin::IdentityManager* identity_manager =
++      IdentityManagerFactory::GetForProfile(profile_);
++
++  // (2) Sign-in state (with Sync consent).
++  const bool signed_in =
++      identity_manager &&
++      identity_manager->HasPrimaryAccount(signin::ConsentLevel::kSync);
++  result.Set("signedIn", signed_in);
++
++  syncer::SyncService* service = GetSyncService();
++
++  // (3) Sync engine state.
++  const syncer::SyncService::TransportState transport_state =
++      service ? service->GetTransportState()
++              : syncer::SyncService::TransportState::DISABLED;
++  result.Set("transportState",
++             LumoTransportStateToString(transport_state));
++  result.Set("syncActive",
++             service && service->IsSyncFeatureActive() &&
++                 transport_state ==
++                     syncer::SyncService::TransportState::ACTIVE);
++
++  // (4) Server reachability, approximated from the last completed
++  // cycle: the engine is ACTIVE, at least one cycle completed,
++  // and the account's refresh token is not in a persistent error
++  // state.
++  const syncer::SyncCycleSnapshot snapshot =
++      service ? service->GetLastCycleSnapshotForDebugging()
++              : syncer::SyncCycleSnapshot();
++  const bool persistent_auth_error =
++      signed_in &&
++      identity_manager->HasAccountWithRefreshTokenInPersistentErrorState(
++          identity_manager->GetPrimaryAccountId(
++              signin::ConsentLevel::kSync));
++  result.Set("serverConnected",
++             transport_state ==
++                     syncer::SyncService::TransportState::ACTIVE &&
++                 snapshot.is_initialized() && !persistent_auth_error);
++
++  // (5) Bookmark round trip (filled in by the caller).
++  result.Set("bookmarkRoundTrip", bookmark_round_trip);
++  result.Set("bookmarkRoundTripDetail", bookmark_round_trip_detail);
++
++  // (6) Last sync time and error state.
++  const base::Time last_synced =
++      service ? service->GetLastSyncedTimeForDebugging() : base::Time();
++  result.Set("lastSyncTimeMs",
++             last_synced.is_null()
++                 ? 0.0
++                 : last_synced.InMillisecondsFSinceUnixEpochF());
++  result.Set("hasError",
++             persistent_auth_error ||
++                 snapshot.num_server_conflicts() > 0 ||
++                 (service && service->GetUserActionableError() !=
++                                 syncer::SyncService::
++                                     UserActionableError::kNone));
++  result.Set("serverConflicts", snapshot.num_server_conflicts());
++  return result;
++}
++
++void PeopleHandler::FinishLumoSyncTest(bool bookmark_round_trip,
++                                       const std::string& detail) {
++  if (!lumo_sync_test_timer_) {
++    return;
++  }
++  lumo_sync_test_timer_.reset();
++  DeleteLumoSyncTestBookmark();
++  ResolveJavascriptCallback(
++      lumo_sync_test_callback_id_,
++      BuildLumoSyncTestResult(bookmark_round_trip, detail));
++  lumo_sync_test_callback_id_ = base::Value();
++}
++
++void PeopleHandler::OnLumoSyncTestTimeout() {
++  FinishLumoSyncTest(
++      false, "45秒以内に同期サイクルの完了を確認できませんでした");
++}
++
++void PeopleHandler::DeleteLumoSyncTestBookmark() {
++  if (lumo_sync_test_bookmark_url_.is_empty()) {
++    return;
++  }
++  bookmarks::BookmarkModel* model =
++      BookmarkModelFactory::GetForProfile(profile_);
++  if (model && model->loaded()) {
++    for (const auto& child : model->other_node()->children()) {
++      if (child->url() == lumo_sync_test_bookmark_url_) {
++        model->Remove(child.get(),
++                      bookmarks::metrics::BookmarkEditSource::kOther,
++                      FROM_HERE);
++        break;
++      }
++    }
++  }
++  lumo_sync_test_bookmark_url_ = GURL();
++}
++
+ void PeopleHandler::HandleSyncPrefsDispatch(const base::ListValue& args) {
+   AllowJavascript();
+   PushSyncPrefs();
+@@ -1151,6 +1375,19 @@ void PeopleHandler::OnPrimaryAccountChanged(
+ }
+ 
+ void PeopleHandler::OnStateChanged(syncer::SyncService* sync_service) {
++  // Lumo: a pending Sync self-test (Lumo patch 0009) completes
++  // once a sync cycle has committed new data (the test bookmark)
++  // and no local changes remain unsynced.
++  if (lumo_sync_test_timer_) {
++    const syncer::SyncCycleSnapshot snapshot =
++        sync_service->GetLastCycleSnapshotForDebugging();
++    if (snapshot.is_initialized() &&
++        !snapshot.has_remaining_local_changes() &&
++        snapshot.model_neutral_state().num_successful_commits >
++            lumo_sync_test_commits_before_) {
++      FinishLumoSyncTest(true, "テスト用ブックマークが同期されました");
++    }
++  }
+   UpdateSyncStatus();
+   UpdateStoredAccounts();
+   // TODO(crbug.com/40140566): Re-evaluate marking sync as configuring here,
+diff --git a/chrome/browser/ui/webui/settings/people_handler.h b/chrome/browser/ui/webui/settings/people_handler.h
+index baac6f2..924ccc9 100644
+--- a/chrome/browser/ui/webui/settings/people_handler.h
++++ b/chrome/browser/ui/webui/settings/people_handler.h
+@@ -23,6 +23,7 @@
+ #include "components/sync/service/sync_service.h"
+ #include "components/sync/service/sync_service_observer.h"
+ #include "content/public/browser/web_contents_observer.h"
++#include "url/gurl.h"
+ 
+ class LoginUIService;
+ enum class ChromeSigninUserChoice;
+@@ -229,6 +230,24 @@ class PeopleHandler : public SettingsPageUIHandler,
+   void HandleSyncShowBookmarkLimitExceededHelp(const base::ListValue& args);
+   void HandleGetSyncStatus(const base::ListValue& args);
+ 
++  // Lumo: the Sync self-test behind the "Sync の動作をテスト"
++  // button on the sync settings page (Lumo patch 0009). Checks:
++  // (1) the browser's own Google API key / OAuth client are baked
++  // in (presence only, values are never reported), (2) sign-in
++  // state, (3) Sync engine state, (4) Sync server reachability,
++  // (5) a test bookmark round trip (create -> wait for a sync
++  // cycle to commit it -> delete), and (6) last sync time and
++  // error state. The result is a dictionary of booleans/details
++  // that the page renders as a check list.
++  void HandleLumoSyncTest(const base::ListValue& args);
++  base::DictValue BuildLumoSyncTestResult(
++      bool bookmark_round_trip,
++      const std::string& bookmark_round_trip_detail) const;
++  void FinishLumoSyncTest(bool bookmark_round_trip,
++                          const std::string& detail);
++  void OnLumoSyncTestTimeout();
++  void DeleteLumoSyncTestBookmark();
++
+ #if !BUILDFLAG(IS_CHROMEOS)
+   // Displays the GAIA login form.
+   void DisplayGaiaLogin(signin_metrics::AccessPoint access_point);
+@@ -321,6 +340,15 @@ class PeopleHandler : public SettingsPageUIHandler,
+                           ProfileAttributesStorage::Observer>
+       profile_attributes_observation_{this};
+ 
++  // Lumo: state of an in-progress Sync self-test (Lumo patch
++  // 0009). The stored callback is resolved exactly once, when a
++  // sync cycle commits the test bookmark or when the timer fires.
++  // The timer's presence doubles as the "test running" flag.
++  base::Value lumo_sync_test_callback_id_;
++  GURL lumo_sync_test_bookmark_url_;
++  int lumo_sync_test_commits_before_ = 0;
++  std::unique_ptr<base::OneShotTimer> lumo_sync_test_timer_;
++
+   base::WeakPtrFactory<PeopleHandler> weak_factory_{this};
+ };
+ 
