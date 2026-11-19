@@ -235,7 +235,15 @@ index 1169a40..829b132 100644
  #include "components/prefs/pref_change_registrar.h"
  #include "components/prefs/pref_service.h"
  #include "components/signin/core/browser/signin_error_controller.h"
-@@ -76,6 +79,7 @@
+@@ -69,6 +72,7 @@
+ #include "components/sync/base/features.h"
+ #include "components/sync/base/passphrase_enums.h"
+ #include "components/sync/base/user_selectable_type.h"
++#include "components/sync/engine/cycle/sync_cycle_snapshot.h"
+ #include "components/sync/service/sync_service.h"
+ #include "components/sync/service/sync_service_utils.h"
+ #include "components/sync/service/sync_user_settings.h"
+@@ -76,6 +80,7 @@
  #include "content/public/browser/render_view_host.h"
  #include "content/public/browser/web_contents.h"
  #include "content/public/browser/web_contents_delegate.h"
@@ -243,7 +251,7 @@ index 1169a40..829b132 100644
  #include "google_apis/gaia/gaia_auth_util.h"
  #include "third_party/skia/include/core/SkBitmap.h"
  #include "ui/base/l10n/l10n_util.h"
-@@ -353,6 +357,11 @@ void PeopleHandler::RegisterMessages() {
+@@ -353,6 +358,11 @@ void PeopleHandler::RegisterMessages() {
        "SyncSetupGetSyncStatus",
        base::BindRepeating(&PeopleHandler::HandleGetSyncStatus,
                            base::Unretained(this)));
@@ -255,7 +263,7 @@ index 1169a40..829b132 100644
    web_ui()->RegisterMessageCallback(
        "SyncPrefsDispatch",
        base::BindRepeating(&PeopleHandler::HandleSyncPrefsDispatch,
-@@ -479,6 +488,14 @@ void PeopleHandler::OnJavascriptAllowed() {
+@@ -479,6 +489,14 @@ void PeopleHandler::OnJavascriptAllowed() {
  }
  
  void PeopleHandler::OnJavascriptDisallowed() {
@@ -270,7 +278,7 @@ index 1169a40..829b132 100644
    profile_pref_registrar_.reset();
    identity_manager_observation_.Reset();
    sync_service_observation_.Reset();
-@@ -1020,6 +1037,213 @@ void PeopleHandler::HandleGetSyncStatus(const base::ListValue& args) {
+@@ -1020,6 +1038,213 @@ void PeopleHandler::HandleGetSyncStatus(const base::ListValue& args) {
    ResolveJavascriptCallback(callback_id, GetSyncStatusDictionary());
  }
  
@@ -320,7 +328,7 @@ index 1169a40..829b132 100644
 +  signin::IdentityManager* identity_manager =
 +      IdentityManagerFactory::GetForProfile(profile_);
 +  bookmarks::BookmarkModel* model =
-+      BookmarkModelFactory::GetForProfile(profile_);
++      BookmarkModelFactory::GetForBrowserContext(profile_);
 +  const bool round_trip_possible =
 +      service && identity_manager &&
 +      identity_manager->HasPrimaryAccount(signin::ConsentLevel::kSync) &&
@@ -433,7 +441,7 @@ index 1169a40..829b132 100644
 +  result.Set("lastSyncTimeMs",
 +             last_synced.is_null()
 +                 ? 0.0
-+                 : last_synced.InMillisecondsFSinceUnixEpochF());
++                 : last_synced.InMillisecondsFSinceUnixEpoch());
 +  result.Set("hasError",
 +             persistent_auth_error ||
 +                 snapshot.num_server_conflicts() > 0 ||
@@ -467,7 +475,7 @@ index 1169a40..829b132 100644
 +    return;
 +  }
 +  bookmarks::BookmarkModel* model =
-+      BookmarkModelFactory::GetForProfile(profile_);
++      BookmarkModelFactory::GetForBrowserContext(profile_);
 +  if (model && model->loaded()) {
 +    for (const auto& child : model->other_node()->children()) {
 +      if (child->url() == lumo_sync_test_bookmark_url_) {
@@ -484,7 +492,7 @@ index 1169a40..829b132 100644
  void PeopleHandler::HandleSyncPrefsDispatch(const base::ListValue& args) {
    AllowJavascript();
    PushSyncPrefs();
-@@ -1151,6 +1375,19 @@ void PeopleHandler::OnPrimaryAccountChanged(
+@@ -1151,6 +1376,19 @@ void PeopleHandler::OnPrimaryAccountChanged(
  }
  
  void PeopleHandler::OnStateChanged(syncer::SyncService* sync_service) {
