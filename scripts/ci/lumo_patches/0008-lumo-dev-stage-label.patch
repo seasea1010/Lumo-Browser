@@ -41,7 +41,7 @@ index cb12e8a..55fda3b 100644
 +  lumo_dev_stage_label->SetBackground(views::CreateRoundedRectBackground(
 +      SkColorSetARGB(153, 32, 33, 36), 8.0f));
 +  lumo_dev_stage_label->SetCanProcessEventsWithinSubtree(false);
-+  lumo_dev_stage_label->set_focusable(false);
++  lumo_dev_stage_label->SetFocusBehavior(views::View::FocusBehavior::NEVER);
 +  lumo_dev_stage_label_ = AddChildView(std::move(lumo_dev_stage_label));
 +
  #if BUILDFLAG(IS_WIN)
