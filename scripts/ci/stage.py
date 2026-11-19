@@ -2383,12 +2383,156 @@ def phase_gn(args, ctx, deadline):
     log("\nGN phase complete.")
 
 
+# ---------------------------------------------------------------------------
+# Resume fixups (build #19 -> the resume run)
+#
+# A stage that resumes from a checkpoint recorded in the "build"
+# phase never re-runs phase_setup, so a checkpointed tree keeps the
+# sources its own setup phase produced — the Lumo patches that were
+# current when the tree was SET UP, not when it is resumed. Run
+# #19's tree was set up with the pre-fix patches 0008/0009 and died
+# in build-4 on the Chromium 156 API mismatches they contained
+# (BookmarkModelFactory::GetForProfile, the missing SyncCycleSnapshot
+# include, the InMillisecondsFSinceUnixEpochF typo, and
+# views::Label::set_focusable). The patches are fixed, but a resume
+# from #19's state-3 checkpoint would compile the OLD sources and
+# fail the same way, so apply_lumo_resume_fixups() rewrites exactly
+# those four spots in a resumed tree, byte for byte the way the
+# fixed patches leave them (verified byte-identical against a fresh
+# tree set up with the fixed patches). On a from-scratch build the
+# setup phase applies the fixed patches, so every fixup finds its
+# target already fixed and is a no-op.
+# ---------------------------------------------------------------------------
+
+_PEOPLE_HANDLER_REL = "chrome/browser/ui/webui/settings/people_handler.cc"
+_BROWSER_VIEW_REL = "chrome/browser/ui/views/frame/browser_view.cc"
+
+# (file, old bytes, new bytes, what) — plain byte replacements.
+_LUMO_RESUME_FIXUP_REPLACEMENTS = (
+    (
+        _PEOPLE_HANDLER_REL,
+        b"BookmarkModelFactory::GetForProfile(profile_)",
+        b"BookmarkModelFactory::GetForBrowserContext(profile_)",
+        "BookmarkModelFactory::GetForProfile -> GetForBrowserContext",
+    ),
+    (
+        _PEOPLE_HANDLER_REL,
+        b"InMillisecondsFSinceUnixEpochF()",
+        b"InMillisecondsFSinceUnixEpoch()",
+        "InMillisecondsFSinceUnixEpochF -> InMillisecondsFSinceUnixEpoch",
+    ),
+    (
+        _BROWSER_VIEW_REL,
+        b"lumo_dev_stage_label->set_focusable(false);",
+        b"lumo_dev_stage_label->SetFocusBehavior("
+        b"views::View::FocusBehavior::NEVER);",
+        "views::Label set_focusable -> SetFocusBehavior(NEVER)",
+    ),
+)
+
+# The SyncCycleSnapshot include the fixed patch 0009 adds, and the
+# include line it sits directly after in the fixed tree.
+_SYNC_SNAPSHOT_INCLUDE = (
+    b'#include "components/sync/engine/cycle/sync_cycle_snapshot.h"\n'
+)
+_SYNC_SNAPSHOT_INCLUDE_ANCHOR = (
+    b'#include "components/sync/base/user_selectable_type.h"\n'
+)
+
+
+def _resume_fixup_replace(data, old, new, what, rel_path):
+    """One three-way byte replacement (see apply_lumo_resume_fixups)."""
+    if old in data:
+        count = data.count(old)
+        log(f"Resume fixup: {rel_path}: {what}: replaced "
+            f"{count} occurrence(s).")
+        return data.replace(old, new)
+    if new in data:
+        log(f"Resume fixup: {rel_path}: {what}: already fixed, "
+            f"nothing to do.")
+        return data
+    raise StageError(
+        f"Resume fixup: {rel_path}: neither the pre-fix nor the "
+        f"fixed form of '{what}' is present; this tree is not the "
+        f"tree the fixup was written for, refusing to compile it."
+    )
+
+
+def _resume_fixup_sync_snapshot_include(data, rel_path):
+    """Insert the SyncCycleSnapshot include the fixed 0009 adds."""
+    what = "components/sync/engine/cycle/sync_cycle_snapshot.h include"
+    if _SYNC_SNAPSHOT_INCLUDE in data:
+        log(f"Resume fixup: {rel_path}: {what}: already fixed, "
+            f"nothing to do.")
+        return data
+    if data.count(_SYNC_SNAPSHOT_INCLUDE_ANCHOR) != 1:
+        raise StageError(
+            f"Resume fixup: {rel_path}: cannot place the {what}: "
+            f"the anchor include (components/sync/base/"
+            f"user_selectable_type.h) does not occur exactly once; "
+            f"this tree is not the tree the fixup was written for, "
+            f"refusing to compile it."
+        )
+    log(f"Resume fixup: {rel_path}: {what}: inserted after the "
+        f"user_selectable_type.h include.")
+    return data.replace(
+        _SYNC_SNAPSHOT_INCLUDE_ANCHOR,
+        _SYNC_SNAPSHOT_INCLUDE_ANCHOR + _SYNC_SNAPSHOT_INCLUDE,
+    )
+
+
+def apply_lumo_resume_fixups(ctx):
+    """Bring a resumed build-phase tree up to the fixed patches.
+
+    Runs at the top of phase_build; see the section comment above.
+    Every fixup is byte-level (read_bytes/write_bytes, so no CRLF
+    can creep in on the Windows runner) and idempotent, and each
+    one is three-way:
+
+    * pre-fix bytes present -> replace them and log loudly;
+    * only fixed bytes present -> already fixed, no-op (the normal
+      from-scratch path: setup applied the fixed patches);
+    * neither -> StageError. Compiling an unexpected tree would
+      either fail hours later with the original errors or, worse,
+      silently build something unverified.
+
+    A target file missing entirely is likewise a StageError: the
+    checkpoint the stage resumed from is incomplete.
+    """
+    chromium_src = ctx["chromium_src"]
+    replacements = {}
+    for rel_path, old, new, what in _LUMO_RESUME_FIXUP_REPLACEMENTS:
+        replacements.setdefault(rel_path, []).append((old, new, what))
+    for rel_path in (_PEOPLE_HANDLER_REL, _BROWSER_VIEW_REL):
+        path = chromium_src / rel_path
+        if not path.is_file():
+            raise StageError(
+                f"Resume fixup: expected source file is missing: "
+                f"{path}; the checkpoint this stage resumed from "
+                f"is incomplete."
+            )
+        data = path.read_bytes()
+        original = data
+        for old, new, what in replacements.get(rel_path, []):
+            data = _resume_fixup_replace(data, old, new, what, rel_path)
+        if rel_path == _PEOPLE_HANDLER_REL:
+            data = _resume_fixup_sync_snapshot_include(data, rel_path)
+        if data != original:
+            path.write_bytes(data)
+            log(f"Resume fixup: rewrote {path}.")
+    log("Resume fixups complete.")
+
+
 def phase_build(args, ctx, deadline):
     """Run autoninja on Thorium's Windows targets.
 
     Phases mirror Thorium build.py's default Windows policy:
     thorium_all, then thorium_installer.
     """
+    # A resumed tree still carries the sources its setup phase
+    # produced; bring them up to the fixed patches before building
+    # (no-op on a from-scratch tree). See apply_lumo_resume_fixups.
+    apply_lumo_resume_fixups(ctx)
     chromium_src = ctx["chromium_src"]
     out_dir = chromium_src / OUT_DIR_NAME
     # Fail clearly when the tree this stage resumed from has no gn
