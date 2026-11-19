@@ -9,6 +9,12 @@
 # A stage exits 42 when the budget expires (resume in the next stage);
 # exit 0 means the build finished.
 #
+# Every stage receives resume-run-id: a cross-run resume may enter
+# at ANY stage, and the entry stage must download its checkpoint
+# from the earlier run, not its own. (Run #21 failed in build-4
+# because only build-5 passed run-id, so build-4 looked for
+# lumo-build-state-3 in its own run and found nothing.)
+#
 # When some stage finishes, build-final downloads that stage's
 # build-state artifact, packages the portable build as
 # lumo-windows-x64.zip and uploads it as an artifact.
@@ -61,6 +67,7 @@ jobs:
       stage: 1
       from-artifact: false
       runner: ${{ inputs.runner || 'windows-2025' }}
+      run-id: ${{ inputs.resume-run-id }}
 
   build-2:
     needs: build-1
@@ -72,6 +79,7 @@ jobs:
       from-artifact: true
       artifact-name: lumo-build-state-1
       runner: ${{ inputs.runner || 'windows-2025' }}
+      run-id: ${{ inputs.resume-run-id }}
 
   build-3:
     needs: build-2
@@ -83,6 +91,7 @@ jobs:
       from-artifact: true
       artifact-name: lumo-build-state-2
       runner: ${{ inputs.runner || 'windows-2025' }}
+      run-id: ${{ inputs.resume-run-id }}
 
   build-4:
     needs: build-3
@@ -94,6 +103,7 @@ jobs:
       from-artifact: true
       artifact-name: lumo-build-state-3
       runner: ${{ inputs.runner || 'windows-2025' }}
+      run-id: ${{ inputs.resume-run-id }}
 
   build-5:
     needs: build-4
@@ -117,6 +127,7 @@ jobs:
       from-artifact: true
       artifact-name: lumo-build-state-5
       runner: ${{ inputs.runner || 'windows-2025' }}
+      run-id: ${{ inputs.resume-run-id }}
 
   build-7:
     needs: build-6
@@ -128,6 +139,7 @@ jobs:
       from-artifact: true
       artifact-name: lumo-build-state-6
       runner: ${{ inputs.runner || 'windows-2025' }}
+      run-id: ${{ inputs.resume-run-id }}
 
   build-8:
     needs: build-7
@@ -139,6 +151,7 @@ jobs:
       from-artifact: true
       artifact-name: lumo-build-state-7
       runner: ${{ inputs.runner || 'windows-2025' }}
+      run-id: ${{ inputs.resume-run-id }}
 
   build-9:
     needs: build-8
@@ -150,6 +163,7 @@ jobs:
       from-artifact: true
       artifact-name: lumo-build-state-8
       runner: ${{ inputs.runner || 'windows-2025' }}
+      run-id: ${{ inputs.resume-run-id }}
 
   build-10:
     needs: build-9
@@ -161,6 +175,7 @@ jobs:
       from-artifact: true
       artifact-name: lumo-build-state-9
       runner: ${{ inputs.runner || 'windows-2025' }}
+      run-id: ${{ inputs.resume-run-id }}
 
   build-11:
     needs: build-10
@@ -172,6 +187,7 @@ jobs:
       from-artifact: true
       artifact-name: lumo-build-state-10
       runner: ${{ inputs.runner || 'windows-2025' }}
+      run-id: ${{ inputs.resume-run-id }}
 
   build-12:
     needs: build-11
@@ -183,6 +199,7 @@ jobs:
       from-artifact: true
       artifact-name: lumo-build-state-11
       runner: ${{ inputs.runner || 'windows-2025' }}
+      run-id: ${{ inputs.resume-run-id }}
 
   build-13:
     needs: build-12
@@ -194,6 +211,7 @@ jobs:
       from-artifact: true
       artifact-name: lumo-build-state-12
       runner: ${{ inputs.runner || 'windows-2025' }}
+      run-id: ${{ inputs.resume-run-id }}
 
   build-14:
     needs: build-13
@@ -205,6 +223,7 @@ jobs:
       from-artifact: true
       artifact-name: lumo-build-state-13
       runner: ${{ inputs.runner || 'windows-2025' }}
+      run-id: ${{ inputs.resume-run-id }}
 
   build-15:
     needs: build-14
@@ -216,6 +235,7 @@ jobs:
       from-artifact: true
       artifact-name: lumo-build-state-14
       runner: ${{ inputs.runner || 'windows-2025' }}
+      run-id: ${{ inputs.resume-run-id }}
 
   build-final:
     name: Package Lumo
@@ -494,7 +514,7 @@ jobs:
           $bytes = ($files | Measure-Object Length -Sum).Sum
           Write-Host "Pruned tree: $($files.Count) files, $bytes bytes (salvage reference: 552 files / 641938482 bytes, minus setup.exe, setup.ex_ and the Thorium Shell companion files)."
 
-      - name: Package portable zip
+      - name: Rename thorium.exe to lumo.exe
         shell: pwsh
         run: |
           $outDir = 'C:\lumo-package\lumo-build\src\out\thorium'
@@ -509,6 +529,71 @@ jobs:
           # Thorium until Lumo rebranding patches exist (see
           # PLAN.md).
           Rename-Item $exe 'lumo.exe'
+          if (-not (Test-Path (Join-Path $outDir 'lumo.exe'))) { throw 'lumo.exe missing after rename' }
+          if (Test-Path (Join-Path $outDir 'thorium.exe')) { throw 'thorium.exe still present after rename' }
+
+      - name: Sign lumo.exe (self-signed certificate)
+        shell: pwsh
+        env:
+          LUMO_SIGN_PFX_BASE64: ${{ secrets.LUMO_SIGN_PFX_BASE64 }}
+          LUMO_SIGN_PASSWORD: ${{ secrets.LUMO_SIGN_PASSWORD }}
+        run: |
+          # Self-signing (task 18, decided by the owner on
+          # 2026-11-18): sign the renamed lumo.exe — and only
+          # lumo.exe — with a self-signed code signing
+          # certificate whose subject is seasea1019 (the signing
+          # identity is 1019 on purpose; every other name in
+          # Lumo stays seasea1010), delivered via GitHub Secrets as a
+          # base64-encoded PFX plus its password. A self-signed
+          # certificate is not trusted by Windows, so this does
+          # not silence SmartScreen; the point is the signer name
+          # on the file and tamper evidence, which is enough for
+          # a browser only seasea1010 runs. The PFX is restored
+          # to a temp file, used once, and always deleted in the
+          # finally block; neither the password nor the PFX
+          # contents are ever echoed.
+          # Migration safety: while the secrets are not
+          # registered yet, skip signing with a warning instead
+          # of failing the whole packaging job.
+          if ([string]::IsNullOrWhiteSpace($env:LUMO_SIGN_PFX_BASE64) -or
+              [string]::IsNullOrWhiteSpace($env:LUMO_SIGN_PASSWORD)) {
+            Write-Host '::warning::LUMO_SIGN_PFX_BASE64 / LUMO_SIGN_PASSWORD secrets are not set; packaging lumo.exe UNSIGNED.'
+            return
+          }
+          $exePath = 'C:\lumo-package\lumo-build\src\out\thorium\lumo.exe'
+          if (-not (Test-Path $exePath)) { throw "lumo.exe not found for signing: $exePath" }
+          # Locate signtool in whatever Windows SDK version the
+          # runner carries (do not pin a version): newest
+          # versioned bin directory wins.
+          $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe' -ErrorAction SilentlyContinue |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $signtool) { throw 'signtool.exe not found under C:\Program Files (x86)\Windows Kits\10\bin\*\x64' }
+          Write-Host "Using signtool: $($signtool.FullName)"
+          $pfxPath = Join-Path $env:RUNNER_TEMP 'lumo-sign.pfx'
+          try {
+            [System.IO.File]::WriteAllBytes($pfxPath, [System.Convert]::FromBase64String($env:LUMO_SIGN_PFX_BASE64))
+            & $signtool.FullName sign /f $pfxPath /p $env:LUMO_SIGN_PASSWORD /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com /v $exePath
+            if ($LASTEXITCODE -ne 0) { throw "signtool sign failed (exit $LASTEXITCODE)" }
+          } finally {
+            if (Test-Path $pfxPath) { Remove-Item $pfxPath -Force }
+          }
+          # Verify a signature is actually present and names
+          # seasea1019. A self-signed certificate makes the
+          # Authenticode Status a trust error (UnknownError /
+          # NotTrusted): expected, and NOT a failure. Only a
+          # missing signature or a signer that is not seasea1019
+          # (wrong secret registered) fails the job.
+          $sig = Get-AuthenticodeSignature $exePath
+          if (-not $sig.SignerCertificate) { throw 'lumo.exe has no Authenticode signature after signing.' }
+          Write-Host "Signature present. Status: $($sig.Status). Signer: $($sig.SignerCertificate.Subject)"
+          if ($sig.SignerCertificate.Subject -notmatch 'seasea1019') {
+            throw "Unexpected signer certificate subject: $($sig.SignerCertificate.Subject)"
+          }
+
+      - name: Package portable zip
+        shell: pwsh
+        run: |
+          $outDir = 'C:\lumo-package\lumo-build\src\out\thorium'
           @'
           Lumo — pre-release portable build (AVX2, Windows x64).
           Built from a Thorium-style Chromium fork (Chromium 156).
