@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "Chrome Info Viewer（Chrome情報ビューア）",
+  "version": "1.0.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAkIFgY3nOo1LYHcU7PcNZmJAiS8TiTwEc9ZXEn9EVxPCCIbRPKiPzADNmEb+cG6PzEvHOvICKRTIBXeTYmU1QalJHfiyR1MfejdJOwVQDpKTWDGqybNDraz1NL6av0hL2aaFhsonaLzEn4ATZ5ulYysFUMFpuivvZDRIayhccKtOlQg6LvnoZMDWpYtVgB5UYNnNIheUZsvN6pbjVVZCoYy1d1e8m1Cm4S6q3E/PYqIJ18uCxA+url/GzeEYuON+fQg480PXIyn17H1gld+bRFzEZ4GO7Zzw4N1qOZQjWdoFigK348K4tK+hXGX9n289UBcefZ2vKgaG8P/ChHpgb0QIDAQAB",
+  "description": "Chromeから取得できる情報（ブラウザ・PC・画面・ネットワーク・拡張機能・プライバシー設定など）を分かりやすく一覧表示します。",
+  "action": { "default_title": "Chromeの情報を表示" },
+  "background": { "service_worker": "background.js" },
+  "icons": { "16": "icon16.png", "48": "icon48.png", "128": "icon128.png" },
+  "permissions": [
+    "system.cpu", "system.memory", "system.storage", "system.display",
+    "management", "tabs", "tabGroups", "history", "bookmarks", "cookies",
+    "downloads", "sessions", "topSites", "identity", "identity.email",
+    "privacy", "proxy", "tts", "storage", "contentSettings", "fontSettings"
+  ],
+  "host_permissions": ["<all_urls>"]
+}

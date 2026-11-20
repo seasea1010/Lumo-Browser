@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Chrome情報ビューア</title>
+  <link rel="stylesheet" href="viewer.css">
+</head>
+<body>
+  <header>
+    <h1>🔍 Chrome情報ビューア</h1>
+    <span id="live" class="live"></span>
+    <input id="q" type="search" placeholder="検索（例: メモリ, GPU, 言語, cookie）">
+    <button id="reload">🔄 再取得</button>
+    <button id="export">💾 JSON保存</button>
+  </header>
+  <div class="layout">
+    <nav id="nav"></nav>
+    <main>
+      <div id="summary" class="summary"></div>
+      <div id="content"></div>
+      <p class="foot">値をクリックするとコピーできます。変化した値は一瞬ハイライトされます。リアルタイム更新はこのタブを表示している間だけ動き、別のタブやバックグラウンドでは停止します。この拡張機能は取得した情報を外部に送信しません（「公開IP」ボタンを押したときだけ ipify.org に問い合わせます）。</p>
+    </main>
+  </div>
+  <script src="viewer.js"></script>
+</body>
+</html>
