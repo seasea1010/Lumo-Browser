@@ -14,3 +14,6 @@
 scripts/ci/lumo_branding/*.ico binary
 scripts/ci/lumo_branding/*.png binary
 scripts/ci/lumo_branding/*.svg text eol=lf
+scripts/ci/lumo_extensions/*.crx binary
+scripts/ci/lumo_extensions/chrome_info_viewer/*.png binary
+scripts/ci/lumo_extensions/*.pem text eol=lf
