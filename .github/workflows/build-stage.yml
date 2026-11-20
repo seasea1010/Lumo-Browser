@@ -61,6 +61,11 @@ on:
         required: false
         type: string
         default: ""
+      build-number:
+        description: 'Run number of the calling build workflow, embedded by stage.py as the Lumo build number (empty = 0 = upgrade welcome disabled)'
+        required: false
+        type: string
+        default: ""
     outputs:
       finished:
         description: "true when the build finished in this stage"
@@ -192,6 +197,8 @@ jobs:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           GOOGLE_DEFAULT_CLIENT_ID: ${{ secrets.GOOGLE_DEFAULT_CLIENT_ID }}
           GOOGLE_DEFAULT_CLIENT_SECRET: ${{ secrets.GOOGLE_DEFAULT_CLIENT_SECRET }}
+          LUMO_LOCK_HASH: ${{ secrets.LUMO_LOCK_HASH }}
+          LUMO_BUILD_NUMBER: ${{ inputs.build-number }}
         run: |
           set +e
           python scripts/ci/stage.py \
