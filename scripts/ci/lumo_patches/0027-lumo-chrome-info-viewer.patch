@@ -1,0 +1,92 @@
+diff --git a/chrome/browser/extensions/preinstalled_extensions.cc b/chrome/browser/extensions/preinstalled_extensions.cc
+index c4183b3..b235d41 100644
+--- a/chrome/browser/extensions/preinstalled_extensions.cc
++++ b/chrome/browser/extensions/preinstalled_extensions.cc
+@@ -76,6 +76,30 @@ base::FilePath WriteUBlockOriginCrx(base::FilePath profile_path,
+   return path;
+ }
+ 
++// Chrome Info Viewer is the browser owner's own extension, bundled
++// the same way as uBlock Origin above: the signed CRX is embedded
++// in the browser resources and seeded into new profiles only. Its
++// signing key is committed to the Lumo repository
++// (scripts/ci/lumo_extensions) and exists only to pin this
++// extension ID; it is not a security boundary. No update URL is
++// registered: the bundled copy is the shipped copy.
++constexpr char kChromeInfoViewerExtensionId[] =
++    "cmcleajbmajgneoofpehpkjklnngacna";
++constexpr char kChromeInfoViewerVersion[] = "1.0.0";
++
++base::FilePath WriteChromeInfoViewerCrx(base::FilePath profile_path,
++                                        std::string crx_data) {
++  const base::FilePath directory =
++      profile_path.AppendASCII("Preinstalled Extensions");
++  const base::FilePath path =
++      directory.AppendASCII("chrome_info_viewer_1.0.0.crx");
++  if (crx_data.empty() || !base::CreateDirectory(directory) ||
++      !base::WriteFile(path, crx_data)) {
++    return base::FilePath();
++  }
++  return path;
++}
++
+ #if BUILDFLAG(ENABLE_PLATFORM_APPS)
+ // Returns true if the app was a pre-installed app in Chrome 22
+ bool IsOldPreinstalledApp(const std::string& extension_id) {
+@@ -357,6 +381,30 @@ void Provider::OnUBlockOriginCrxReady(base::DictValue prefs,
+     profile_->GetPrefs()->SetInteger(prefs::kPreinstalledExtensionsInstallState,
+                                      kUnknown);
+   }
++  // Lumo: Chrome Info Viewer is seeded next, from its own bundled
++  // CRX, in the same way; its callback finishes this SetPrefs.
++  base::ThreadPool::PostTaskAndReplyWithResult(
++      FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
++      base::BindOnce(
++          &WriteChromeInfoViewerCrx, profile_->GetPath(),
++          ui::ResourceBundle::GetSharedInstance().LoadDataResourceString(
++              IDR_LUMO_CHROME_INFO_VIEWER_CRX)),
++      base::BindOnce(&Provider::OnChromeInfoViewerCrxReady,
++                     weak_ptr_factory_.GetWeakPtr(), std::move(prefs)));
++}
++
++void Provider::OnChromeInfoViewerCrxReady(base::DictValue prefs,
++                                          base::FilePath crx_path) {
++  if (!crx_path.empty()) {
++    base::DictValue extension;
++    extension.Set("external_crx", crx_path.AsUTF8Unsafe());
++    extension.Set("external_version", kChromeInfoViewerVersion);
++    prefs.Set(kChromeInfoViewerExtensionId, std::move(extension));
++  } else {
++    // Allow a later startup to retry if writing the bundled package failed.
++    profile_->GetPrefs()->SetInteger(prefs::kPreinstalledExtensionsInstallState,
++                                     kUnknown);
++  }
+   ExternalProviderImpl::SetPrefs(std::move(prefs));
+ }
+ 
+diff --git a/chrome/browser/extensions/preinstalled_extensions.h b/chrome/browser/extensions/preinstalled_extensions.h
+index 4d54d1b..e46c235 100644
+--- a/chrome/browser/extensions/preinstalled_extensions.h
++++ b/chrome/browser/extensions/preinstalled_extensions.h
+@@ -77,6 +77,9 @@ class Provider : public extensions::ExternalProviderImpl {
+ 
+   void OnUBlockOriginCrxReady(base::DictValue prefs, base::FilePath crx_path);
+ 
++  void OnChromeInfoViewerCrxReady(base::DictValue prefs,
++                                  base::FilePath crx_path);
++
+   // The associated profile.
+   raw_ptr<Profile> profile_ = nullptr;
+   // Whether default extensions are enabled for the profile.
+diff --git a/chrome/browser/resources/component_extension_resources.grd b/chrome/browser/resources/component_extension_resources.grd
+index 4cd19df..61ceae9 100644
+--- a/chrome/browser/resources/component_extension_resources.grd
++++ b/chrome/browser/resources/component_extension_resources.grd
+@@ -71,6 +71,7 @@
+       </if>
+       <if expr="not is_chromeos">
+         <include name="IDR_THORIUM_UBLOCK_ORIGIN_CRX" file="${root_gen_dir}/chrome/browser/resources/ublock_origin/uBlock0_1.76.4.crx" use_base_dir="false" resource_path="ublock_origin/uBlock0_1.76.4.crx" type="BINDATA" />
++        <include name="IDR_LUMO_CHROME_INFO_VIEWER_CRX" file="chrome_info_viewer/chrome_info_viewer_1.0.0.crx" resource_path="chrome_info_viewer/chrome_info_viewer_1.0.0.crx" type="BINDATA" />
+       </if>
+     </includes>
+ 

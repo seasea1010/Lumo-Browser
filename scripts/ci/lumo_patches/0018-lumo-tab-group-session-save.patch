@@ -1,0 +1,305 @@
+diff --git a/chrome/app/chrome_command_ids.h b/chrome/app/chrome_command_ids.h
+index 52d3f34..0b29a33 100644
+--- a/chrome/app/chrome_command_ids.h
++++ b/chrome/app/chrome_command_ids.h
+@@ -299,6 +299,12 @@
+ // Lumo: capture a full-page screenshot of the active tab
+ // (Lumo patch 0017).
+ #define IDC_LUMO_FULL_PAGE_SCREENSHOT 40307
++// Lumo: save the current tab groups as a session (Lumo patch
++// 0018).
++#define IDC_LUMO_SAVE_TAB_GROUPS 40308
++// Lumo: restore tab groups saved by IDC_LUMO_SAVE_TAB_GROUPS
++// (Lumo patch 0018).
++#define IDC_LUMO_RESTORE_TAB_GROUPS 40309
+ 
+ // Spell-check
+ #define IDC_SPELLCHECK_SUGGESTION_0     41000
+diff --git a/chrome/app/generated_resources.grd b/chrome/app/generated_resources.grd
+index cae4dad..aeb20e2 100644
+--- a/chrome/app/generated_resources.grd
++++ b/chrome/app/generated_resources.grd
+@@ -19163,6 +19163,12 @@ Please help our engineers fix this problem. Tell us what happened right before y
+     <message name="IDS_LUMO_FULL_PAGE_SCREENSHOT" desc="App menu item that saves a full-page screenshot of the active tab to the downloads folder.">
+       ページ全体のスクリーンショットを保存
+     </message>
++    <message name="IDS_LUMO_SAVE_TAB_GROUPS" desc="App menu item that saves the current tab groups (titles, colors, tab URLs) to a file in the profile directory.">
++      タブグループを保存
++    </message>
++    <message name="IDS_LUMO_RESTORE_TAB_GROUPS" desc="App menu item that restores the tab groups saved by the save item.">
++      保存したタブグループを復元
++    </message>
+     <message name="IDS_CHROMELABS_LUMO_LAUNCH_THORIUM_PROFILE_NAME" desc="Name of the Lumo Labs experiment that shows the Thorium-profile launch menu item.">
+       Thorium プロファイルで起動するメニュー項目を表示
+     </message>
+diff --git a/chrome/browser/ui/browser_command_controller.cc b/chrome/browser/ui/browser_command_controller.cc
+index ce74ee5..6ed07b0 100644
+--- a/chrome/browser/ui/browser_command_controller.cc
++++ b/chrome/browser/ui/browser_command_controller.cc
+@@ -32,6 +32,9 @@
+ #include "base/task/thread_pool.h"
+ #include "base/time/time.h"
+ #include "base/values.h"
++// Lumo (patch 0018): kept next to the base block; the tab group
++// save/restore code below uses the UTF conversion helpers.
++#include "base/strings/utf_string_conversions.h"
+ #include "build/branding_buildflags.h"
+ #include "build/build_config.h"
+ #include "chrome/app/chrome_command_ids.h"
+@@ -99,6 +102,7 @@
+ #include "chrome/browser/ui/tabs/split_tab_metrics.h"
+ #include "chrome/browser/ui/tabs/tab_change_type.h"
+ #include "chrome/browser/ui/tabs/tab_model.h"
++#include "chrome/browser/ui/tabs/tab_group_model.h"
+ #include "chrome/browser/ui/tabs/tab_strip_model.h"
+ #include "chrome/browser/ui/tabs/tab_strip_user_gesture_details.h"
+ #include "chrome/browser/ui/tabs/vertical_tab_strip_state_controller.h"
+@@ -142,7 +146,10 @@
+ #include "components/signin/public/base/signin_pref_names.h"
+ #include "components/signin/public/identity_manager/identity_manager.h"
+ #include "components/skills/features.h"
++#include "components/tab_groups/tab_group_color.h"
+ #include "components/tab_groups/tab_group_id.h"
++#include "components/tab_groups/tab_group_visual_data.h"
++#include "components/tabs/public/tab_group.h"
+ #include "components/tabs/public/tab_interface.h"
+ #include "components/translate/core/browser/translate_manager.h"
+ #include "components/zoom/zoom_controller.h"
+@@ -1765,6 +1772,86 @@ void BrowserCommandController::HandleCommandWithDisposition(
+       }
+       break;
+     }
++    case IDC_LUMO_SAVE_TAB_GROUPS: {
++      // Lumo: write this window's tab groups (title, color and
++      // the URLs of their tabs) to LumoTabGroups.json in the
++      // profile directory (Lumo patch 0018). The file write
++      // itself runs on a background sequence.
++      TabStripModel* tab_strip_model = browser_->tab_strip_model();
++      if (tab_strip_model->SupportsTabGroups()) {
++        TabGroupModel* group_model = tab_strip_model->group_model();
++        base::ListValue groups;
++        for (const tab_groups::TabGroupId& group_id :
++             group_model->ListTabGroups()) {
++          const TabGroup* group = group_model->GetTabGroup(group_id);
++          const tab_groups::TabGroupVisualData* visual_data =
++              group->visual_data();
++          if (!visual_data) {
++            continue;
++          }
++          base::ListValue urls;
++          for (int i = 0; i < tab_strip_model->count(); ++i) {
++            if (tab_strip_model->GetTabGroupForTab(i) == group_id) {
++              const GURL url =
++                  tab_strip_model->GetWebContentsAt(i)
++                      ->GetLastCommittedURL();
++              if (url.is_valid()) {
++                urls.Append(url.spec());
++              }
++            }
++          }
++          if (urls.empty()) {
++            continue;
++          }
++          base::DictValue group_dict;
++          group_dict.Set("title",
++                         base::UTF16ToUTF8(visual_data->title()));
++          group_dict.Set("color",
++                         static_cast<int>(visual_data->color()));
++          group_dict.Set("urls", std::move(urls));
++          groups.Append(std::move(group_dict));
++        }
++        base::DictValue root;
++        root.Set("version", 1);
++        root.Set("groups", std::move(groups));
++        std::string json;
++        if (base::JSONWriter::Write(root, &json)) {
++          const base::FilePath file_path =
++              profile()->GetPath().AppendASCII("LumoTabGroups.json");
++          base::ThreadPool::PostTask(
++              FROM_HERE, {base::MayBlock()},
++              base::BindOnce(
++                  [](const base::FilePath& path, std::string data) {
++                    base::WriteFile(path, data);
++                  },
++                  file_path, json));
++        }
++      }
++      break;
++    }
++    case IDC_LUMO_RESTORE_TAB_GROUPS: {
++      // Lumo: read LumoTabGroups.json back on a background
++      // sequence; OnLumoTabGroupsFileLoaded rebuilds the groups
++      // in this window (Lumo patch 0018).
++      const base::FilePath file_path =
++          profile()->GetPath().AppendASCII("LumoTabGroups.json");
++      base::ThreadPool::PostTaskAndReplyWithResult(
++          FROM_HERE, {base::MayBlock()},
++          base::BindOnce(
++              [](const base::FilePath& path)
++                  -> std::optional<std::string> {
++                std::string contents;
++                if (!base::ReadFileToString(path, &contents)) {
++                  return std::nullopt;
++                }
++                return contents;
++              },
++              file_path),
++          base::BindOnce(
++              &BrowserCommandController::OnLumoTabGroupsFileLoaded,
++              weak_ptr_factory_.GetWeakPtr()));
++      break;
++    }
+     case IDC_OPEN_GLIC: {
+       auto* service =
+           glic::GlicKeyedServiceFactory::GetGlicKeyedService(profile());
+@@ -1780,6 +1867,87 @@ void BrowserCommandController::HandleCommandWithDisposition(
+   }
+ }
+ 
++void BrowserCommandController::OnLumoTabGroupsFileLoaded(
++    std::optional<std::string> json) {
++  // Lumo (patch 0018): rebuild the tab groups saved by
++  // IDC_LUMO_SAVE_TAB_GROUPS. Each saved group becomes a fresh
++  // set of tabs appended to this window, grouped under the
++  // saved title and color. Anything malformed is skipped.
++  if (!json) {
++    return;
++  }
++  std::optional<base::Value> parsed = base::JSONReader::Read(*json);
++  if (!parsed || !parsed->is_dict()) {
++    return;
++  }
++  const base::ListValue* groups = parsed->GetDict().FindList("groups");
++  if (!groups) {
++    return;
++  }
++  TabStripModel* tab_strip_model = browser_->tab_strip_model();
++  if (!tab_strip_model->SupportsTabGroups()) {
++    return;
++  }
++  for (const base::Value& group_value : *groups) {
++    if (!group_value.is_dict()) {
++      continue;
++    }
++    const base::DictValue& group_dict = group_value.GetDict();
++    const base::ListValue* urls = group_dict.FindList("urls");
++    if (!urls || urls->empty()) {
++      continue;
++    }
++    std::vector<int> indices;
++    for (const base::Value& url_value : *urls) {
++      const std::string* url_string = url_value.GetIfString();
++      if (!url_string) {
++        continue;
++      }
++      const GURL url(*url_string);
++      if (!url.is_valid()) {
++        continue;
++      }
++      auto contents = content::WebContents::Create(
++          content::WebContents::CreateParams(profile()));
++      content::WebContents* contents_ptr = contents.get();
++      const int index = tab_strip_model->InsertWebContentsAt(
++          tab_strip_model->count(), std::move(contents),
++          AddTabTypes::ADD_NONE);
++      if (index == TabStripModel::kNoTab) {
++        continue;
++      }
++      content::NavigationController::LoadURLParams params(url);
++      params.transition_type = ui::PAGE_TRANSITION_AUTO_TOPLEVEL;
++      contents_ptr->GetController().LoadURLWithParams(params);
++      indices.push_back(index);
++    }
++    if (indices.empty()) {
++      continue;
++    }
++    const tab_groups::TabGroupId new_group_id =
++        tab_strip_model->AddToNewGroup(indices);
++    TabGroup* new_group =
++        tab_strip_model->group_model()->GetTabGroup(new_group_id);
++    if (!new_group) {
++      continue;
++    }
++    const std::string* title = group_dict.FindString("title");
++    const int color_int = group_dict.FindInt("color").value_or(
++        static_cast<int>(tab_groups::TabGroupColorId::kGrey));
++    tab_groups::TabGroupColorId color =
++        tab_groups::TabGroupColorId::kGrey;
++    if (color_int >= 0 &&
++        color_int <
++            static_cast<int>(tab_groups::TabGroupColorId::kNumEntries)) {
++      color = static_cast<tab_groups::TabGroupColorId>(color_int);
++    }
++    new_group->SetVisualData(
++        tab_groups::TabGroupVisualData(
++            base::UTF8ToUTF16(title ? *title : std::string()), color),
++        /*is_customized=*/true);
++  }
++}
++
+ void BrowserCommandController::AddCommandObserver(int id,
+                                                   CommandObserver* observer) {
+   command_updater_->AddCommandObserver(id, observer);
+@@ -2047,6 +2215,15 @@ void BrowserCommandController::InitCommandState() {
+   command_updater_->UpdateCommandEnabled(
+       IDC_LUMO_FULL_PAGE_SCREENSHOT,
+       base::FeatureList::IsEnabled(features::kLumoFullPageScreenshot));
++  // Lumo: tab group session save/restore (Lumo patch 0018).
++  // The commands follow the kLumoTabGroupSessionSave
++  // experiment, which also gates the app-menu items.
++  command_updater_->UpdateCommandEnabled(
++      IDC_LUMO_SAVE_TAB_GROUPS,
++      base::FeatureList::IsEnabled(features::kLumoTabGroupSessionSave));
++  command_updater_->UpdateCommandEnabled(
++      IDC_LUMO_RESTORE_TAB_GROUPS,
++      base::FeatureList::IsEnabled(features::kLumoTabGroupSessionSave));
+   command_updater_->UpdateCommandEnabled(IDC_FIND_AND_EDIT_MENU, true);
+   command_updater_->UpdateCommandEnabled(IDC_SAVE_AND_SHARE_MENU, true);
+   command_updater_->UpdateCommandEnabled(IDC_SHOW_READING_MODE_SIDE_PANEL,
+diff --git a/chrome/browser/ui/browser_command_controller.h b/chrome/browser/ui/browser_command_controller.h
+index 4efab78..0f2c868 100644
+--- a/chrome/browser/ui/browser_command_controller.h
++++ b/chrome/browser/ui/browser_command_controller.h
+@@ -7,6 +7,7 @@
+ 
+ #include <memory>
+ #include <optional>
++#include <string>
+ 
+ #include "base/containers/flat_map.h"
+ #include "base/memory/raw_ptr.h"
+@@ -174,6 +175,12 @@ class BrowserCommandController : public CommandUpdater,
+   // Initialize state for all browser commands.
+   void InitCommandState();
+ 
++  // Lumo (patch 0018): continues IDC_LUMO_RESTORE_TAB_GROUPS on
++  // the UI thread once LumoTabGroups.json has been read from the
++  // profile directory; a nullopt value (missing or unreadable
++  // file) restores nothing.
++  void OnLumoTabGroupsFileLoaded(std::optional<std::string> json);
++
+   // Update commands whose state depends on incognito mode availability.
+   void UpdateCommandsForIncognitoAvailability();
+ 
+diff --git a/chrome/browser/ui/toolbar/app_menu_model.cc b/chrome/browser/ui/toolbar/app_menu_model.cc
+index 7229584..65bc947 100644
+--- a/chrome/browser/ui/toolbar/app_menu_model.cc
++++ b/chrome/browser/ui/toolbar/app_menu_model.cc
+@@ -2231,6 +2231,17 @@ void AppMenuModel::Build() {
+                         IDS_LUMO_FULL_PAGE_SCREENSHOT);
+   }
+ 
++  // Lumo: save and restore tab groups as a session (Lumo patch
++  // 0018). Shown only while the kLumoTabGroupSessionSave
++  // experiment is enabled in Lumo Labs.
++  if (base::FeatureList::IsEnabled(features::kLumoTabGroupSessionSave) &&
++      !browser_->GetProfile()->IsOffTheRecord()) {
++    AddItemWithStringId(IDC_LUMO_SAVE_TAB_GROUPS,
++                        IDS_LUMO_SAVE_TAB_GROUPS);
++    AddItemWithStringId(IDC_LUMO_RESTORE_TAB_GROUPS,
++                        IDS_LUMO_RESTORE_TAB_GROUPS);
++  }
++
+   if (!browser_->GetProfile()->IsGuestSession()) {
+     sub_menus_.push_back(
+         std::make_unique<PasswordsAndAutofillSubMenuModel>(this));

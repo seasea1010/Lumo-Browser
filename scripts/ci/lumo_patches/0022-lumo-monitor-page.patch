@@ -1,0 +1,970 @@
+diff --git a/chrome/app/settings_strings.grdp b/chrome/app/settings_strings.grdp
+index 0ef216a..6eb8af7 100644
+--- a/chrome/app/settings_strings.grdp
++++ b/chrome/app/settings_strings.grdp
+@@ -4559,4 +4559,46 @@
+   <message name="IDS_SETTINGS_DICTATION_SHORTCUT_CLEAR_LABEL" translateable="false" desc="Accessibility label for the clear keyboard shortcut button icon.">
+     Clear keyboard shortcut
+   </message>
++    <message name="IDS_SETTINGS_LUMO_MONITOR_PAGE_TITLE" desc="Title of the Lumo Monitor settings page (Lumo patch 0022)">
++      Lumo Monitor
++    </message>
++    <message name="IDS_SETTINGS_LUMO_MONITOR_VERSION_LABEL" desc="Label for the browser version on the Lumo Monitor settings page (Lumo patch 0022)">
++      バージョン
++    </message>
++    <message name="IDS_SETTINGS_LUMO_MONITOR_PROFILE_NAME_LABEL" desc="Label for the profile name on the Lumo Monitor settings page (Lumo patch 0022)">
++      プロファイル名
++    </message>
++    <message name="IDS_SETTINGS_LUMO_MONITOR_PROFILE_PATH_LABEL" desc="Label for the profile storage path on the Lumo Monitor settings page (Lumo patch 0022)">
++      プロファイルの保存先
++    </message>
++    <message name="IDS_SETTINGS_LUMO_MONITOR_UPTIME_LABEL" desc="Label for the time since browser start on the Lumo Monitor settings page (Lumo patch 0022)">
++      起動してからの時間
++    </message>
++    <message name="IDS_SETTINGS_LUMO_MONITOR_WINDOWS_TABS_LABEL" desc="Label for the window and tab counts on the Lumo Monitor settings page (Lumo patch 0022)">
++      ウィンドウとタブの数
++    </message>
++    <message name="IDS_SETTINGS_LUMO_MONITOR_MEMORY_LABEL" desc="Label for the total memory usage on the Lumo Monitor settings page (Lumo patch 0022)">
++      メモリ使用量（全体）
++    </message>
++    <message name="IDS_SETTINGS_LUMO_MONITOR_SYNC_LABEL" desc="Label for the Sync state on the Lumo Monitor settings page (Lumo patch 0022)">
++      Sync の状態
++    </message>
++    <message name="IDS_SETTINGS_LUMO_MONITOR_FEATURES_LABEL" desc="Label for the enabled Lumo experiments on the Lumo Monitor settings page (Lumo patch 0022)">
++      有効な Lumo 実験
++    </message>
++    <message name="IDS_SETTINGS_LUMO_MONITOR_API_KEY_LABEL" desc="Label for the owner's API key presence on the Lumo Monitor settings page (Lumo patch 0022)">
++      自前 API キー
++    </message>
++    <message name="IDS_SETTINGS_LUMO_MONITOR_LOCK_LABEL" desc="Label for the startup password lock state on the Lumo Monitor settings page (Lumo patch 0022)">
++      起動時パスワードロック
++    </message>
++    <message name="IDS_SETTINGS_LUMO_MONITOR_DEBUGGER_LABEL" desc="Label for the debugger session state on the Lumo Monitor settings page (Lumo patch 0022)">
++      デバッガー連携
++    </message>
++    <message name="IDS_SETTINGS_LUMO_MONITOR_CRASH_LABEL" desc="Label for the recent crash reports on the Lumo Monitor settings page (Lumo patch 0022)">
++      最近のクラッシュ
++    </message>
++    <message name="IDS_SETTINGS_LUMO_MONITOR_REFRESH" desc="Refresh button on the Lumo Monitor settings page (Lumo patch 0022)">
++      更新
++    </message>
+ </grit-part>
+diff --git a/chrome/browser/resources/settings/BUILD.gn b/chrome/browser/resources/settings/BUILD.gn
+index 41aaa73..444f9c2 100644
+--- a/chrome/browser/resources/settings/BUILD.gn
++++ b/chrome/browser/resources/settings/BUILD.gn
+@@ -295,6 +295,9 @@ build_webui("build") {
+     "i18n_setup.ts",
+     "icons.html.ts",
+     "lazy_load.ts",
++    "lumo_monitor_page/lumo_monitor_browser_proxy.ts",
++    "lumo_monitor_page/lumo_monitor_page.html.ts",
++    "lumo_monitor_page/lumo_monitor_page.ts",
+     "metrics_browser_proxy.ts",
+     "on_startup_page/on_startup_browser_proxy.ts",
+     "on_startup_page/on_startup_page.html.ts",
+@@ -606,6 +609,7 @@ build_webui("build") {
+     "languages_page/languages_page.css",
+     "languages_page/languages_page_index.css",
+     "languages_page/spell_check_page.css",
++    "lumo_monitor_page/lumo_monitor_page.css",
+     "on_startup_page/startup_url_entry.css",
+     "on_startup_page/startup_urls_page.css",
+     "people_page/account_page.css",
+diff --git a/chrome/browser/resources/settings/lumo_monitor_page/lumo_monitor_browser_proxy.ts b/chrome/browser/resources/settings/lumo_monitor_page/lumo_monitor_browser_proxy.ts
+new file mode 100644
+index 0000000..4267d3c
+--- /dev/null
++++ b/chrome/browser/resources/settings/lumo_monitor_page/lumo_monitor_browser_proxy.ts
+@@ -0,0 +1,59 @@
++// Copyright 2026 seasea1010
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++import {sendWithPromise} from 'chrome://resources/js/cr.js';
++
++/**
++ * @fileoverview Browser proxy for the Lumo Monitor settings page
++ * (Lumo patch 0022).
++ */
++
++/**
++ * Snapshot of the browser state shown on the Lumo Monitor page.
++ * Field names mirror the dictionary built by
++ * settings::LumoMonitorHandler.
++ */
++export interface LumoMonitorInfo {
++  version: string;
++  profileName: string;
++  profilePath: string;
++  uptimeSeconds: number;
++  windowCount: number;
++  tabCount: number;
++  totalMemoryBytes: number;
++  syncSignedIn: boolean;
++  syncActive: boolean;
++  syncTransportState: string;
++  enabledFeatures: string[];
++  apiKeyConfigured: boolean;
++  oauthClientConfigured: boolean;
++  lockConfigured: boolean;
++  lockUnlocked: boolean;
++  debuggerSession: boolean;
++  crashReportCount: number;
++  latestCrashTimeMs: number;
++}
++
++export interface LumoMonitorBrowserProxy {
++  /**
++   * Asks the browser for the current Lumo Monitor snapshot.
++   */
++  getLumoMonitorInfo(): Promise<LumoMonitorInfo>;
++}
++
++export class LumoMonitorBrowserProxyImpl implements LumoMonitorBrowserProxy {
++  getLumoMonitorInfo() {
++    return sendWithPromise<LumoMonitorInfo>('getLumoMonitorInfo');
++  }
++
++  static getInstance(): LumoMonitorBrowserProxy {
++    return instance || (instance = new LumoMonitorBrowserProxyImpl());
++  }
++
++  static setInstance(obj: LumoMonitorBrowserProxy) {
++    instance = obj;
++  }
++}
++
++let instance: LumoMonitorBrowserProxy|null = null;
+diff --git a/chrome/browser/resources/settings/lumo_monitor_page/lumo_monitor_page.css b/chrome/browser/resources/settings/lumo_monitor_page/lumo_monitor_page.css
+new file mode 100644
+index 0000000..0e1d375
+--- /dev/null
++++ b/chrome/browser/resources/settings/lumo_monitor_page/lumo_monitor_page.css
+@@ -0,0 +1,11 @@
++/* Copyright 2026 seasea1010
++ * Use of this source code is governed by a BSD-style license that can be
++ * found in the LICENSE file. */
++
++/* #css_wrapper_metadata_start
++ * #type=style-lit
++ * #import=chrome://resources/cr_elements/cr_shared_style_lit.css.js
++ * #import=chrome://resources/cr_elements/cr_shared_vars.css.js
++ * #import=../settings_shared_lit.css.js
++ * #include=cr-shared-style-lit settings-shared-lit
++ * #css_wrapper_metadata_end */
+diff --git a/chrome/browser/resources/settings/lumo_monitor_page/lumo_monitor_page.html.ts b/chrome/browser/resources/settings/lumo_monitor_page/lumo_monitor_page.html.ts
+new file mode 100644
+index 0000000..90a1329
+--- /dev/null
++++ b/chrome/browser/resources/settings/lumo_monitor_page/lumo_monitor_page.html.ts
+@@ -0,0 +1,102 @@
++// Copyright 2026 seasea1010
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++import {html} from '//resources/lit/v3_0/lit.rollup.js';
++
++import type {SettingsLumoMonitorPageElement} from './lumo_monitor_page.js';
++
++export function getHtml(this: SettingsLumoMonitorPageElement) {
++  return html`<!--_html_template_start_-->
++<settings-section page-title="$i18n{lumoMonitorPageTitle}">
++  ${this.info_ ? html`
++  <div class="cr-row first">
++    <div class="flex cr-padded-text">
++      <div>$i18n{lumoMonitorVersionLabel}</div>
++      <div class="secondary">${this.info_.version}</div>
++    </div>
++  </div>
++  <div class="cr-row">
++    <div class="flex cr-padded-text">
++      <div>$i18n{lumoMonitorProfileNameLabel}</div>
++      <div class="secondary">${this.info_.profileName}</div>
++    </div>
++  </div>
++  <div class="cr-row">
++    <div class="flex cr-padded-text">
++      <div>$i18n{lumoMonitorProfilePathLabel}</div>
++      <div class="secondary">${this.info_.profilePath}</div>
++    </div>
++  </div>
++  <div class="cr-row">
++    <div class="flex cr-padded-text">
++      <div>$i18n{lumoMonitorUptimeLabel}</div>
++      <div class="secondary">
++        ${this.formatUptime_(this.info_.uptimeSeconds)}
++      </div>
++    </div>
++  </div>
++  <div class="cr-row">
++    <div class="flex cr-padded-text">
++      <div>$i18n{lumoMonitorWindowsTabsLabel}</div>
++      <div class="secondary">
++        ${this.info_.windowCount} ウィンドウ / ${this.info_.tabCount} タブ
++      </div>
++    </div>
++  </div>
++  <div class="cr-row">
++    <div class="flex cr-padded-text">
++      <div>$i18n{lumoMonitorMemoryLabel}</div>
++      <div class="secondary">
++        ${this.formatMemory_(this.info_.totalMemoryBytes)}
++      </div>
++    </div>
++  </div>
++  <div class="cr-row">
++    <div class="flex cr-padded-text">
++      <div>$i18n{lumoMonitorSyncLabel}</div>
++      <div class="secondary">${this.syncStateText_()}</div>
++    </div>
++  </div>
++  <div class="cr-row">
++    <div class="flex cr-padded-text">
++      <div>$i18n{lumoMonitorFeaturesLabel}</div>
++      <div class="secondary">${this.featuresText_()}</div>
++    </div>
++  </div>
++  <div class="cr-row">
++    <div class="flex cr-padded-text">
++      <div>$i18n{lumoMonitorApiKeyLabel}</div>
++      <div class="secondary">${this.apiKeyText_()}</div>
++    </div>
++  </div>
++  <div class="cr-row">
++    <div class="flex cr-padded-text">
++      <div>$i18n{lumoMonitorLockLabel}</div>
++      <div class="secondary">${this.lockText_()}</div>
++    </div>
++  </div>
++  <div class="cr-row">
++    <div class="flex cr-padded-text">
++      <div>$i18n{lumoMonitorDebuggerLabel}</div>
++      <div class="secondary">${this.debuggerText_()}</div>
++    </div>
++  </div>
++  <div class="cr-row">
++    <div class="flex cr-padded-text">
++      <div>$i18n{lumoMonitorCrashLabel}</div>
++      <div class="secondary">${this.crashText_()}</div>
++    </div>
++  </div>` : html`
++  <div class="cr-row first">
++    <div class="flex cr-padded-text">
++      <div>読み込み中…</div>
++    </div>
++  </div>`}
++  <div class="cr-row">
++    <cr-button id="lumoMonitorRefresh" @click="${this.onRefreshClick_}">
++      $i18n{lumoMonitorRefresh}
++    </cr-button>
++  </div>
++</settings-section><!--_html_template_end_-->`;
++}
+diff --git a/chrome/browser/resources/settings/lumo_monitor_page/lumo_monitor_page.ts b/chrome/browser/resources/settings/lumo_monitor_page/lumo_monitor_page.ts
+new file mode 100644
+index 0000000..8c94363
+--- /dev/null
++++ b/chrome/browser/resources/settings/lumo_monitor_page/lumo_monitor_page.ts
+@@ -0,0 +1,151 @@
++// Copyright 2026 seasea1010
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++/**
++ * @fileoverview 'settings-lumo-monitor-page' is the Lumo Monitor
++ * settings page (Lumo patch 0022): a read-only snapshot of the
++ * browser's state — version, profile, uptime, tab/window counts,
++ * total memory, Sync state, enabled Lumo experiments, API key
++ * presence, the startup password lock state, the debugger session
++ * state, and recent crash reports. All data comes from
++ * settings::LumoMonitorHandler; the display strings are Japanese
++ * because the page is Lumo-specific (same approach as the Sync
++ * self-test in patch 0009).
++ */
++
++import 'chrome://resources/cr_elements/cr_button/cr_button.js';
++import '../settings_page/settings_section.js';
++
++import {I18nMixinLit} from 'chrome://resources/cr_elements/i18n_mixin_lit.js';
++import {CrLitElement} from 'chrome://resources/lit/v3_0/lit.rollup.js';
++
++import {getCss} from './lumo_monitor_page.css.js';
++import {getHtml} from './lumo_monitor_page.html.js';
++import type {LumoMonitorInfo} from './lumo_monitor_browser_proxy.js';
++import {LumoMonitorBrowserProxyImpl} from './lumo_monitor_browser_proxy.js';
++
++const SettingsLumoMonitorPageElementBase = I18nMixinLit(CrLitElement);
++
++export class SettingsLumoMonitorPageElement extends
++    SettingsLumoMonitorPageElementBase {
++  static get is() {
++    return 'settings-lumo-monitor-page';
++  }
++
++  static override get styles() {
++    return getCss();
++  }
++
++  override render() {
++    return getHtml.bind(this)();
++  }
++
++  static override get properties() {
++    return {
++      info_: {type: Object},
++    };
++  }
++
++  protected accessor info_: LumoMonitorInfo|null = null;
++
++  private browserProxy_ = LumoMonitorBrowserProxyImpl.getInstance();
++
++  override connectedCallback() {
++    super.connectedCallback();
++    this.refresh_();
++  }
++
++  protected onRefreshClick_() {
++    this.refresh_();
++  }
++
++  private refresh_() {
++    this.browserProxy_.getLumoMonitorInfo().then(info => {
++      this.info_ = info;
++    });
++  }
++
++  protected formatUptime_(seconds: number): string {
++    const totalMinutes = Math.floor(seconds / 60);
++    const hours = Math.floor(totalMinutes / 60);
++    const minutes = totalMinutes % 60;
++    return hours > 0 ? `${hours} 時間 ${minutes} 分` : `${minutes} 分`;
++  }
++
++  protected formatMemory_(bytes: number): string {
++    const mb = bytes / (1024 * 1024);
++    if (mb >= 1024) {
++      return `${(mb / 1024).toFixed(2)} GB`;
++    }
++    return `${mb.toFixed(0)} MB`;
++  }
++
++  protected syncStateText_(): string {
++    if (!this.info_) {
++      return '';
++    }
++    if (!this.info_.syncSignedIn) {
++      return 'サインインしていません';
++    }
++    return this.info_.syncActive ?
++        'サインイン済み・同期中' :
++        `サインイン済み（状態: ${this.info_.syncTransportState}）`;
++  }
++
++  protected featuresText_(): string {
++    if (!this.info_ || this.info_.enabledFeatures.length === 0) {
++      return 'なし';
++    }
++    return this.info_.enabledFeatures.join(', ');
++  }
++
++  protected apiKeyText_(): string {
++    if (!this.info_) {
++      return '';
++    }
++    if (this.info_.apiKeyConfigured && this.info_.oauthClientConfigured) {
++      return 'API キーと OAuth クライアントが組み込まれています';
++    }
++    if (!this.info_.apiKeyConfigured) {
++      return 'API キーが組み込まれていません';
++    }
++    return 'OAuth クライアントが組み込まれていません';
++  }
++
++  protected lockText_(): string {
++    if (!this.info_) {
++      return '';
++    }
++    if (!this.info_.lockConfigured) {
++      return '設定されていません';
++    }
++    return this.info_.lockUnlocked ? '設定済み（解除済み）' :
++                                      '設定済み（未解除）';
++  }
++
++  protected debuggerText_(): string {
++    if (!this.info_) {
++      return '';
++    }
++    return this.info_.debuggerSession ? 'デバッガー連携セッション中' :
++                                         '通常起動（連携なし）';
++  }
++
++  protected crashText_(): string {
++    if (!this.info_ || this.info_.crashReportCount === 0) {
++      return 'なし';
++    }
++    const latest = new Date(this.info_.latestCrashTimeMs).toLocaleString();
++    return `${this.info_.crashReportCount} 件（最新: ${latest}）`;
++  }
++}
++
++declare global {
++  interface HTMLElementTagNameMap {
++    'settings-lumo-monitor-page': SettingsLumoMonitorPageElement;
++  }
++}
++
++customElements.define(
++    SettingsLumoMonitorPageElement.is, SettingsLumoMonitorPageElement);
+diff --git a/chrome/browser/resources/settings/route.ts b/chrome/browser/resources/settings/route.ts
+index d733ae8..a318826 100644
+--- a/chrome/browser/resources/settings/route.ts
++++ b/chrome/browser/resources/settings/route.ts
+@@ -146,6 +146,12 @@ function createRoutes(): SettingsRoutes {
+   r.ABOUT = r.BASIC.createSection(
+       '/help', 'about', loadTimeData.getString('aboutPageTitle'));
+ 
++  // Lumo: Monitor page (Lumo patch 0022), in the menu right below
++  // the About entry.
++  r.LUMO_MONITOR = r.BASIC.createSection(
++      '/lumoMonitor', 'lumoMonitor',
++      loadTimeData.getString('lumoMonitorPageTitle'));
++
+   // Search page.
+   r.SEARCH = r.BASIC.createSection(
+       '/search', 'search', loadTimeData.getString('searchPageTitle'));
+diff --git a/chrome/browser/resources/settings/router.ts b/chrome/browser/resources/settings/router.ts
+index 5c07af7..efdb42d 100644
+--- a/chrome/browser/resources/settings/router.ts
++++ b/chrome/browser/resources/settings/router.ts
+@@ -42,6 +42,7 @@ export interface SettingsRoutes {
+   IDENTITY_DOCS: Route;
+   INLINE_CUE_MENU: Route;
+   LANGUAGES: Route;
++  LUMO_MONITOR: Route;
+   MANAGE_PROFILE: Route;
+   OFFER_WRITING_HELP: Route;
+   ON_STARTUP: Route;
+diff --git a/chrome/browser/resources/settings/settings.ts b/chrome/browser/resources/settings/settings.ts
+index c1f2379..21b5461 100644
+--- a/chrome/browser/resources/settings/settings.ts
++++ b/chrome/browser/resources/settings/settings.ts
+@@ -47,6 +47,9 @@ export type {OpenWindowProxy} from 'chrome://resources/js/open_window_proxy.js';
+ export {PluralStringProxyImpl} from 'chrome://resources/js/plural_string_proxy.js';
+ export {getTrustedHTML} from 'chrome://resources/js/static_types.js';
+ export {SettingsAboutPageElement} from './about_page/about_page.js';
++export {SettingsLumoMonitorPageElement} from './lumo_monitor_page/lumo_monitor_page.js';
++export {LumoMonitorBrowserProxyImpl} from './lumo_monitor_page/lumo_monitor_browser_proxy.js';
++export type {LumoMonitorInfo, LumoMonitorBrowserProxy} from './lumo_monitor_page/lumo_monitor_browser_proxy.js';
+ export {ControlledRadioButtonElement} from './controls/controlled_radio_button.js';
+ export {SettingsDropdownMenuElement} from './controls/settings_dropdown_menu.js';
+ export {SettingsRadioGroupElement} from './controls/settings_radio_group.js';
+diff --git a/chrome/browser/resources/settings/settings_main/settings_main.html b/chrome/browser/resources/settings/settings_main/settings_main.html
+index 2ef4dca..a5f0481 100644
+--- a/chrome/browser/resources/settings/settings_main/settings_main.html
++++ b/chrome/browser/resources/settings/settings_main/settings_main.html
+@@ -205,4 +205,13 @@
+       </settings-about-page>
+     </template>
+   </div>
++
++  <div slot="view" id="lumoMonitor">
++    <template is="dom-if" if="[[renderPlugin_(
++        routes_.LUMO_MONITOR, lastRoute_, inSearchMode_)]]">
++      <settings-lumo-monitor-page role="main"
++          class="cr-centered-card-container">
++      </settings-lumo-monitor-page>
++    </template>
++  </div>
+ </cr-view-manager>
+diff --git a/chrome/browser/resources/settings/settings_menu/settings_menu.html b/chrome/browser/resources/settings/settings_menu/settings_menu.html
+index 0d30190..70ab115 100644
+--- a/chrome/browser/resources/settings/settings_menu/settings_menu.html
++++ b/chrome/browser/resources/settings/settings_menu/settings_menu.html
+@@ -209,5 +209,11 @@
+           <span class="menu-label">$i18n{aboutPageTitle}</span>
+           <cr-ripple></cr-ripple>
+         </a>
++        <a role="menuitem" id="lumo-monitor-menu" href="/lumoMonitor"
++            class="cr-nav-menu-item">
++          <cr-icon icon="settings:dashboard"></cr-icon>
++          <span class="menu-label">$i18n{lumoMonitorPageTitle}</span>
++          <cr-ripple></cr-ripple>
++        </a>
+       </cr-menu-selector>
+     </div>
+diff --git a/chrome/browser/ui/webui/settings/BUILD.gn b/chrome/browser/ui/webui/settings/BUILD.gn
+index 3219735..f855c1b 100644
+--- a/chrome/browser/ui/webui/settings/BUILD.gn
++++ b/chrome/browser/ui/webui/settings/BUILD.gn
+@@ -23,6 +23,7 @@ source_set("settings") {
+     "hats_handler.h",
+     "import_data_handler.h",
+     "languages_handler.h",
++    "lumo_monitor_handler.h",
+     "metrics_reporting_handler.h",
+     "omnibox_everywhere_settings_handler.h",
+     "on_startup_handler.h",
+@@ -151,6 +152,7 @@ source_set("impl") {
+     "hats_handler.cc",
+     "import_data_handler.cc",
+     "languages_handler.cc",
++    "lumo_monitor_handler.cc",
+     "metrics_reporting_handler.cc",
+     "omnibox_everywhere_settings_handler.cc",
+     "on_startup_handler.cc",
+diff --git a/chrome/browser/ui/webui/settings/lumo_monitor_handler.cc b/chrome/browser/ui/webui/settings/lumo_monitor_handler.cc
+new file mode 100644
+index 0000000..6962a1c
+--- /dev/null
++++ b/chrome/browser/ui/webui/settings/lumo_monitor_handler.cc
+@@ -0,0 +1,304 @@
++// Copyright 2026 seasea1010
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/ui/webui/settings/lumo_monitor_handler.h"
++
++#include <string>
++#include <string_view>
++#include <utility>
++
++#include "base/check.h"
++#include "base/feature_list.h"
++#include "base/files/file_enumerator.h"
++#include "base/files/file_path.h"
++#include "base/files/file_util.h"
++#include "base/functional/bind.h"
++#include "base/memory/scoped_refptr.h"
++#include "base/path_service.h"
++#include "base/process/process.h"
++#include "base/task/thread_pool.h"
++#include "base/time/time.h"
++#include "chrome/browser/lumo/lumo_debugger_reporter.h"
++#include "chrome/browser/memory_details.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/signin/identity_manager_factory.h"
++#include "chrome/browser/sync/sync_service_factory.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
++#include "chrome/browser/ui/tabs/tab_strip_model.h"
++#include "chrome/browser/ui/ui_features.h"
++#include "chrome/common/chrome_paths.h"
++#include "components/signin/public/identity_manager/identity_manager.h"
++#include "components/sync/service/sync_service.h"
++#include "components/version_info/version_info.h"
++#include "google_apis/google_api_keys.h"
++
++// Lumo (patch 0019): the startup password lock's build-time
++// configuration. scripts/ci/stage.py generates this header from the
++// LUMO_LOCK_HASH secret during setup; it is deliberately not part of
++// the source tree, and a tree without it (or with an empty hash)
++// builds with the lock disabled.
++#if __has_include("chrome/browser/lumo/lumo_lock_config.h")
++#include "chrome/browser/lumo/lumo_lock_config.h"
++#define LUMO_MONITOR_LOCK_CONFIG_AVAILABLE 1
++#endif  // __has_include("chrome/browser/lumo/lumo_lock_config.h")
++
++namespace settings {
++
++namespace {
++
++// String form of a Sync transport state, mirroring the Sync
++// self-test in PeopleHandler (Lumo patch 0009).
++const char* TransportStateToString(
++    syncer::SyncService::TransportState state) {
++  using TransportState = syncer::SyncService::TransportState;
++  switch (state) {
++    case TransportState::DISABLED:
++      return "DISABLED";
++    case TransportState::PAUSED:
++      return "PAUSED";
++    case TransportState::START_DEFERRED:
++      return "START_DEFERRED";
++    case TransportState::INITIALIZING:
++      return "INITIALIZING";
++    case TransportState::PENDING_DESIRED_CONFIGURATION:
++      return "PENDING_DESIRED_CONFIGURATION";
++    case TransportState::CONFIGURING:
++      return "CONFIGURING";
++    case TransportState::ACTIVE:
++      return "ACTIVE";
++  }
++}
++
++// Collects the browser's total memory usage through MemoryDetails
++// (the same source chrome://memory-internals used): the private
++// memory footprint of the browser process and every child process
++// belonging to this browser, summed. Self-owned via the MemoryDetails
++// refcount; the callback runs on the UI thread.
++class LumoMemoryDetails : public MemoryDetails {
++ public:
++  using Callback = base::OnceCallback<void(uint64_t)>;
++
++  explicit LumoMemoryDetails(Callback callback)
++      : callback_(std::move(callback)) {}
++
++  LumoMemoryDetails(const LumoMemoryDetails&) = delete;
++  LumoMemoryDetails& operator=(const LumoMemoryDetails&) = delete;
++
++  // MemoryDetails:
++  void OnDetailsAvailable() override {
++    uint64_t total_kb = 0;
++    if (ProcessData* browser = ChromeBrowser()) {
++      for (const ProcessMemoryInformation& info : browser->processes) {
++        total_kb += info.private_memory_footprint_kb;
++      }
++    }
++    std::move(callback_).Run(total_kb * 1024);
++  }
++
++ private:
++  ~LumoMemoryDetails() override = default;
++
++  Callback callback_;
++};
++
++
++
++// True when this build carries a startup password lock
++// configuration (patch 0019): stage.py generated the config header
++// with a non-empty expected hash. The hash itself is only compared
++// for emptiness here; it is never exposed to the page.
++bool IsStartupLockConfigured() {
++#if defined(LUMO_MONITOR_LOCK_CONFIG_AVAILABLE)
++  return !std::string_view(lumo::kLockHashHex).empty();
++#else
++  return false;
++#endif
++}
++
++void AppendFeatureIfEnabled(base::Value::List* list,
++                            const base::Feature& feature) {
++  if (base::FeatureList::IsEnabled(feature)) {
++    list->Append(feature.name);
++  }
++}
++
++}  // namespace
++
++LumoMonitorHandler::LumoMonitorHandler(Profile* profile)
++    : profile_(profile) {}
++
++LumoMonitorHandler::~LumoMonitorHandler() = default;
++
++void LumoMonitorHandler::RegisterMessages() {
++  web_ui()->RegisterMessageCallback(
++      "getLumoMonitorInfo",
++      base::BindRepeating(&LumoMonitorHandler::HandleGetLumoMonitorInfo,
++                          base::Unretained(this)));
++}
++
++void LumoMonitorHandler::OnJavascriptAllowed() {}
++
++void LumoMonitorHandler::OnJavascriptDisallowed() {
++  pending_callback_id_ = base::Value();
++  weak_ptr_factory_.InvalidateWeakPtrs();
++}
++
++// static
++LumoMonitorHandler::CrashReportSummary LumoMonitorHandler::ScanCrashReports(
++    const base::FilePath& user_data_dir) {
++  CrashReportSummary summary;
++  const base::FilePath crashpad_dir =
++      user_data_dir.Append(FILE_PATH_LITERAL("Crashpad"));
++  for (const char* subdir : {"reports", "pending"}) {
++    base::FileEnumerator enumerator(
++        crashpad_dir.Append(base::FilePath::FromUTF8Unsafe(subdir)),
++        false, base::FileEnumerator::FILES, FILE_PATH_LITERAL("*.dmp"));
++    for (base::FilePath path = enumerator.Next(); !path.empty();
++         path = enumerator.Next()) {
++      ++summary.count;
++      const double modified_ms = enumerator.GetInfo()
++                                     .GetLastModifiedTime()
++                                     .InMillisecondsFSinceUnixEpoch();
++      if (modified_ms > summary.latest_time_ms) {
++        summary.latest_time_ms = modified_ms;
++      }
++    }
++  }
++  return summary;
++}
++
++void LumoMonitorHandler::HandleGetLumoMonitorInfo(
++    const base::ListValue& args) {
++  AllowJavascript();
++  CHECK_EQ(1U, args.size());
++  pending_callback_id_ = args[0].Clone();
++  crash_summary_ready_ = false;
++  memory_ready_ = false;
++
++  base::FilePath user_data_dir;
++  base::PathService::Get(chrome::DIR_USER_DATA_DIR, &user_data_dir);
++  base::ThreadPool::PostTaskAndReplyWithResult(
++      FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
++      base::BindOnce(&LumoMonitorHandler::ScanCrashReports, user_data_dir),
++      base::BindOnce(&LumoMonitorHandler::OnCrashReportSummary,
++                     weak_ptr_factory_.GetWeakPtr()));
++
++  scoped_refptr<LumoMemoryDetails> memory_details(new LumoMemoryDetails(
++      base::BindOnce(&LumoMonitorHandler::OnMemoryTotal,
++                     weak_ptr_factory_.GetWeakPtr())));
++  memory_details->StartFetch();
++}
++
++void LumoMonitorHandler::OnCrashReportSummary(CrashReportSummary summary) {
++  crash_summary_ = summary;
++  crash_summary_ready_ = true;
++  MaybeResolveCallback();
++}
++
++void LumoMonitorHandler::OnMemoryTotal(uint64_t total_bytes) {
++  memory_total_bytes_ = total_bytes;
++  memory_ready_ = true;
++  MaybeResolveCallback();
++}
++
++void LumoMonitorHandler::MaybeResolveCallback() {
++  if (!crash_summary_ready_ || !memory_ready_ ||
++      pending_callback_id_.is_none()) {
++    return;
++  }
++
++  base::Value::Dict info;
++
++  info.Set("version", std::string(version_info::GetVersionNumber()));
++  info.Set("profileName", profile_->GetProfileUserName());
++  info.Set("profilePath", profile_->GetPath().AsUTF8Unsafe());
++
++  const base::TimeDelta uptime =
++      base::Time::Now() - base::Process::Current().CreationTime();
++  info.Set("uptimeSeconds", static_cast<double>(uptime.InSeconds()));
++
++  int window_count = 0;
++  int tab_count = 0;
++  GlobalBrowserCollection::GetInstance()->ForEach(
++      [&window_count, &tab_count](BrowserWindowInterface* browser) {
++        ++window_count;
++        if (TabStripModel* model = browser->GetTabStripModel()) {
++          tab_count += model->count();
++        }
++        return true;
++      });
++  info.Set("windowCount", window_count);
++  info.Set("tabCount", tab_count);
++
++  info.Set("totalMemoryBytes",
++           static_cast<double>(memory_total_bytes_));
++
++  signin::IdentityManager* identity_manager =
++      IdentityManagerFactory::GetForProfile(profile_);
++  info.Set("syncSignedIn",
++           identity_manager &&
++               identity_manager->HasPrimaryAccount(
++                   signin::ConsentLevel::kSync));
++  syncer::SyncService* sync_service =
++      SyncServiceFactory::IsSyncAllowed(profile_)
++          ? SyncServiceFactory::GetForProfile(profile_)
++          : nullptr;
++  const syncer::SyncService::TransportState transport_state =
++      sync_service ? sync_service->GetTransportState()
++                   : syncer::SyncService::TransportState::DISABLED;
++  info.Set("syncTransportState", TransportStateToString(transport_state));
++  info.Set("syncActive",
++           sync_service && sync_service->IsSyncFeatureActive() &&
++               transport_state ==
++                   syncer::SyncService::TransportState::ACTIVE);
++
++  base::Value::List enabled_features;
++  AppendFeatureIfEnabled(&enabled_features, features::kLumoGlicMenu);
++  AppendFeatureIfEnabled(&enabled_features,
++                         features::kLumoHoverCardMemoryUsage);
++  AppendFeatureIfEnabled(&enabled_features,
++                         features::kLumoDarkModeSchedule);
++  AppendFeatureIfEnabled(&enabled_features,
++                         features::kLumoTrackingProtectionStrict);
++  AppendFeatureIfEnabled(&enabled_features,
++                         features::kLumoFullPageScreenshot);
++  AppendFeatureIfEnabled(&enabled_features,
++                         features::kLumoTabGroupSessionSave);
++  AppendFeatureIfEnabled(&enabled_features,
++                         features::kLumoLaunchThoriumProfile);
++  info.Set("enabledFeatures", std::move(enabled_features));
++
++  // Presence only: the key and client values themselves are never
++  // read into the result (same rule as the patch 0009 Sync test).
++  info.Set("apiKeyConfigured", !google_apis::GetAPIKey().empty());
++  info.Set("oauthClientConfigured",
++           !google_apis::GetOAuth2ClientID(google_apis::CLIENT_MAIN)
++                .empty() &&
++               !google_apis::GetOAuth2ClientSecret(
++                    google_apis::CLIENT_MAIN)
++                    .empty());
++
++  const bool lock_configured = IsStartupLockConfigured();
++  info.Set("lockConfigured", lock_configured);
++  bool lock_unlocked = false;
++  if (lock_configured) {
++    base::FilePath user_data_dir;
++    base::PathService::Get(chrome::DIR_USER_DATA_DIR, &user_data_dir);
++    lock_unlocked = base::PathExists(
++        user_data_dir.Append(FILE_PATH_LITERAL("lumo-unlock-token")));
++  }
++  info.Set("lockUnlocked", lock_unlocked);
++
++  info.Set("debuggerSession", lumo::debugger::IsEnabled());
++
++  info.Set("crashReportCount", crash_summary_.count);
++  info.Set("latestCrashTimeMs", crash_summary_.latest_time_ms);
++
++  base::Value callback_id = std::move(pending_callback_id_);
++  pending_callback_id_ = base::Value();
++  ResolveJavascriptCallback(callback_id, base::Value(std::move(info)));
++}
++
++}  // namespace settings
+diff --git a/chrome/browser/ui/webui/settings/lumo_monitor_handler.h b/chrome/browser/ui/webui/settings/lumo_monitor_handler.h
+new file mode 100644
+index 0000000..e6ffdf5
+--- /dev/null
++++ b/chrome/browser/ui/webui/settings/lumo_monitor_handler.h
+@@ -0,0 +1,80 @@
++// Copyright 2026 seasea1010
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_WEBUI_SETTINGS_LUMO_MONITOR_HANDLER_H_
++#define CHROME_BROWSER_UI_WEBUI_SETTINGS_LUMO_MONITOR_HANDLER_H_
++
++#include <cstdint>
++
++#include "base/files/file_path.h"
++#include "base/memory/raw_ptr.h"
++#include "base/memory/weak_ptr.h"
++#include "base/values.h"
++#include "chrome/browser/ui/webui/settings/settings_page_ui_handler.h"
++
++class Profile;
++
++namespace settings {
++
++// WebUI message handler for the Lumo Monitor settings page
++// (Lumo patch 0022). Serves a single request, "getLumoMonitorInfo",
++// with a snapshot of the browser's state: version, profile, uptime,
++// tab/window counts, total memory usage, Sync state, the enabled
++// Lumo experiments, API key presence, the startup password lock
++// state (patch 0019), the debugger session state (patch 0020), and
++// the recent crash reports. API key and OAuth client VALUES are
++// never included, only whether they are compiled in.
++class LumoMonitorHandler : public SettingsPageUIHandler {
++ public:
++  explicit LumoMonitorHandler(Profile* profile);
++
++  LumoMonitorHandler(const LumoMonitorHandler&) = delete;
++  LumoMonitorHandler& operator=(const LumoMonitorHandler&) = delete;
++
++  ~LumoMonitorHandler() override;
++
++  // SettingsPageUIHandler:
++  void RegisterMessages() override;
++  void OnJavascriptAllowed() override;
++  void OnJavascriptDisallowed() override;
++
++ private:
++  // Result of the Crashpad reports scan, which runs on a blocking
++  // task runner.
++  struct CrashReportSummary {
++    int count = 0;
++    // Milliseconds since the Unix epoch of the newest report, or 0
++    // when there are no reports.
++    double latest_time_ms = 0;
++  };
++
++  // Counts the Crashpad reports under |user_data_dir| (the
++  // Crashpad/reports and Crashpad/pending folders) and finds the
++  // newest one's timestamp. File IO only; called on a blocking
++  // task runner.
++  static CrashReportSummary ScanCrashReports(
++      const base::FilePath& user_data_dir);
++
++  void HandleGetLumoMonitorInfo(const base::ListValue& args);
++  void OnCrashReportSummary(CrashReportSummary summary);
++  void OnMemoryTotal(uint64_t total_bytes);
++  void MaybeResolveCallback();
++
++  const raw_ptr<Profile> profile_;
++
++  // The JavaScript callback waiting for the two asynchronous
++  // pieces (crash scan, memory total). Empty while no request is
++  // in flight.
++  base::Value pending_callback_id_;
++  bool crash_summary_ready_ = false;
++  bool memory_ready_ = false;
++  CrashReportSummary crash_summary_;
++  uint64_t memory_total_bytes_ = 0;
++
++  base::WeakPtrFactory<LumoMonitorHandler> weak_ptr_factory_{this};
++};
++
++}  // namespace settings
++
++#endif  // CHROME_BROWSER_UI_WEBUI_SETTINGS_LUMO_MONITOR_HANDLER_H_
+diff --git a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
+index c035e90..e3f759d 100644
+--- a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
++++ b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
+@@ -326,6 +326,30 @@ void AddAboutStrings(content::WebUIDataSource* html_source, Profile* profile) {
+       {"aboutUpgradeUpdatingPercent", IDS_SETTINGS_UPGRADE_UPDATING_PERCENT},
+       {"aboutGetHelpUsingChrome", IDS_SETTINGS_GET_HELP_USING_CHROME},
+       {"aboutPageTitle", IDS_SETTINGS_ABOUT_PROGRAM},
++      {"lumoMonitorPageTitle", IDS_SETTINGS_LUMO_MONITOR_PAGE_TITLE},
++      {"lumoMonitorVersionLabel",
++       IDS_SETTINGS_LUMO_MONITOR_VERSION_LABEL},
++      {"lumoMonitorProfileNameLabel",
++       IDS_SETTINGS_LUMO_MONITOR_PROFILE_NAME_LABEL},
++      {"lumoMonitorProfilePathLabel",
++       IDS_SETTINGS_LUMO_MONITOR_PROFILE_PATH_LABEL},
++      {"lumoMonitorUptimeLabel",
++       IDS_SETTINGS_LUMO_MONITOR_UPTIME_LABEL},
++      {"lumoMonitorWindowsTabsLabel",
++       IDS_SETTINGS_LUMO_MONITOR_WINDOWS_TABS_LABEL},
++      {"lumoMonitorMemoryLabel",
++       IDS_SETTINGS_LUMO_MONITOR_MEMORY_LABEL},
++      {"lumoMonitorSyncLabel", IDS_SETTINGS_LUMO_MONITOR_SYNC_LABEL},
++      {"lumoMonitorFeaturesLabel",
++       IDS_SETTINGS_LUMO_MONITOR_FEATURES_LABEL},
++      {"lumoMonitorApiKeyLabel",
++       IDS_SETTINGS_LUMO_MONITOR_API_KEY_LABEL},
++      {"lumoMonitorLockLabel", IDS_SETTINGS_LUMO_MONITOR_LOCK_LABEL},
++      {"lumoMonitorDebuggerLabel",
++       IDS_SETTINGS_LUMO_MONITOR_DEBUGGER_LABEL},
++      {"lumoMonitorCrashLabel",
++       IDS_SETTINGS_LUMO_MONITOR_CRASH_LABEL},
++      {"lumoMonitorRefresh", IDS_SETTINGS_LUMO_MONITOR_REFRESH},
+       {"aboutProductTitle", IDS_PRODUCT_NAME},
+       {"aboutLearnMoreUpdatingErrors",
+        IDS_SETTINGS_ABOUT_PAGE_LEARN_MORE_UPDATE_ERRORS},
+diff --git a/chrome/browser/ui/webui/settings/settings_ui.cc b/chrome/browser/ui/webui/settings/settings_ui.cc
+index b473e27..b53e0a7 100644
+--- a/chrome/browser/ui/webui/settings/settings_ui.cc
++++ b/chrome/browser/ui/webui/settings/settings_ui.cc
+@@ -60,6 +60,7 @@
+ #include "chrome/browser/ui/webui/plural_string_handler.h"
+ #include "chrome/browser/ui/webui/sanitized_image/sanitized_image_source.h"
+ #include "chrome/browser/ui/webui/settings/about_handler.h"
++#include "chrome/browser/ui/webui/settings/lumo_monitor_handler.h"
+ #include "chrome/browser/ui/webui/settings/accessibility_main_handler.h"
+ #include "chrome/browser/ui/webui/settings/appearance_handler.h"
+ #include "chrome/browser/ui/webui/settings/browser_lifetime_handler.h"
+@@ -435,6 +436,9 @@ SettingsUI::SettingsUI(content::WebUI* web_ui)
+               autofill::features::kAutofillAiWalletShopping));
+ 
+   AddSettingsPageUIHandler(std::make_unique<AboutHandler>(profile));
++  // Lumo: state snapshot page (Lumo patch 0022).
++  AddSettingsPageUIHandler(
++      std::make_unique<LumoMonitorHandler>(profile));
+   AddSettingsPageUIHandler(std::make_unique<ResetSettingsHandler>(profile));
+ 
+   // Add a handler to provide pluralized strings.

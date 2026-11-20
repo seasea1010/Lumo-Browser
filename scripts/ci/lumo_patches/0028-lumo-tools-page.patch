@@ -1,0 +1,3329 @@
+diff --git a/chrome/browser/resources/lumo_tools/BUILD.gn b/chrome/browser/resources/lumo_tools/BUILD.gn
+new file mode 100644
+index 0000000..d60f1e2
+--- /dev/null
++++ b/chrome/browser/resources/lumo_tools/BUILD.gn
+@@ -0,0 +1,38 @@
++# Copyright 2026 seasea1010
++# Use of this source code is governed by a BSD-style license that can be
++# found in the LICENSE file.
++
++import("//chrome/common/features.gni")
++import("//tools/grit/grit_rule.gni")
++import("//ui/webui/resources/tools/generate_grd.gni")
++
++grit("resources") {
++  defines = chrome_grit_defines
++
++  enable_input_discovery_for_gn_analyze = false
++  source = "$target_gen_dir/resources.grd"
++  inputs = [
++    "tools.css",
++    "tools.html",
++    "tools.js",
++  ]
++  deps = [ ":build_grd" ]
++  outputs = [
++    "grit/lumo_tools_resources.h",
++    "grit/lumo_tools_resources_map.h",
++    "grit/lumo_tools_resources_map.cc",
++    "lumo_tools_resources.pak",
++  ]
++  output_dir = "$root_gen_dir/chrome"
++}
++
++generate_grd("build_grd") {
++  grd_prefix = "lumo_tools"
++  out_grd = "$target_gen_dir/resources.grd"
++  input_files = [
++    "tools.css",
++    "tools.html",
++    "tools.js",
++  ]
++  input_files_base_dir = rebase_path(".", "//")
++}
+diff --git a/chrome/browser/resources/lumo_tools/tools.css b/chrome/browser/resources/lumo_tools/tools.css
+new file mode 100644
+index 0000000..3b6027c
+--- /dev/null
++++ b/chrome/browser/resources/lumo_tools/tools.css
+@@ -0,0 +1,303 @@
++/* Copyright 2026 seasea1010
++ * Use of this source code is governed by a BSD-style license that can be
++ * found in the LICENSE file. */
++
++/* Flat styling in the spirit of Chromium's internal pages:
++   plain colors, thin borders, no shadows or gradients. */
++
++:root {
++  --bg: #fff;
++  --fg: #202124;
++  --muted: #5f6368;
++  --border: #dadce0;
++  --panel: #f8f9fa;
++  --accent: #1a73e8;
++  --accent-fg: #fff;
++  --input-bg: #fff;
++  --error: #b3261e;
++}
++
++@media (prefers-color-scheme: dark) {
++  :root {
++    --bg: #202124;
++    --fg: #e8eaed;
++    --muted: #9aa0a6;
++    --border: #3c4043;
++    --panel: #292a2d;
++    --accent: #8ab4f8;
++    --accent-fg: #202124;
++    --input-bg: #303134;
++    --error: #f28b82;
++  }
++}
++
++* {
++  box-sizing: border-box;
++}
++
++body {
++  background: var(--bg);
++  color: var(--fg);
++  font-family: system-ui, "Segoe UI", "Hiragino Kaku Gothic ProN",
++      "Yu Gothic UI", sans-serif;
++  font-size: 14px;
++  line-height: 1.5;
++  margin: 0 auto;
++  max-width: 1080px;
++  padding: 24px 20px 48px;
++}
++
++header h1 {
++  font-size: 22px;
++  font-weight: 500;
++  margin: 0 0 4px;
++}
++
++.subtitle {
++  color: var(--muted);
++  margin: 0 0 16px;
++}
++
++.search-row {
++  align-items: center;
++  display: flex;
++  gap: 12px;
++  margin-bottom: 20px;
++}
++
++#search {
++  background: var(--input-bg);
++  border: 1px solid var(--border);
++  border-radius: 4px;
++  color: var(--fg);
++  flex: 1;
++  font: inherit;
++  max-width: 480px;
++  padding: 8px 10px;
++}
++
++.count {
++  color: var(--muted);
++}
++
++.layout {
++  display: flex;
++  gap: 24px;
++  align-items: flex-start;
++}
++
++nav#cats {
++  display: flex;
++  flex-direction: column;
++  flex: 0 0 168px;
++  gap: 2px;
++  position: sticky;
++  top: 16px;
++}
++
++nav#cats button {
++  background: none;
++  border: 1px solid transparent;
++  border-radius: 4px;
++  color: var(--fg);
++  cursor: pointer;
++  font: inherit;
++  padding: 6px 10px;
++  text-align: left;
++}
++
++nav#cats button:hover {
++  background: var(--panel);
++}
++
++nav#cats button.active {
++  border-color: var(--border);
++  background: var(--panel);
++  font-weight: 600;
++}
++
++main#tools {
++  flex: 1;
++  min-width: 0;
++}
++
++section.cat-group {
++  margin-bottom: 28px;
++}
++
++section.cat-group > h2 {
++  border-bottom: 1px solid var(--border);
++  font-size: 16px;
++  font-weight: 600;
++  margin: 0 0 12px;
++  padding-bottom: 6px;
++}
++
++.tool {
++  border: 1px solid var(--border);
++  border-radius: 6px;
++  margin-bottom: 12px;
++  padding: 12px 14px;
++}
++
++.tool h3 {
++  font-size: 14px;
++  font-weight: 600;
++  margin: 0 0 2px;
++}
++
++.tool .desc {
++  color: var(--muted);
++  font-size: 12px;
++  margin: 0 0 10px;
++}
++
++.tool label {
++  display: block;
++  font-size: 12px;
++  color: var(--muted);
++  margin: 8px 0 4px;
++}
++
++.tool textarea,
++.tool input[type="text"],
++.tool input[type="number"],
++.tool input[type="password"],
++.tool input[type="date"],
++.tool input[type="datetime-local"],
++.tool input[type="time"],
++.tool select {
++  background: var(--input-bg);
++  border: 1px solid var(--border);
++  border-radius: 4px;
++  color: var(--fg);
++  font: inherit;
++  padding: 6px 8px;
++  width: 100%;
++}
++
++.tool textarea {
++  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
++  font-size: 13px;
++  min-height: 64px;
++  resize: vertical;
++}
++
++.tool textarea[readonly] {
++  background: var(--panel);
++}
++
++.tool .fields {
++  display: grid;
++  gap: 0 12px;
++  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
++}
++
++.tool button.action {
++  background: var(--accent);
++  border: 1px solid var(--accent);
++  border-radius: 4px;
++  color: var(--accent-fg);
++  cursor: pointer;
++  font: inherit;
++  margin-top: 10px;
++  padding: 6px 14px;
++}
++
++.tool button.plain {
++  background: var(--panel);
++  border: 1px solid var(--border);
++  border-radius: 4px;
++  color: var(--fg);
++  cursor: pointer;
++  font: inherit;
++  margin-top: 10px;
++  padding: 6px 14px;
++}
++
++.tool .result {
++  margin-top: 10px;
++  overflow-wrap: anywhere;
++  white-space: pre-wrap;
++}
++
++.tool .result-rows {
++  margin-top: 10px;
++}
++
++.tool .result-rows .row {
++  display: flex;
++  gap: 12px;
++  padding: 2px 0;
++}
++
++.tool .result-rows .row .k {
++  color: var(--muted);
++  flex: 0 0 180px;
++}
++
++.tool .error {
++  color: var(--error);
++  margin-top: 10px;
++  white-space: pre-wrap;
++}
++
++.tool table.ref {
++  border-collapse: collapse;
++  margin-top: 8px;
++  width: 100%;
++}
++
++.tool table.ref th,
++.tool table.ref td {
++  border: 1px solid var(--border);
++  padding: 4px 8px;
++  text-align: left;
++  vertical-align: top;
++}
++
++.tool table.ref th {
++  background: var(--panel);
++  font-weight: 600;
++}
++
++.tool .swatch {
++  border: 1px solid var(--border);
++  border-radius: 4px;
++  display: inline-block;
++  height: 28px;
++  margin-top: 8px;
++  width: 100%;
++}
++
++.tool .big-clock {
++  font-size: 20px;
++  font-variant-numeric: tabular-nums;
++}
++
++.tool .clock-grid {
++  display: grid;
++  gap: 4px 16px;
++  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
++  margin-top: 8px;
++}
++
++.tool .clock-grid .row {
++  display: flex;
++  justify-content: space-between;
++  border-bottom: 1px solid var(--border);
++  padding: 4px 0;
++}
++
++.tool input[type="color"] {
++  background: var(--input-bg);
++  border: 1px solid var(--border);
++  border-radius: 4px;
++  height: 36px;
++  padding: 2px;
++  width: 100%;
++}
++
++.hidden {
++  display: none !important;
++}
+diff --git a/chrome/browser/resources/lumo_tools/tools.html b/chrome/browser/resources/lumo_tools/tools.html
+new file mode 100644
+index 0000000..425fa44
+--- /dev/null
++++ b/chrome/browser/resources/lumo_tools/tools.html
+@@ -0,0 +1,23 @@
++<!doctype html>
++<html lang="ja">
++<head>
++<meta charset="utf-8">
++<title>ツール集 - Lumo</title>
++<link rel="stylesheet" href="tools.css">
++</head>
++<body>
++<header>
++  <h1>ツール集</h1>
++  <p class="subtitle">ブラウザの中で完結する小さなユーティリティ集です。入力した内容が外部に送信されることはありません。</p>
++  <div class="search-row">
++    <input id="search" type="search" placeholder="ツールを検索（例: base64、税込、色）" aria-label="ツールを検索">
++    <span id="count" class="count"></span>
++  </div>
++</header>
++<div class="layout">
++  <nav id="cats" aria-label="カテゴリ"></nav>
++  <main id="tools"></main>
++</div>
++<script src="tools.js"></script>
++</body>
++</html>
+diff --git a/chrome/browser/resources/lumo_tools/tools.js b/chrome/browser/resources/lumo_tools/tools.js
+new file mode 100644
+index 0000000..1bb8bb1
+--- /dev/null
++++ b/chrome/browser/resources/lumo_tools/tools.js
+@@ -0,0 +1,2799 @@
++// Copyright 2026 seasea1010
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++// chrome://tools (Lumo patch 0028): a collection of small utilities
++// that run entirely on this page. No input ever leaves the browser:
++// there are no network calls and no external libraries. The DOM is
++// built with createElement/textContent only, because WebUI data
++// sources enforce Trusted Types (innerHTML is never used).
++'use strict';
++
++/* ------------------------------------------------------------------ */
++/* Small helpers                                                       */
++/* ------------------------------------------------------------------ */
++
++function h(tag, cls, text) {
++  const e = document.createElement(tag);
++  if (cls) {
++    e.className = cls;
++  }
++  if (text != null) {
++    e.textContent = text;
++  }
++  return e;
++}
++
++const textEncoder = new TextEncoder();
++const textDecoder = new TextDecoder('utf-8', {fatal: true});
++
++function utf8Bytes(str) {
++  return textEncoder.encode(str);
++}
++
++function bytesToHex(bytes) {
++  return [...bytes].map(b => b.toString(16).padStart(2, '0')).join('');
++}
++
++function bytesToB64(bytes) {
++  let bin = '';
++  const chunk = 0x8000;
++  for (let i = 0; i < bytes.length; i += chunk) {
++    bin += String.fromCharCode.apply(
++        null, bytes.subarray(i, i + chunk));
++  }
++  return btoa(bin);
++}
++
++function b64ToBytes(b64) {
++  const bin = atob(b64.replace(/\s+/g, ''));
++  const bytes = new Uint8Array(bin.length);
++  for (let i = 0; i < bin.length; i++) {
++    bytes[i] = bin.charCodeAt(i);
++  }
++  return bytes;
++}
++
++async function shaHex(algo, bytes) {
++  const buf = await crypto.subtle.digest(algo, bytes);
++  return bytesToHex(new Uint8Array(buf));
++}
++
++function fmtNum(n) {
++  return n.toLocaleString('ja-JP');
++}
++
++/* ------------------------------------------------------------------ */
++/* MD5 (pure JavaScript; crypto.subtle has no MD5)                     */
++/* ------------------------------------------------------------------ */
++
++const MD5_K = [
++  0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee, 0xf57c0faf, 0x4787c62a,
++  0xa8304613, 0xfd469501, 0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be,
++  0x6b901122, 0xfd987193, 0xa679438e, 0x49b40821, 0xf61e2562, 0xc040b340,
++  0x265e5a51, 0xe9b6c7aa, 0xd62f105d, 0x02441453, 0xd8a1e681, 0xe7d3fbc8,
++  0x21e1cde6, 0xc33707d6, 0xf4d50d87, 0x455a14ed, 0xa9e3e905, 0xfcefa3f8,
++  0x676f02d9, 0x8d2a4c8a, 0xfffa3942, 0x8771f681, 0x6d9d6122, 0xfde5380c,
++  0xa4beea44, 0x4bdecfa9, 0xf6bb4b60, 0xbebfbc70,
++  0x289b7ec6, 0xeaa127fa, 0xd4ef3085, 0x04881d05, 0xd9d4d039, 0xe6db99e5,
++  0x1fa27cf8, 0xc4ac5665, 0xf4292244, 0x432aff97, 0xab9423a7, 0xfc93a039,
++  0x655b59c3, 0x8f0ccc92, 0xffeff47d, 0x85845dd1, 0x6fa87e4f, 0xfe2ce6e0,
++  0xa3014314, 0x4e0811a1, 0xf7537e82, 0xbd3af235, 0x2ad7d2bb, 0xeb86d391,
++];
++const MD5_S = [
++  7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,
++  5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20,
++  4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
++  6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
++];
++
++function md5Hex(bytes) {
++  const bitLen = bytes.length * 8;
++  const total = (((bytes.length + 8) >> 6) + 1) << 6;
++  const msg = new Uint8Array(total);
++  msg.set(bytes);
++  msg[bytes.length] = 0x80;
++  const dv = new DataView(msg.buffer);
++  dv.setUint32(total - 8, bitLen >>> 0, true);
++  dv.setUint32(total - 4, Math.floor(bitLen / 4294967296), true);
++  let a0 = 0x67452301, b0 = 0xefcdab89, c0 = 0x98badcfe, d0 = 0x10325476;
++  const m = new Uint32Array(16);
++  for (let off = 0; off < total; off += 64) {
++    for (let i = 0; i < 16; i++) {
++      m[i] = dv.getUint32(off + i * 4, true);
++    }
++    let a = a0, b = b0, c = c0, d = d0;
++    for (let i = 0; i < 64; i++) {
++      let f, g;
++      if (i < 16) {
++        f = (b & c) | (~b & d);
++        g = i;
++      } else if (i < 32) {
++        f = (d & b) | (~d & c);
++        g = (5 * i + 1) % 16;
++      } else if (i < 48) {
++        f = b ^ c ^ d;
++        g = (3 * i + 5) % 16;
++      } else {
++        f = c ^ (b | ~d);
++        g = (7 * i) % 16;
++      }
++      const sum = (f + a + MD5_K[i] + m[g]) | 0;
++      a = d;
++      d = c;
++      c = b;
++      const rot = (sum << MD5_S[i]) | (sum >>> (32 - MD5_S[i]));
++      b = (b + rot) | 0;
++    }
++    a0 = (a0 + a) | 0;
++    b0 = (b0 + b) | 0;
++    c0 = (c0 + c) | 0;
++    d0 = (d0 + d) | 0;
++  }
++  const out = new Uint8Array(16);
++  const odv = new DataView(out.buffer);
++  odv.setUint32(0, a0 >>> 0, true);
++  odv.setUint32(4, b0 >>> 0, true);
++  odv.setUint32(8, c0 >>> 0, true);
++  odv.setUint32(12, d0 >>> 0, true);
++  return bytesToHex(out);
++}
++
++/* ------------------------------------------------------------------ */
++/* Shared text utilities                                               */
++/* ------------------------------------------------------------------ */
++
++function splitLines(text) {
++  return text.replace(/\r\n?/g, '\n').split('\n');
++}
++
++function splitWords(text) {
++  const trimmed = text.trim();
++  if (!trimmed) {
++    return [];
++  }
++  return trimmed.split(/[\s\u3000]+/).filter(w => w.length > 0);
++}
++
++// Halfwidth <-> fullwidth katakana maps (with dakuten composition).
++const KANA_HALF = 'ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜｦﾝｧｨｩｪｫｬｭｮｯｰ､｡｢｣';
++const KANA_FULL = 'アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲンァィゥェォャュョッー、。「」';
++const KANA_VOICED = {
++  'カ': 'ガ', 'キ': 'ギ', 'ク': 'グ', 'ケ': 'ゲ', 'コ': 'ゴ',
++  'サ': 'ザ', 'シ': 'ジ', 'ス': 'ズ', 'セ': 'ゼ', 'ソ': 'ゾ',
++  'タ': 'ダ', 'チ': 'ヂ', 'ツ': 'ヅ', 'テ': 'デ', 'ト': 'ド',
++  'ハ': 'バ', 'ヒ': 'ビ', 'フ': 'ブ', 'ヘ': 'ベ', 'ホ': 'ボ',
++  'ウ': 'ヴ',
++};
++const KANA_SEMIVOICED = {
++  'ハ': 'パ', 'ヒ': 'ピ', 'フ': 'プ', 'ヘ': 'ペ', 'ホ': 'ポ',
++};
++const KANA_VOICED_REV = {};
++for (const k of Object.keys(KANA_VOICED)) {
++  KANA_VOICED_REV[KANA_VOICED[k]] = k;
++}
++const KANA_SEMIVOICED_REV = {};
++for (const k of Object.keys(KANA_SEMIVOICED)) {
++  KANA_SEMIVOICED_REV[KANA_SEMIVOICED[k]] = k;
++}
++
++function kanaToFull(text) {
++  let out = '';
++  const chars = [...text];
++  for (let i = 0; i < chars.length; i++) {
++    const ch = chars[i];
++    const idx = KANA_HALF.indexOf(ch);
++    if (idx >= 0) {
++      let full = KANA_FULL[idx];
++      const next = chars[i + 1];
++      if (next === 'ﾞ' && KANA_VOICED[full]) {
++        full = KANA_VOICED[full];
++        i++;
++      } else if (next === 'ﾟ' && KANA_SEMIVOICED[full]) {
++        full = KANA_SEMIVOICED[full];
++        i++;
++      }
++      out += full;
++    } else if (ch === 'ﾞ' || ch === 'ﾟ') {
++      out += ch === 'ﾞ' ? '゛' : '゜';
++    } else {
++      out += ch;
++    }
++  }
++  return out;
++}
++
++function kanaToHalf(text) {
++  let out = '';
++  for (const ch of text) {
++    if (KANA_VOICED_REV[ch]) {
++      const idx = KANA_FULL.indexOf(KANA_VOICED_REV[ch]);
++      out += KANA_HALF[idx] + 'ﾞ';
++    } else if (KANA_SEMIVOICED_REV[ch]) {
++      const idx = KANA_FULL.indexOf(KANA_SEMIVOICED_REV[ch]);
++      out += KANA_HALF[idx] + 'ﾟ';
++    } else {
++      const idx = KANA_FULL.indexOf(ch);
++      out += idx >= 0 ? KANA_HALF[idx] : ch;
++    }
++  }
++  return out;
++}
++
++function asciiToFull(text) {
++  return text.replace(/[!-~]/g,
++      ch => String.fromCharCode(ch.charCodeAt(0) + 0xFEE0))
++      .replace(/ /g, '　');
++}
++
++function asciiToHalf(text) {
++  return text.replace(/[！-～]/g,
++      ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0))
++      .replace(/　/g, ' ');
++}
++
++function wordTokens(text) {
++  // Tokens for case conversion: split on whitespace, '_', '-' and
++  // case boundaries.
++  return text.replace(/([a-z0-9])([A-Z])/g, '$1 $2')
++      .split(/[\s_\-]+/)
++      .filter(w => w.length > 0)
++      .map(w => w.toLowerCase());
++}
++
++function cap(word) {
++  return word ? word[0].toUpperCase() + word.slice(1) : word;
++}
++
++/* ------------------------------------------------------------------ */
++/* Tool registry                                                       */
++/*                                                                     */
++/* One tool = one independent conversion / calculation / display.    */
++/* kind: 'io'     textarea -> textarea (live unless live:false)      */
++/*       'stat'   textarea -> label/value rows (live)                */
++/*       'form'   fields -> text or label/value rows                 */
++/*       'table'  static reference table                             */
++/*       'custom' render(body) builds its own UI                     */
++/* ------------------------------------------------------------------ */
++
++const CATS = [
++  {key: 'text', label: 'テキスト操作'},
++  {key: 'encode', label: 'エンコード'},
++  {key: 'data', label: 'データ整形'},
++  {key: 'hash', label: 'ハッシュ・セキュリティ'},
++  {key: 'gen', label: '生成'},
++  {key: 'num', label: '数値・単位'},
++  {key: 'time', label: '時刻'},
++  {key: 'color', label: '色'},
++  {key: 'web', label: 'Web・参照'},
++];
++
++const TOOLS = [
++  /* ---------------- テキスト操作 ---------------- */
++  {id: 'char-count', cat: 'text', name: '文字数カウント', kind: 'stat',
++   desc: '文字数を数えます（サロゲートペアは1文字として数えた数も表示）。',
++   fn: text => [
++     ['文字数（コードポイント）', fmtNum([...text].length)],
++     ['文字数（UTF-16 コード単位）', fmtNum(text.length)],
++     ['文字数（空白・改行を除く）',
++      fmtNum([...text.replace(/\s/g, '')].length)],
++   ]},
++  {id: 'byte-count', cat: 'text', name: 'バイト数カウント', kind: 'stat',
++   desc: 'エンコーディングごとのバイト数を表示します。',
++   fn: text => [
++     ['UTF-8 バイト数', fmtNum(utf8Bytes(text).length)],
++     ['UTF-16 バイト数', fmtNum(text.length * 2)],
++     ['文字数（コードポイント）', fmtNum([...text].length)],
++   ]},
++  {id: 'word-count', cat: 'text', name: '単語数カウント', kind: 'stat',
++   desc: '空白で区切った単語数、文の数、段落数を数えます。',
++   fn: text => [
++     ['単語数', fmtNum(splitWords(text).length)],
++     ['文の数（。．！？で区切り）',
++      fmtNum(text.split(/[。．！？.!?]+/).filter(s => s.trim()).length)],
++     ['段落数（空行で区切り）',
++      fmtNum(text.split(/\n\s*\n/).filter(s => s.trim()).length)],
++   ]},
++  {id: 'line-count', cat: 'text', name: '行数カウント', kind: 'stat',
++   desc: '行数、空行の数、最長行などを表示します。',
++   fn: text => {
++     const lines = text === '' ? [] : splitLines(text);
++     const longest = lines.reduce((m, l) => Math.max(m, [...l].length), 0);
++     return [
++       ['行数', fmtNum(lines.length)],
++       ['空行の数', fmtNum(lines.filter(l => l.trim() === '').length)],
++       ['最長行の文字数', fmtNum(longest)],
++     ];
++   }},
++  {id: 'upper-case', cat: 'text', name: '大文字に変換', kind: 'io',
++   desc: '英字をすべて大文字にします。',
++   fn: text => text.toUpperCase()},
++  {id: 'lower-case', cat: 'text', name: '小文字に変換', kind: 'io',
++   desc: '英字をすべて小文字にします。',
++   fn: text => text.toLowerCase()},
++  {id: 'title-case', cat: 'text', name: 'タイトルケースに変換', kind: 'io',
++   desc: '各単語の先頭を大文字にします（例: hello world → Hello World）。',
++   fn: text => text.replace(/[A-Za-z]+/g, w => cap(w.toLowerCase()))},
++  {id: 'camel-case', cat: 'text', name: 'キャメルケースに変換', kind: 'io',
++   desc: '例: hello_world → helloWorld。',
++   fn: text => wordTokens(text)
++       .map((w, i) => i === 0 ? w : cap(w)).join('')},
++  {id: 'pascal-case', cat: 'text', name: 'パスカルケースに変換', kind: 'io',
++   desc: '例: hello_world → HelloWorld。',
++   fn: text => wordTokens(text).map(cap).join('')},
++  {id: 'snake-case', cat: 'text', name: 'スネークケースに変換', kind: 'io',
++   desc: '例: helloWorld → hello_world。',
++   fn: text => wordTokens(text).join('_')},
++  {id: 'kebab-case', cat: 'text', name: 'ケバブケースに変換', kind: 'io',
++   desc: '例: helloWorld → hello-world。',
++   fn: text => wordTokens(text).join('-')},
++  {id: 'sort-lines', cat: 'text', name: '行をソート', kind: 'io',
++   desc: '行単位で並び替えます。',
++   opts: [
++     {k: 'order', label: '順序', type: 'select',
++      options: [['asc', '昇順'], ['desc', '降順']]},
++     {k: 'numeric', label: '数値として比較', type: 'check'},
++   ],
++   fn: (text, o) => {
++     const lines = splitLines(text);
++     const cmp = o.numeric ?
++         (a, b) => (parseFloat(a) || 0) - (parseFloat(b) || 0) :
++         (a, b) => a.localeCompare(b, 'ja');
++     lines.sort(cmp);
++     if (o.order === 'desc') {
++       lines.reverse();
++     }
++     return lines.join('\n');
++   }},
++  {id: 'dedupe-lines', cat: 'text', name: '重複行を除去', kind: 'io',
++   desc: '重複した行を取り除きます（最初の出現順を保持）。',
++   fn: text => [...new Set(splitLines(text))].join('\n')},
++  {id: 'remove-empty-lines', cat: 'text', name: '空行を除去', kind: 'io',
++   desc: '空行（空白だけの行を含む）を取り除きます。',
++   fn: text => splitLines(text).filter(l => l.trim() !== '').join('\n')},
++  {id: 'shuffle-lines', cat: 'text', name: '行をシャッフル', kind: 'form',
++   desc: '行の順序をランダムに入れ替えます。',
++   fields: [
++     {k: 'text', label: 'テキスト', type: 'textarea'},
++   ],
++   button: 'シャッフル',
++   fn: v => {
++     const lines = splitLines(v.text);
++     for (let i = lines.length - 1; i > 0; i--) {
++       const j = Math.floor(Math.random() * (i + 1));
++       [lines[i], lines[j]] = [lines[j], lines[i]];
++     }
++     return lines.join('\n');
++   }},
++  {id: 'line-number', cat: 'text', name: '行番号を付ける', kind: 'io',
++   desc: '各行の先頭に行番号を付けます。',
++   fn: text => {
++     const lines = splitLines(text);
++     const width = String(lines.length).length;
++     return lines.map((l, i) => String(i + 1).padStart(width, ' ') +
++         ': ' + l).join('\n');
++   }},
++  {id: 'trim-text', cat: 'text', name: '空白をトリム', kind: 'io',
++   desc: '前後の空白を取り除きます。',
++   opts: [
++     {k: 'mode', label: '対象', type: 'select',
++      options: [['each', '各行の前後'], ['both', '全体の前後'],
++                ['left', '各行の先頭'], ['right', '各行の末尾']]},
++   ],
++   fn: (text, o) => {
++     if (o.mode === 'both') {
++       return text.trim();
++     }
++     const f = o.mode === 'left' ? (l => l.trimStart()) :
++         o.mode === 'right' ? (l => l.trimEnd()) : (l => l.trim());
++     return splitLines(text).map(f).join('\n');
++   }},
++  {id: 'to-hankaku', cat: 'text', name: '全角を半角に変換', kind: 'io',
++   desc: '全角の英数記号とカタカナを半角にします。',
++   fn: text => kanaToHalf(asciiToHalf(text))},
++  {id: 'to-zenkaku', cat: 'text', name: '半角を全角に変換', kind: 'io',
++   desc: '半角の英数記号とカタカナを全角にします。',
++   fn: text => kanaToFull(asciiToFull(text))},
++  {id: 'hira-to-kata', cat: 'text', name: 'ひらがなをカタカナに変換',
++   kind: 'io', desc: 'ひらがなをカタカナにします。',
++   fn: text => text.replace(/[ぁ-ゖ]/g,
++       ch => String.fromCharCode(ch.charCodeAt(0) + 0x60))},
++  {id: 'kata-to-hira', cat: 'text', name: 'カタカナをひらがなに変換',
++   kind: 'io', desc: 'カタカナをひらがなにします。',
++   fn: text => text.replace(/[ァ-ヶ]/g,
++       ch => String.fromCharCode(ch.charCodeAt(0) - 0x60))},
++  {id: 'reverse-text', cat: 'text', name: '文字列を反転', kind: 'io',
++   desc: '文字列を逆順にします。',
++   opts: [
++     {k: 'mode', label: '単位', type: 'select',
++      options: [['char', '文字単位'], ['line', '行単位']]},
++   ],
++   fn: (text, o) => o.mode === 'line' ?
++       splitLines(text).reverse().join('\n') :
++       [...text].reverse().join('')},
++  {id: 'replace-text', cat: 'text', name: '検索と置換', kind: 'form',
++   desc: '文字列を置換します（正規表現も使えます）。',
++   fields: [
++     {k: 'text', label: 'テキスト', type: 'textarea'},
++     {k: 'search', label: '検索文字列', type: 'text'},
++     {k: 'replacement', label: '置換文字列', type: 'text'},
++     {k: 'regex', label: '正規表現として扱う', type: 'check'},
++     {k: 'all', label: 'すべて置換', type: 'check', def: true},
++   ],
++   fn: v => {
++     if (!v.search) {
++       return v.text;
++     }
++     if (v.regex) {
++       return v.text.replace(
++           new RegExp(v.search, v.all ? 'g' : ''), v.replacement);
++     }
++     return v.all ? v.text.split(v.search).join(v.replacement) :
++         v.text.replace(v.search, v.replacement);
++   }},
++  {id: 'regex-test', cat: 'text', name: '正規表現テスター', kind: 'form',
++   desc: '正規表現のマッチ結果を確認します。',
++   fields: [
++     {k: 'pattern', label: 'パターン', type: 'text'},
++     {k: 'flags', label: 'フラグ（g, i, m など）', type: 'text',
++      def: 'g'},
++     {k: 'text', label: '対象テキスト', type: 'textarea'},
++   ],
++   fn: v => {
++     if (!v.pattern) {
++       return 'パターンを入力してください。';
++     }
++     const re = new RegExp(v.pattern, v.flags);
++     const rows = [];
++     let m;
++     let count = 0;
++     if (v.flags.includes('g')) {
++       while ((m = re.exec(v.text)) !== null) {
++         count++;
++         rows.push([`マッチ ${count}`,
++                    `「${m[0]}」（位置 ${m.index}）`]);
++         if (m[0] === '') {
++           re.lastIndex++;
++         }
++         if (count >= 100) {
++           break;
++         }
++       }
++     } else {
++       m = re.exec(v.text);
++       if (m) {
++         count = 1;
++         rows.push(['マッチ 1', `「${m[0]}」（位置 ${m.index}）`]);
++       }
++     }
++     if (!count) {
++       return 'マッチしませんでした。';
++     }
++     rows.unshift(['マッチ数', fmtNum(count)]);
++     return rows;
++   }},
++  {id: 'prefix-suffix', cat: 'text', name: '接頭辞・接尾辞を追加',
++   kind: 'form', desc: '各行の前後に文字列を追加します。',
++   fields: [
++     {k: 'text', label: 'テキスト', type: 'textarea'},
++     {k: 'prefix', label: '接頭辞', type: 'text'},
++     {k: 'suffix', label: '接尾辞', type: 'text'},
++   ],
++   fn: v => splitLines(v.text).map(l => v.prefix + l + v.suffix)
++       .join('\n')},
++  {id: 'word-frequency', cat: 'text', name: '単語の出現頻度', kind: 'io',
++   desc: '空白・記号で区切った単語の出現回数を多い順に表示します。',
++   fn: text => {
++     const counts = new Map();
++     for (const w of text.split(/[\s\u3000、。，．・：；！？「」『』（）()\[\]{}]+/)) {
++       if (w) {
++         counts.set(w, (counts.get(w) || 0) + 1);
++       }
++     }
++     return [...counts.entries()].sort((a, b) => b[1] - a[1])
++         .slice(0, 100).map(([w, c]) => `${w}: ${c}`).join('\n');
++   }},
++
++  /* ---------------- エンコード ---------------- */
++  {id: 'b64-encode', cat: 'encode', name: 'Base64 エンコード', kind: 'io',
++   desc: 'テキストを UTF-8 として Base64 に変換します。',
++   fn: text => bytesToB64(utf8Bytes(text))},
++  {id: 'b64-decode', cat: 'encode', name: 'Base64 デコード', kind: 'io',
++   desc: 'Base64 を UTF-8 テキストに戻します。',
++   fn: text => textDecoder.decode(b64ToBytes(text.trim()))},
++  {id: 'b64url-encode', cat: 'encode', name: 'Base64URL エンコード',
++   kind: 'io', desc: 'URL 安全な Base64（+ / を - _ に置換）で変換します。',
++   fn: text => bytesToB64(utf8Bytes(text))
++       .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')},
++  {id: 'b64url-decode', cat: 'encode', name: 'Base64URL デコード',
++   kind: 'io', desc: 'URL 安全な Base64 をテキストに戻します。',
++   fn: text => {
++     let b64 = text.trim().replace(/-/g, '+').replace(/_/g, '/');
++     while (b64.length % 4) {
++       b64 += '=';
++     }
++     return textDecoder.decode(b64ToBytes(b64));
++   }},
++  {id: 'url-encode', cat: 'encode', name: 'URL エンコード', kind: 'io',
++   desc: 'encodeURIComponent でパーセントエンコードします。',
++   fn: text => encodeURIComponent(text)},
++  {id: 'url-decode', cat: 'encode', name: 'URL デコード', kind: 'io',
++   desc: 'パーセントエンコードを元に戻します。',
++   fn: text => decodeURIComponent(text)},
++  {id: 'html-escape', cat: 'encode', name: 'HTML エスケープ', kind: 'io',
++   desc: '& < > " \' を実体参照に変換します。',
++   fn: text => text.replace(/&/g, '&amp;').replace(/</g, '&lt;')
++       .replace(/>/g, '&gt;').replace(/"/g, '&quot;')
++       .replace(/'/g, '&#39;')},
++  {id: 'html-unescape', cat: 'encode', name: 'HTML アンエスケープ',
++   kind: 'io', desc: '代表的な実体参照を文字に戻します。',
++   fn: text => text.replace(/&lt;/g, '<').replace(/&gt;/g, '>')
++       .replace(/&quot;/g, '"').replace(/&#0?39;/g, '\'')
++       .replace(/&#x27;/gi, '\'')
++       .replace(/&#(\d+);/g, (s, n) => String.fromCodePoint(+n))
++       .replace(/&#x([0-9a-f]+);/gi, (s, n) => String.fromCodePoint(
++           parseInt(n, 16)))
++       .replace(/&amp;/g, '&')},
++  {id: 'unicode-escape', cat: 'encode', name: 'Unicode エスケープ',
++   kind: 'io', desc: '非 ASCII 文字を \\uXXXX 形式に変換します。',
++   fn: text => [...text].map(ch => {
++     const cp = ch.codePointAt(0);
++     if (cp < 0x80) {
++       return ch;
++     }
++     if (cp <= 0xFFFF) {
++       return '\\u' + cp.toString(16).padStart(4, '0');
++     }
++     const v = cp - 0x10000;
++     return '\\u' + (0xD800 + (v >> 10)).toString(16) +
++         '\\u' + (0xDC00 + (v & 0x3FF)).toString(16);
++   }).join('')},
++  {id: 'unicode-unescape', cat: 'encode', name: 'Unicode アンエスケープ',
++   kind: 'io', desc: '\\uXXXX 形式を文字に戻します。',
++   fn: text => text.replace(/\\u\{([0-9a-fA-F]+)\}/g,
++           (s, n) => String.fromCodePoint(parseInt(n, 16)))
++       .replace(/\\u([0-9a-fA-F]{4})/g,
++           (s, n) => String.fromCharCode(parseInt(n, 16)))},
++  {id: 'hex-encode', cat: 'encode', name: '16進数に変換', kind: 'io',
++   desc: 'テキストを UTF-8 バイトの16進数表記にします。',
++   opts: [
++     {k: 'upper', label: '大文字（A-F）', type: 'check'},
++     {k: 'space', label: 'バイトごとに空白を入れる', type: 'check'},
++   ],
++   fn: (text, o) => {
++     let hex = bytesToHex(utf8Bytes(text));
++     if (o.space) {
++       hex = hex.replace(/(..)/g, '$1 ').trim();
++     }
++     return o.upper ? hex.toUpperCase() : hex;
++   }},
++  {id: 'hex-decode', cat: 'encode', name: '16進数から復元', kind: 'io',
++   desc: '16進数表記を UTF-8 テキストに戻します。',
++   fn: text => {
++     const hex = text.replace(/[\s:]/g, '');
++     if (!/^[0-9a-fA-F]*$/.test(hex) || hex.length % 2) {
++       throw new Error('16進数として解釈できません。');
++     }
++     const bytes = new Uint8Array(hex.length / 2);
++     for (let i = 0; i < bytes.length; i++) {
++       bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
++     }
++     return textDecoder.decode(bytes);
++   }},
++  {id: 'binary-encode', cat: 'encode', name: '2進数に変換', kind: 'io',
++   desc: 'テキストを UTF-8 バイトの2進数表記にします。',
++   fn: text => [...utf8Bytes(text)]
++       .map(b => b.toString(2).padStart(8, '0')).join(' ')},
++  {id: 'binary-decode', cat: 'encode', name: '2進数から復元', kind: 'io',
++   desc: '2進数表記を UTF-8 テキストに戻します。',
++   fn: text => {
++     const bits = text.replace(/\s+/g, '');
++     if (!/^[01]*$/.test(bits) || bits.length % 8) {
++       throw new Error('2進数として解釈できません。');
++     }
++     const bytes = new Uint8Array(bits.length / 8);
++     for (let i = 0; i < bytes.length; i++) {
++       bytes[i] = parseInt(bits.substr(i * 8, 8), 2);
++     }
++     return textDecoder.decode(bytes);
++   }},
++  {id: 'rot13', cat: 'encode', name: 'ROT13', kind: 'io',
++   desc: '英字を13文字ずらします（もう一度適用すると元に戻ります）。',
++   fn: text => text.replace(/[a-zA-Z]/g, ch => {
++     const base = ch <= 'Z' ? 65 : 97;
++     return String.fromCharCode(
++         (ch.charCodeAt(0) - base + 13) % 26 + base);
++   })},
++  {id: 'morse-encode', cat: 'encode', name: 'モールス信号に変換',
++   kind: 'io', desc: '英数字と一部の記号をモールス信号にします。',
++   fn: text => [...text.toUpperCase()].map(ch => {
++     if (ch === ' ' || ch === '　') {
++       return '/';
++     }
++     return MORSE[ch] || '';
++   }).filter(s => s !== '').join(' ')},
++  {id: 'morse-decode', cat: 'encode', name: 'モールス信号から復元',
++   kind: 'io',
++   desc: 'モールス信号を英数字に戻します（単語の区切りは / または空白3つ）。',
++   fn: text => text.trim().split(/\s*\/\s*|\s{3,}/).map(word =>
++     word.trim().split(/\s+/).map(code => MORSE_REV[code] || '?')
++         .join('')).join(' ')},
++  {id: 'json-string', cat: 'encode', name: 'JSON 文字列化', kind: 'io',
++   desc: 'テキストを JSON の文字列リテラルに変換します。',
++   fn: text => JSON.stringify(text)},
++
++  /* ---------------- データ整形 ---------------- */
++  {id: 'json-format', cat: 'data', name: 'JSON 整形', kind: 'io',
++   desc: 'JSON を読みやすくインデントします。',
++   opts: [
++     {k: 'indent', label: 'インデント', type: 'select',
++      options: [['2', '空白2つ'], ['4', '空白4つ'], ['tab', 'タブ']]},
++   ],
++   fn: (text, o) => JSON.stringify(JSON.parse(text), null,
++       o.indent === 'tab' ? '\t' : Number(o.indent))},
++  {id: 'json-minify', cat: 'data', name: 'JSON 圧縮', kind: 'io',
++   desc: 'JSON の空白を取り除いて1行にします。',
++   fn: text => JSON.stringify(JSON.parse(text))},
++  {id: 'json-validate', cat: 'data', name: 'JSON 検証', kind: 'io',
++   desc: 'JSON として正しいかを確認します。',
++   fn: text => {
++     try {
++       const v = JSON.parse(text);
++       const kind = Array.isArray(v) ? `配列（要素数 ${v.length}）` :
++           v === null ? 'null' :
++           typeof v === 'object' ? `オブジェクト（キー数 ${Object.keys(v).length}）` :
++           typeof v;
++       return `有効な JSON です。トップレベル: ${kind}`;
++     } catch (e) {
++       return `無効な JSON です: ${e.message}`;
++     }
++   }},
++  {id: 'csv-to-json', cat: 'data', name: 'CSV を JSON に変換', kind: 'io',
++   desc: '1行目をヘッダーとして、CSV を JSON 配列に変換します。',
++   fn: text => {
++     const rows = parseCsv(text);
++     if (rows.length < 1) {
++       return '[]';
++     }
++     const head = rows[0];
++     const objs = rows.slice(1).filter(r => r.length > 1 ||
++         (r.length === 1 && r[0] !== '')).map(r => {
++       const o = {};
++       head.forEach((key, i) => {
++         o[key] = r[i] != null ? r[i] : '';
++       });
++       return o;
++     });
++     return JSON.stringify(objs, null, 2);
++   }},
++  {id: 'json-to-csv', cat: 'data', name: 'JSON を CSV に変換', kind: 'io',
++   desc: 'オブジェクトの配列（JSON）を CSV に変換します。',
++   fn: text => {
++     const arr = JSON.parse(text);
++     if (!Array.isArray(arr) || !arr.length) {
++       throw new Error('オブジェクトの配列が必要です。');
++     }
++     const keys = [...new Set(arr.flatMap(o => Object.keys(o)))];
++     const esc = v => {
++       const s = v == null ? '' :
++           typeof v === 'object' ? JSON.stringify(v) : String(v);
++       return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
++     };
++     return [keys.join(',')].concat(
++         arr.map(o => keys.map(k => esc(o[k])).join(','))).join('\n');
++   }},
++  {id: 'xml-format', cat: 'data', name: 'XML 整形', kind: 'io',
++   desc: 'XML をインデントして整形します。',
++   fn: text => {
++     const doc = new DOMParser().parseFromString(text, 'text/xml');
++     if (doc.querySelector('parsererror')) {
++       throw new Error('XML として解釈できません。');
++     }
++     const lines = [];
++     const walk = (node, depth) => {
++       const pad = '  '.repeat(depth);
++       if (node.nodeType === Node.TEXT_NODE) {
++         const t = node.textContent.trim();
++         if (t) {
++           lines.push(pad + t);
++         }
++         return;
++       }
++       if (node.nodeType !== Node.ELEMENT_NODE) {
++         return;
++       }
++       const attrs = [...node.attributes]
++           .map(a => ` ${a.name}="${a.value}"`).join('');
++       const kids = [...node.childNodes].filter(
++           n => n.nodeType === Node.ELEMENT_NODE ||
++               (n.nodeType === Node.TEXT_NODE && n.textContent.trim()));
++       if (!kids.length) {
++         lines.push(`${pad}<${node.tagName}${attrs}/>`);
++       } else if (kids.length === 1 &&
++           kids[0].nodeType === Node.TEXT_NODE) {
++         lines.push(`${pad}<${node.tagName}${attrs}>` +
++             `${kids[0].textContent.trim()}</${node.tagName}>`);
++       } else {
++         lines.push(`${pad}<${node.tagName}${attrs}>`);
++         kids.forEach(k => walk(k, depth + 1));
++         lines.push(`${pad}</${node.tagName}>`);
++       }
++     };
++     walk(doc.documentElement, 0);
++     return lines.join('\n');
++   }},
++  {id: 'url-parse', cat: 'data', name: 'URL を分解', kind: 'io',
++   desc: 'URL の構成要素とクエリパラメータを表示します。',
++   fn: text => {
++     const u = new URL(text.trim());
++     const lines = [
++       `プロトコル: ${u.protocol}`,
++       `ホスト: ${u.hostname}`,
++       `ポート: ${u.port || '（既定）'}`,
++       `パス: ${u.pathname}`,
++       `クエリ: ${u.search || '（なし）'}`,
++       `フラグメント: ${u.hash || '（なし）'}`,
++     ];
++     for (const [k, v] of u.searchParams) {
++       lines.push(`  パラメータ ${k} = ${v}`);
++     }
++     return lines.join('\n');
++   }},
++  {id: 'query-to-json', cat: 'data', name: 'クエリ文字列を JSON に変換',
++   kind: 'io', desc: 'a=1&b=2 のような文字列を JSON にします。',
++   fn: text => {
++     const q = text.trim().replace(/^\?/, '');
++     const obj = {};
++     for (const [k, v] of new URLSearchParams(q)) {
++       if (k in obj) {
++         obj[k] = Array.isArray(obj[k]) ? [...obj[k], v] : [obj[k], v];
++       } else {
++         obj[k] = v;
++       }
++     }
++     return JSON.stringify(obj, null, 2);
++   }},
++  {id: 'text-diff', cat: 'data', name: 'テキストの差分', kind: 'custom',
++   desc: '2つのテキストを行単位で比較します（- が左、+ が右のみ）。',
++   render: body => {
++     const wrap = h('div', 'fields');
++     const taA = h('textarea');
++     const taB = h('textarea');
++     const colA = h('div');
++     colA.appendChild(h('label', null, 'テキスト A'));
++     colA.appendChild(taA);
++     const colB = h('div');
++     colB.appendChild(h('label', null, 'テキスト B'));
++     colB.appendChild(taB);
++     wrap.appendChild(colA);
++     wrap.appendChild(colB);
++     body.appendChild(wrap);
++     const btn = h('button', 'action', '比較する');
++     body.appendChild(btn);
++     const out = h('div', 'result');
++     body.appendChild(out);
++     btn.addEventListener('click', () => {
++       out.textContent = diffLines(taA.value, taB.value);
++     });
++   }},
++
++  /* ---------------- ハッシュ・セキュリティ ---------------- */
++  {id: 'md5', cat: 'hash', name: 'MD5 ハッシュ', kind: 'io',
++   desc: 'テキストの MD5 を計算します（純 JavaScript 実装）。',
++   fn: text => md5Hex(utf8Bytes(text))},
++  {id: 'sha1', cat: 'hash', name: 'SHA-1 ハッシュ', kind: 'io',
++   desc: 'テキストの SHA-1 を計算します。',
++   fn: text => shaHex('SHA-1', utf8Bytes(text))},
++  {id: 'sha256', cat: 'hash', name: 'SHA-256 ハッシュ', kind: 'io',
++   desc: 'テキストの SHA-256 を計算します。',
++   fn: text => shaHex('SHA-256', utf8Bytes(text))},
++  {id: 'sha512', cat: 'hash', name: 'SHA-512 ハッシュ', kind: 'io',
++   desc: 'テキストの SHA-512 を計算します。',
++   fn: text => shaHex('SHA-512', utf8Bytes(text))},
++  {id: 'file-hash', cat: 'hash', name: 'ファイルのハッシュ', kind: 'custom',
++   desc: '選んだファイルのハッシュを計算します（ファイルは外部に送信されません）。',
++   render: body => {
++     const sel = h('select');
++     for (const a of ['SHA-256', 'SHA-1', 'SHA-512', 'MD5']) {
++       const o = h('option', null, a);
++       o.value = a;
++       sel.appendChild(o);
++     }
++     body.appendChild(h('label', null, 'アルゴリズム'));
++     body.appendChild(sel);
++     const file = h('input');
++     file.type = 'file';
++     body.appendChild(h('label', null, 'ファイル'));
++     body.appendChild(file);
++     const out = h('div', 'result');
++     body.appendChild(out);
++     file.addEventListener('change', async () => {
++       if (!file.files.length) {
++         return;
++       }
++       const buf = new Uint8Array(await file.files[0].arrayBuffer());
++       out.textContent = sel.value === 'MD5' ?
++           md5Hex(buf) : await shaHex(sel.value, buf);
++     });
++   }},
++  {id: 'password-gen', cat: 'hash', name: 'パスワード生成', kind: 'form',
++   desc: '暗号論的に安全な乱数でパスワードを生成します。',
++   fields: [
++     {k: 'len', label: '長さ', type: 'number', def: '16'},
++     {k: 'count', label: '個数', type: 'number', def: '5'},
++     {k: 'lower', label: '小文字 (a-z)', type: 'check', def: true},
++     {k: 'upper', label: '大文字 (A-Z)', type: 'check', def: true},
++     {k: 'digits', label: '数字 (0-9)', type: 'check', def: true},
++     {k: 'symbols', label: '記号', type: 'check'},
++   ],
++   button: '生成する',
++   fn: v => {
++     let chars = '';
++     if (v.lower) chars += 'abcdefghijkmnopqrstuvwxyz';
++     if (v.upper) chars += 'ABCDEFGHJKLMNPQRSTUVWXYZ';
++     if (v.digits) chars += '23456789';
++     if (v.symbols) chars += '!@#$%^&*()-_=+[]{}<>?';
++     if (!chars) {
++       throw new Error('文字の種類を1つ以上選んでください。');
++     }
++     const len = Math.min(256, Math.max(1, +v.len || 16));
++     const count = Math.min(100, Math.max(1, +v.count || 1));
++     const rnd = new Uint32Array(len);
++     const out = [];
++     for (let n = 0; n < count; n++) {
++       crypto.getRandomValues(rnd);
++       out.push([...rnd].map(x => chars[x % chars.length]).join(''));
++     }
++     return out.join('\n');
++   }},
++  {id: 'password-strength', cat: 'hash', name: 'パスワード強度チェック',
++   kind: 'form',
++   desc: '長さと文字の種類などから強さの目安を表示します（簡易判定）。',
++   fields: [
++     {k: 'pw', label: 'パスワード', type: 'password'},
++   ],
++   fn: v => {
++     const pw = v.pw || '';
++     if (!pw) {
++       return 'パスワードを入力してください。';
++     }
++     let score = 0;
++     const rows = [];
++     rows.push(['長さ', `${[...pw].length} 文字`]);
++     score += Math.min(40, [...pw].length * 3);
++     const kinds = [/[a-z]/, /[A-Z]/, /[0-9]/, /[^a-zA-Z0-9]/]
++         .filter(re => re.test(pw)).length;
++     rows.push(['文字の種類', `${kinds} 種類`]);
++     score += kinds * 12;
++     if (/(.)\1\1/.test(pw)) {
++       rows.push(['注意', '同じ文字の繰り返しがあります']);
++       score -= 10;
++     }
++     if (/^(password|123456|qwerty|letmein)/i.test(pw)) {
++       rows.push(['注意', 'よく使われるパターンです']);
++       score -= 20;
++     }
++     score = Math.max(0, Math.min(100, score));
++     const label = score >= 80 ? '強い' : score >= 60 ? 'やや強い' :
++         score >= 40 ? '普通' : score >= 20 ? '弱い' : 'とても弱い';
++     rows.unshift(['スコア', `${score} / 100`]);
++     rows.push(['評価', label]);
++     return rows;
++   }},
++  {id: 'luhn-check', cat: 'hash', name: 'クレジットカード番号チェック',
++   kind: 'form',
++   desc: 'Luhn アルゴリズムで番号の妥当性を確認します（番号は外部に送信されません）。',
++   fields: [
++     {k: 'num', label: 'カード番号', type: 'text'},
++   ],
++   fn: v => {
++     const digits = (v.num || '').replace(/[\s-]/g, '');
++     if (!/^\d{12,19}$/.test(digits)) {
++       return '12〜19桁の数字を入力してください。';
++     }
++     let sum = 0;
++     let alt = false;
++     for (let i = digits.length - 1; i >= 0; i--) {
++       let d = +digits[i];
++       if (alt) {
++         d *= 2;
++         if (d > 9) {
++           d -= 9;
++         }
++       }
++       sum += d;
++       alt = !alt;
++     }
++     const brand = /^4/.test(digits) ? 'Visa' :
++         /^(5[1-5]|2[2-7])/.test(digits) ? 'Mastercard' :
++         /^3[47]/.test(digits) ? 'American Express' :
++         /^35/.test(digits) ? 'JCB' :
++         /^3(0[0-5]|[68])/.test(digits) ? 'Diners Club' :
++         /^6/.test(digits) ? 'Discover' : '不明';
++     return [
++       ['桁数', `${digits.length} 桁`],
++       ['Luhn チェック', sum % 10 === 0 ? '有効な番号形式です' :
++           'チェックディジットが一致しません'],
++       ['カード種別の推定', brand],
++     ];
++   }},
++
++  /* ---------------- 生成 ---------------- */
++  {id: 'uuid', cat: 'gen', name: 'UUID 生成', kind: 'form',
++   desc: 'UUID (v4) を1つ生成します。',
++   fields: [],
++   button: '生成する',
++   fn: () => crypto.randomUUID()},
++  {id: 'uuid-bulk', cat: 'gen', name: 'UUID 一括生成', kind: 'form',
++   desc: 'UUID (v4) をまとめて生成します。',
++   fields: [
++     {k: 'count', label: '個数', type: 'number', def: '10'},
++   ],
++   button: '生成する',
++   fn: v => {
++     const n = Math.min(1000, Math.max(1, +v.count || 1));
++     return Array.from({length: n}, () => crypto.randomUUID())
++         .join('\n');
++   }},
++  {id: 'random-string', cat: 'gen', name: 'ランダム文字列生成',
++   kind: 'form', desc: '指定した文字種でランダムな文字列を作ります。',
++   fields: [
++     {k: 'len', label: '長さ', type: 'number', def: '32'},
++     {k: 'lower', label: '小文字', type: 'check', def: true},
++     {k: 'upper', label: '大文字', type: 'check', def: true},
++     {k: 'digits', label: '数字', type: 'check', def: true},
++     {k: 'symbols', label: '記号', type: 'check'},
++   ],
++   button: '生成する',
++   fn: v => {
++     let chars = '';
++     if (v.lower) chars += 'abcdefghijklmnopqrstuvwxyz';
++     if (v.upper) chars += 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
++     if (v.digits) chars += '0123456789';
++     if (v.symbols) chars += '!@#$%^&*()-_=+[]{}<>?';
++     if (!chars) {
++       throw new Error('文字の種類を1つ以上選んでください。');
++     }
++     const len = Math.min(4096, Math.max(1, +v.len || 32));
++     const rnd = new Uint32Array(len);
++     crypto.getRandomValues(rnd);
++     return [...rnd].map(x => chars[x % chars.length]).join('');
++   }},
++  {id: 'random-number', cat: 'gen', name: 'ランダム数値生成', kind: 'form',
++   desc: '範囲を指定してランダムな整数を生成します。',
++   fields: [
++     {k: 'min', label: '最小値', type: 'number', def: '1'},
++     {k: 'max', label: '最大値', type: 'number', def: '100'},
++     {k: 'count', label: '個数', type: 'number', def: '10'},
++   ],
++   button: '生成する',
++   fn: v => {
++     const min = Math.ceil(+v.min || 0);
++     const max = Math.floor(+v.max || 0);
++     if (max < min) {
++       throw new Error('最大値は最小値以上にしてください。');
++     }
++     const n = Math.min(1000, Math.max(1, +v.count || 1));
++     const out = [];
++     const range = max - min + 1;
++     const rnd = new Uint32Array(n);
++     crypto.getRandomValues(rnd);
++     for (let i = 0; i < n; i++) {
++       out.push(String(min + (rnd[i] % range)));
++     }
++     return out.join('\n');
++   }},
++  {id: 'list-lottery', cat: 'gen', name: 'リストから抽選', kind: 'form',
++   desc: '1行に1項目ずつ書いたリストからランダムに選びます。',
++   fields: [
++     {k: 'text', label: '候補（1行に1つ）', type: 'textarea'},
++     {k: 'count', label: '選ぶ数', type: 'number', def: '1'},
++   ],
++   button: '抽選する',
++   fn: v => {
++     const items = splitLines(v.text).filter(l => l.trim() !== '');
++     if (!items.length) {
++       throw new Error('候補を入力してください。');
++     }
++     const n = Math.min(items.length, Math.max(1, +v.count || 1));
++     const pool = [...items];
++     const out = [];
++     for (let i = 0; i < n; i++) {
++       const j = Math.floor(Math.random() * pool.length);
++       out.push(pool.splice(j, 1)[0]);
++     }
++     return out.join('\n');
++   }},
++  {id: 'dice', cat: 'gen', name: 'サイコロ', kind: 'form',
++   desc: 'サイコロを振ります。',
++   fields: [
++     {k: 'count', label: '個数', type: 'number', def: '2'},
++     {k: 'faces', label: '面の数', type: 'number', def: '6'},
++   ],
++   button: '振る',
++   fn: v => {
++     const n = Math.min(100, Math.max(1, +v.count || 1));
++     const faces = Math.max(2, +v.faces || 6);
++     const rnd = new Uint32Array(n);
++     crypto.getRandomValues(rnd);
++     const rolls = [...rnd].map(x => (x % faces) + 1);
++     return [
++       ['出目', rolls.join(', ')],
++       ['合計', fmtNum(rolls.reduce((a, b) => a + b, 0))],
++     ];
++   }},
++
++  /* ---------------- 数値・単位 ---------------- */
++  {id: 'base-convert', cat: 'num', name: '進数変換', kind: 'form',
++   desc: '2進数・8進数・10進数・16進数の間で変換します（大きな数にも対応）。',
++   fields: [
++     {k: 'value', label: '値', type: 'text'},
++     {k: 'from', label: '変換元の進数', type: 'select',
++      options: [['2', '2進数'], ['8', '8進数'], ['10', '10進数'],
++                ['16', '16進数']], def: '10'},
++   ],
++   fn: v => {
++     const s = (v.value || '').trim().replace(/^0x/i, '');
++     if (!s) {
++       return '値を入力してください。';
++     }
++     const digits = {2: /^[01]+$/, 8: /^[0-7]+$/, 10: /^\d+$/,
++                     16: /^[0-9a-fA-F]+$/}[v.from];
++     if (!digits.test(s)) {
++       throw new Error(`${v.from}進数として解釈できません。`);
++     }
++     const n = BigInt(v.from === '10' ? s :
++         v.from === '16' ? '0x' + s :
++         v.from === '8' ? '0o' + s : '0b' + s);
++     return [
++       ['2進数', n.toString(2)],
++       ['8進数', n.toString(8)],
++       ['10進数', n.toString(10)],
++       ['16進数', n.toString(16)],
++     ];
++   }},
++  {id: 'num-to-roman', cat: 'num', name: 'ローマ数字に変換', kind: 'form',
++   desc: '1〜3999 の整数をローマ数字に変換します。',
++   fields: [
++     {k: 'value', label: '数値', type: 'number', def: '2026'},
++   ],
++   fn: v => {
++     let n = Math.floor(+v.value || 0);
++     if (n < 1 || n > 3999) {
++       throw new Error('1〜3999 の整数を入力してください。');
++     }
++     const table = [[1000, 'M'], [900, 'CM'], [500, 'D'], [400, 'CD'],
++                    [100, 'C'], [90, 'XC'], [50, 'L'], [40, 'XL'],
++                    [10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I']];
++     let out = '';
++     for (const [val, sym] of table) {
++       while (n >= val) {
++         out += sym;
++         n -= val;
++       }
++     }
++     return [['ローマ数字', out]];
++   }},
++  {id: 'roman-to-num', cat: 'num', name: 'ローマ数字から変換', kind: 'form',
++   desc: 'ローマ数字を整数に変換します。',
++   fields: [
++     {k: 'value', label: 'ローマ数字', type: 'text'},
++   ],
++   fn: v => {
++     const s = (v.value || '').trim().toUpperCase();
++     if (!/^(M{0,3})(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})$/
++         .test(s) || !s) {
++       throw new Error('ローマ数字として解釈できません。');
++     }
++     const vals = {I: 1, V: 5, X: 10, L: 50, C: 100, D: 500, M: 1000};
++     let total = 0;
++     for (let i = 0; i < s.length; i++) {
++       const cur = vals[s[i]];
++       const next = i + 1 < s.length ? vals[s[i + 1]] : 0;
++       total += cur < next ? -cur : cur;
++     }
++     return [['数値', fmtNum(total)]];
++   }},
++  {id: 'bytes-convert', cat: 'num', name: 'バイト単位変換', kind: 'form',
++   desc: 'B / KB / MB / GB / TB と KiB 系の間で変換します。',
++   fields: [
++     {k: 'value', label: '値', type: 'number', def: '1024'},
++     {k: 'unit', label: '単位', type: 'select',
++      options: [['B', 'B'], ['KB', 'KB (10^3)'], ['MB', 'MB (10^6)'],
++                ['GB', 'GB (10^9)'], ['TB', 'TB (10^12)'],
++                ['KiB', 'KiB (2^10)'], ['MiB', 'MiB (2^20)'],
++                ['GiB', 'GiB (2^30)'], ['TiB', 'TiB (2^40)']],
++      def: 'B'},
++   ],
++   fn: v => convertUnit(+v.value || 0, v.unit, BYTE_UNITS)},
++  {id: 'length-convert', cat: 'num', name: '長さの単位変換', kind: 'form',
++   desc: 'mm / cm / m / km / インチ / フィート / ヤード / マイルを変換します。',
++   fields: [
++     {k: 'value', label: '値', type: 'number', def: '1'},
++     {k: 'unit', label: '単位', type: 'select',
++      options: [['mm', 'mm'], ['cm', 'cm'], ['m', 'm'], ['km', 'km'],
++                ['in', 'インチ'], ['ft', 'フィート'], ['yd', 'ヤード'],
++                ['mi', 'マイル'], ['nmi', '海里']], def: 'm'},
++   ],
++   fn: v => convertUnit(+v.value || 0, v.unit, LENGTH_UNITS)},
++  {id: 'weight-convert', cat: 'num', name: '重さの単位変換', kind: 'form',
++   desc: 'mg / g / kg / t / オンス / ポンドを変換します。',
++   fields: [
++     {k: 'value', label: '値', type: 'number', def: '1'},
++     {k: 'unit', label: '単位', type: 'select',
++      options: [['mg', 'mg'], ['g', 'g'], ['kg', 'kg'], ['t', 't'],
++                ['oz', 'オンス'], ['lb', 'ポンド']], def: 'kg'},
++   ],
++   fn: v => convertUnit(+v.value || 0, v.unit, WEIGHT_UNITS)},
++  {id: 'temp-convert', cat: 'num', name: '温度の単位変換', kind: 'form',
++   desc: '摂氏 / 華氏 / ケルビンを変換します。',
++   fields: [
++     {k: 'value', label: '値', type: 'number', def: '25'},
++     {k: 'unit', label: '単位', type: 'select',
++      options: [['C', '摂氏 (℃)'], ['F', '華氏 (℉)'], ['K', 'ケルビン (K)']],
++      def: 'C'},
++   ],
++   fn: v => {
++     const x = +v.value || 0;
++     const c = v.unit === 'C' ? x : v.unit === 'F' ? (x - 32) * 5 / 9 :
++         x - 273.15;
++     return [
++       ['摂氏', `${roundNice(c)} ℃`],
++       ['華氏', `${roundNice(c * 9 / 5 + 32)} ℉`],
++       ['ケルビン', `${roundNice(c + 273.15)} K`],
++     ];
++   }},
++  {id: 'time-units-convert', cat: 'num', name: '時間の単位変換',
++   kind: 'form', desc: '秒 / 分 / 時 / 日 / 週 / 年を変換します。',
++   fields: [
++     {k: 'value', label: '値', type: 'number', def: '3600'},
++     {k: 'unit', label: '単位', type: 'select',
++      options: [['s', '秒'], ['min', '分'], ['h', '時間'], ['d', '日'],
++                ['w', '週'], ['y', '年（365日）']], def: 's'},
++   ],
++   fn: v => convertUnit(+v.value || 0, v.unit, TIME_UNITS)},
++  {id: 'tax-included', cat: 'num', name: '税込価格の計算', kind: 'form',
++   desc: '税抜価格から税込価格を計算します。',
++   fields: [
++     {k: 'price', label: '税抜価格（円）', type: 'number', def: '1000'},
++     {k: 'rate', label: '税率', type: 'select',
++      options: [['10', '10%'], ['8', '8%（軽減税率）']], def: '10'},
++   ],
++   fn: v => {
++     const price = +v.price || 0;
++     const tax = Math.floor(price * (+v.rate) / 100);
++     return [
++       ['消費税額', `${fmtNum(tax)} 円`],
++       ['税込価格', `${fmtNum(price + tax)} 円`],
++     ];
++   }},
++  {id: 'tax-excluded', cat: 'num', name: '税抜価格の計算', kind: 'form',
++   desc: '税込価格から税抜価格を計算します。',
++   fields: [
++     {k: 'price', label: '税込価格（円）', type: 'number', def: '1100'},
++     {k: 'rate', label: '税率', type: 'select',
++      options: [['10', '10%'], ['8', '8%（軽減税率）']], def: '10'},
++   ],
++   fn: v => {
++     const price = +v.price || 0;
++     const base = Math.floor(price / (1 + (+v.rate) / 100));
++     return [
++       ['税抜価格', `${fmtNum(base)} 円`],
++       ['消費税額', `${fmtNum(price - base)} 円`],
++     ];
++   }},
++  {id: 'split-bill', cat: 'num', name: '割り勘計算', kind: 'form',
++   desc: '合計金額を人数で割ります。',
++   fields: [
++     {k: 'total', label: '合計金額（円）', type: 'number', def: '10000'},
++     {k: 'people', label: '人数', type: 'number', def: '3'},
++     {k: 'round', label: '1人あたりの端数処理', type: 'select',
++      options: [['up100', '100円単位で切り上げ'], ['up10', '10円単位で切り上げ'],
++                ['up1', '1円単位で切り上げ'], ['none', '端数そのまま']],
++      def: 'up100'},
++   ],
++   fn: v => {
++     const total = +v.total || 0;
++     const people = Math.max(1, Math.floor(+v.people || 1));
++     const unit = {up100: 100, up10: 10, up1: 1, none: 0}[v.round];
++     const raw = total / people;
++     const per = unit ? Math.ceil(raw / unit) * unit : raw;
++     const collected = per * people;
++     return [
++       ['1人あたり', `${fmtNum(per)} 円`],
++       ['集まる金額', `${fmtNum(collected)} 円`],
++       ['過不足', collected >= total ?
++           `+${fmtNum(collected - total)} 円（余り）` :
++           `${fmtNum(collected - total)} 円（不足）`],
++     ];
++   }},
++  {id: 'percent-calc', cat: 'num', name: '割合の計算', kind: 'form',
++   desc: '2つの数値の割合関係をまとめて計算します。',
++   fields: [
++     {k: 'a', label: '数値 A', type: 'number', def: '80'},
++     {k: 'b', label: '数値 B', type: 'number', def: '200'},
++   ],
++   fn: v => {
++     const a = +v.a || 0;
++     const b = +v.b || 0;
++     if (!b) {
++       throw new Error('数値 B は 0 以外にしてください。');
++     }
++     return [
++       ['A は B の', `${roundNice(a / b * 100)} %`],
++       ['B は A の', a ? `${roundNice(b / a * 100)} %` : '—'],
++       ['B の A % は', `${roundNice(b * a / 100)}`],
++       ['A から B への増減率', a ?
++           `${roundNice((b - a) / a * 100)} %` : '—'],
++     ];
++   }},
++  {id: 'bmi', cat: 'num', name: 'BMI 計算', kind: 'form',
++   desc: '身長と体重から BMI と適正体重を計算します。',
++   fields: [
++     {k: 'height', label: '身長（cm）', type: 'number', def: '170'},
++     {k: 'weight', label: '体重（kg）', type: 'number', def: '65'},
++   ],
++   fn: v => {
++     const heightM = (+v.height || 0) / 100;
++     const weight = +v.weight || 0;
++     if (!heightM) {
++       throw new Error('身長を入力してください。');
++     }
++     const bmi = weight / (heightM * heightM);
++     const judge = bmi < 18.5 ? '低体重' : bmi < 25 ? '普通体重' :
++         bmi < 30 ? '肥満（1度）' : bmi < 35 ? '肥満（2度）' :
++         bmi < 40 ? '肥満（3度）' : '肥満（4度）';
++     return [
++       ['BMI', roundNice(bmi)],
++       ['判定', judge],
++       ['適正体重（BMI 22）', `${roundNice(22 * heightM * heightM)} kg`],
++     ];
++   }},
++  {id: 'age-calc', cat: 'num', name: '年齢計算', kind: 'form',
++   desc: '生年月日から満年齢などを計算します。',
++   fields: [
++     {k: 'birth', label: '生年月日', type: 'date'},
++     {k: 'base', label: '基準日', type: 'date'},
++   ],
++   fn: v => {
++     if (!v.birth) {
++       return '生年月日を入力してください。';
++     }
++     const birth = new Date(v.birth + 'T00:00:00');
++     const base = v.base ? new Date(v.base + 'T00:00:00') : new Date();
++     let age = base.getFullYear() - birth.getFullYear();
++     const md = (base.getMonth() - birth.getMonth()) ||
++         (base.getDate() - birth.getDate());
++     if (md < 0) {
++       age--;
++     }
++     const days = Math.floor((base - birth) / 86400000);
++     const next = new Date(base.getFullYear(), birth.getMonth(),
++         birth.getDate());
++     if (next < base) {
++       next.setFullYear(next.getFullYear() + 1);
++     }
++     return [
++       ['満年齢', `${age} 歳`],
++       ['生まれてからの日数', `${fmtNum(days)} 日`],
++       ['次の誕生日まで', `${fmtNum(Math.round((next - base) / 86400000))} 日`],
++     ];
++   }},
++  {id: 'date-diff', cat: 'num', name: '日数計算', kind: 'form',
++   desc: '2つの日付の差を計算します。',
++   fields: [
++     {k: 'from', label: '開始日', type: 'date'},
++     {k: 'to', label: '終了日', type: 'date'},
++   ],
++   fn: v => {
++     if (!v.from || !v.to) {
++       return '両方の日付を入力してください。';
++     }
++     const a = new Date(v.from + 'T00:00:00');
++     const b = new Date(v.to + 'T00:00:00');
++     const days = Math.round((b - a) / 86400000);
++     return [
++       ['日数差', `${fmtNum(days)} 日`],
++       ['週換算', `${roundNice(days / 7)} 週`],
++       ['時間換算', `${fmtNum(days * 24)} 時間`],
++     ];
++   }},
++  {id: 'loan-calc', cat: 'num', name: 'ローン計算', kind: 'form',
++   desc: '元利均等返済の月々の返済額を計算します。',
++   fields: [
++     {k: 'principal', label: '借入額（円）', type: 'number',
++      def: '3000000'},
++     {k: 'rate', label: '年利（%）', type: 'number', def: '1.5'},
++     {k: 'years', label: '返済期間（年）', type: 'number', def: '5'},
++   ],
++   fn: v => {
++     const p = +v.principal || 0;
++     const r = (+v.rate || 0) / 100 / 12;
++     const n = Math.max(1, Math.round((+v.years || 0) * 12));
++     const monthly = r === 0 ? p / n :
++         p * r * Math.pow(1 + r, n) / (Math.pow(1 + r, n) - 1);
++     const total = monthly * n;
++     return [
++       ['月々の返済額', `${fmtNum(Math.round(monthly))} 円`],
++       ['総返済額', `${fmtNum(Math.round(total))} 円`],
++       ['利息の合計', `${fmtNum(Math.round(total - p))} 円`],
++       ['返済回数', `${n} 回`],
++     ];
++   }},
++  {id: 'compound', cat: 'num', name: '複利・積立計算', kind: 'form',
++   desc: '元金と毎月の積立が複利でいくらになるか計算します。',
++   fields: [
++     {k: 'principal', label: '元金（円）', type: 'number', def: '100000'},
++     {k: 'monthly', label: '毎月の積立（円）', type: 'number',
++      def: '10000'},
++     {k: 'rate', label: '年利（%）', type: 'number', def: '3'},
++     {k: 'years', label: '期間（年）', type: 'number', def: '10'},
++   ],
++   fn: v => {
++     const p = +v.principal || 0;
++     const m = +v.monthly || 0;
++     const r = (+v.rate || 0) / 100 / 12;
++     const n = Math.max(0, Math.round((+v.years || 0) * 12));
++     const fvP = p * Math.pow(1 + r, n);
++     const fvM = r === 0 ? m * n :
++         m * (Math.pow(1 + r, n) - 1) / r;
++     const paid = p + m * n;
++     return [
++       ['将来の金額', `${fmtNum(Math.round(fvP + fvM))} 円`],
++       ['払い込んだ金額', `${fmtNum(Math.round(paid))} 円`],
++       ['増えた金額（運用益）', `${fmtNum(Math.round(fvP + fvM - paid))} 円`],
++     ];
++   }},
++
++  /* ---------------- 時刻 ---------------- */
++  {id: 'unix-to-date', cat: 'time', name: 'Unix 時刻を日時に変換',
++   kind: 'form',
++   desc: 'Unix タイムスタンプ（秒・ミリ秒は自動判定）を日時に変換します。',
++   fields: [
++     {k: 'ts', label: 'Unix タイムスタンプ', type: 'text'},
++   ],
++   fn: v => {
++     const s = (v.ts || '').trim();
++     if (!/^-?\d+$/.test(s)) {
++       return '整数のタイムスタンプを入力してください。';
++     }
++     const n = Number(s);
++     const ms = Math.abs(n) >= 1e12 ? n : n * 1000;
++     const d = new Date(ms);
++     if (isNaN(d)) {
++       throw new Error('日時に変換できません。');
++     }
++     return [
++       ['ローカル日時', d.toLocaleString('ja-JP')],
++       ['UTC', d.toUTCString()],
++       ['ISO 8601', d.toISOString()],
++       ['ミリ秒', fmtNum(ms)],
++     ];
++   }},
++  {id: 'date-to-unix', cat: 'time', name: '日時を Unix 時刻に変換',
++   kind: 'form', desc: '日時を Unix タイムスタンプに変換します。',
++   fields: [
++     {k: 'dt', label: '日時', type: 'datetime-local'},
++   ],
++   fn: v => {
++     if (!v.dt) {
++       return '日時を入力してください。';
++     }
++     const d = new Date(v.dt);
++     return [
++       ['秒', fmtNum(Math.floor(d.getTime() / 1000))],
++       ['ミリ秒', fmtNum(d.getTime())],
++     ];
++   }},
++  {id: 'world-clock', cat: 'time', name: '世界時計', kind: 'custom',
++   desc: '世界の主な都市の現在時刻を表示します。',
++   render: body => {
++     const cities = [
++       ['東京', 'Asia/Tokyo'], ['北京', 'Asia/Shanghai'],
++       ['ロンドン', 'Europe/London'], ['パリ', 'Europe/Paris'],
++       ['ニューヨーク', 'America/New_York'],
++       ['ロサンゼルス', 'America/Los_Angeles'],
++       ['シドニー', 'Australia/Sydney'],
++       ['ホノルル', 'Pacific/Honolulu'],
++     ];
++     const grid = h('div', 'clock-grid');
++     const spans = cities.map(([name, tz]) => {
++       const row = h('div', 'row');
++       row.appendChild(h('span', null, name));
++       const span = h('span', 'big-clock');
++       row.appendChild(span);
++       grid.appendChild(row);
++       return [span, tz];
++     });
++     body.appendChild(grid);
++     const update = () => {
++       const now = new Date();
++       for (const [span, tz] of spans) {
++         span.textContent = now.toLocaleString('ja-JP',
++             {timeZone: tz, hour12: false});
++       }
++     };
++     update();
++     setInterval(update, 1000);
++   }},
++  {id: 'stopwatch', cat: 'time', name: 'ストップウォッチ', kind: 'custom',
++   desc: 'ラップタイムも測れるストップウォッチです。',
++   render: body => {
++     const disp = h('div', 'big-clock', '00:00.00');
++     body.appendChild(disp);
++     const row = h('div');
++     const btnStart = h('button', 'action', 'スタート');
++     const btnLap = h('button', 'plain', 'ラップ');
++     const btnReset = h('button', 'plain', 'リセット');
++     row.appendChild(btnStart);
++     row.appendChild(btnLap);
++     row.appendChild(btnReset);
++     body.appendChild(row);
++     const laps = h('div', 'result');
++     body.appendChild(laps);
++     let startAt = 0;
++     let elapsed = 0;
++     let timer = null;
++     const fmt = ms => {
++       const m = Math.floor(ms / 60000);
++       const s = Math.floor(ms / 1000) % 60;
++       const cs = Math.floor(ms / 10) % 100;
++       return `${String(m).padStart(2, '0')}:` +
++           `${String(s).padStart(2, '0')}.` +
++           `${String(cs).padStart(2, '0')}`;
++     };
++     const tick = () => {
++       disp.textContent = fmt(elapsed + (Date.now() - startAt));
++     };
++     btnStart.addEventListener('click', () => {
++       if (timer) {
++         elapsed += Date.now() - startAt;
++         clearInterval(timer);
++         timer = null;
++         btnStart.textContent = '再開';
++       } else {
++         startAt = Date.now();
++         timer = setInterval(tick, 31);
++         btnStart.textContent = 'ストップ';
++       }
++     });
++     btnLap.addEventListener('click', () => {
++       const now = elapsed + (timer ? Date.now() - startAt : 0);
++       laps.textContent +=
++           (laps.textContent ? '\n' : '') + `ラップ: ${fmt(now)}`;
++     });
++     btnReset.addEventListener('click', () => {
++       if (timer) {
++         clearInterval(timer);
++         timer = null;
++       }
++       elapsed = 0;
++       disp.textContent = '00:00.00';
++       laps.textContent = '';
++       btnStart.textContent = 'スタート';
++     });
++   }},
++  {id: 'timer', cat: 'time', name: 'タイマー', kind: 'custom',
++   desc: '指定した時間が経つと音と表示で知らせます。',
++   render: body => {
++     const wrap = h('div', 'fields');
++     const minInput = h('input');
++     minInput.type = 'number';
++     minInput.value = '3';
++     minInput.min = '0';
++     const secInput = h('input');
++     secInput.type = 'number';
++     secInput.value = '0';
++     secInput.min = '0';
++     secInput.max = '59';
++     const colM = h('div');
++     colM.appendChild(h('label', null, '分'));
++     colM.appendChild(minInput);
++     const colS = h('div');
++     colS.appendChild(h('label', null, '秒'));
++     colS.appendChild(secInput);
++     wrap.appendChild(colM);
++     wrap.appendChild(colS);
++     body.appendChild(wrap);
++     const disp = h('div', 'big-clock', '03:00');
++     body.appendChild(disp);
++     const btn = h('button', 'action', 'スタート');
++     body.appendChild(btn);
++     let timer = null;
++     let remain = 0;
++     const fmt = s => `${String(Math.floor(s / 60)).padStart(2, '0')}:` +
++         `${String(s % 60).padStart(2, '0')}`;
++     const beep = () => {
++       try {
++         const ctx = new AudioContext();
++         const osc = ctx.createOscillator();
++         const gain = ctx.createGain();
++         osc.connect(gain);
++         gain.connect(ctx.destination);
++         osc.frequency.value = 880;
++         gain.gain.value = 0.15;
++         osc.start();
++         osc.stop(ctx.currentTime + 0.6);
++       } catch (e) {
++         // Audio may be unavailable; the display still signals.
++       }
++     };
++     btn.addEventListener('click', () => {
++       if (timer) {
++         clearInterval(timer);
++         timer = null;
++         btn.textContent = 'スタート';
++         return;
++       }
++       remain = (Math.max(0, +minInput.value || 0) * 60) +
++           Math.min(59, Math.max(0, +secInput.value || 0));
++       if (remain <= 0) {
++         return;
++       }
++       disp.textContent = fmt(remain);
++       btn.textContent = '停止';
++       timer = setInterval(() => {
++         remain--;
++         disp.textContent = fmt(Math.max(0, remain));
++         if (remain <= 0) {
++           clearInterval(timer);
++           timer = null;
++           btn.textContent = 'スタート';
++           disp.textContent = '時間になりました';
++           beep();
++         }
++       }, 1000);
++     });
++   }},
++  {id: 'wareki', cat: 'time', name: '和暦変換', kind: 'custom',
++   desc: '西暦と和暦（明治・大正・昭和・平成・令和）を相互に変換します。',
++   render: body => {
++     const sel = h('select');
++     for (const [val, label] of [['to-wareki', '西暦 → 和暦'],
++                                 ['from-wareki', '和暦 → 西暦']]) {
++       const o = h('option', null, label);
++       o.value = val;
++       sel.appendChild(o);
++     }
++     body.appendChild(h('label', null, '変換の向き'));
++     body.appendChild(sel);
++     const dateInput = h('input');
++     dateInput.type = 'date';
++     dateInput.value = '2026-01-01';
++     body.appendChild(h('label', null, '日付（西暦 → 和暦）'));
++     body.appendChild(dateInput);
++     const eraSel = h('select');
++     for (const name of Object.keys(ERAS)) {
++       eraSel.appendChild(h('option', null, name));
++     }
++     const yearInput = h('input');
++     yearInput.type = 'number';
++     yearInput.value = '8';
++     const colEra = h('div');
++     colEra.appendChild(h('label', null, '元号'));
++     colEra.appendChild(eraSel);
++     const colYear = h('div');
++     colYear.appendChild(h('label', null, '年（和暦 → 西暦）'));
++     colYear.appendChild(yearInput);
++     const wrap = h('div', 'fields');
++     wrap.appendChild(colEra);
++     wrap.appendChild(colYear);
++     body.appendChild(wrap);
++     const out = h('div', 'result');
++     body.appendChild(out);
++     const update = () => {
++       if (sel.value === 'to-wareki') {
++         if (!dateInput.value) {
++           out.textContent = '';
++           return;
++         }
++         const d = new Date(dateInput.value + 'T00:00:00');
++         out.textContent = toWareki(d) || '対応範囲外の日付です。';
++       } else {
++         const y = ERAS[eraSel.value].start.getFullYear() +
++             (Math.max(1, +yearInput.value || 1)) - 1;
++         out.textContent = `${eraSel.value}${yearInput.value}年 = ` +
++             `西暦 ${y} 年`;
++       }
++     };
++     for (const el of [sel, dateInput, eraSel, yearInput]) {
++       el.addEventListener('input', update);
++       el.addEventListener('change', update);
++     }
++     update();
++   }},
++  {id: 'eto', cat: 'time', name: '干支計算', kind: 'form',
++   desc: '西暦からその年の干支を表示します。',
++   fields: [
++     {k: 'year', label: '西暦（年）', type: 'number', def: '2026'},
++   ],
++   fn: v => {
++     const y = Math.floor(+v.year || 0);
++     const animals = ['申', '酉', '戌', '亥', '子', '丑',
++                      '寅', '卯', '辰', '巳', '午', '未'];
++     const readings = {'申': 'さる', '酉': 'とり', '戌': 'いぬ',
++                       '亥': 'い', '子': 'ね', '丑': 'うし',
++                       '寅': 'とら', '卯': 'う', '辰': 'たつ',
++                       '巳': 'み', '午': 'うま', '未': 'ひつじ'};
++     const a = animals[((y % 12) + 12) % 12];
++     return [
++       ['干支', `${a}（${readings[a]}）`],
++       ['西暦', `${y} 年`],
++     ];
++   }},
++
++  /* ---------------- 色 ---------------- */
++  {id: 'color-convert', cat: 'color', name: '色コード変換', kind: 'custom',
++   desc: 'HEX / RGB / HSL の表記を相互に変換します。',
++   render: body => {
++     const input = h('input');
++     input.type = 'text';
++     input.value = '#1a73e8';
++     input.placeholder = '#1a73e8 / rgb(26,115,232) / hsl(214,82%,51%)';
++     body.appendChild(h('label', null, '色（HEX・RGB・HSL のいずれか）'));
++     body.appendChild(input);
++     const swatch = h('span', 'swatch');
++     body.appendChild(swatch);
++     const out = h('div', 'result-rows');
++     body.appendChild(out);
++     const err = h('div', 'error');
++     body.appendChild(err);
++     const update = () => {
++       try {
++         const c = parseColor(input.value);
++         swatch.style.background = rgbCss(c);
++         out.replaceChildren(...rowsEls([
++           ['HEX', rgbToHex(c)],
++           ['RGB', `rgb(${c.r}, ${c.g}, ${c.b})`],
++           ['HSL', rgbToHslText(c)],
++           ['HSV', rgbToHsvText(c)],
++         ]));
++         err.textContent = '';
++       } catch (e) {
++         err.textContent = e.message;
++         out.replaceChildren();
++       }
++     };
++     input.addEventListener('input', update);
++     update();
++   }},
++  {id: 'color-picker-tool', cat: 'color', name: 'カラーピッカー',
++   kind: 'custom',
++   desc: '色を選んで、各形式の値と CSS の書き方を確認します。',
++   render: body => {
++     const input = h('input');
++     input.type = 'color';
++     input.value = '#00a8de';
++     body.appendChild(input);
++     const swatch = h('span', 'swatch');
++     body.appendChild(swatch);
++     const out = h('div', 'result-rows');
++     body.appendChild(out);
++     const update = () => {
++       const c = parseColor(input.value);
++       swatch.style.background = input.value;
++       out.replaceChildren(...rowsEls([
++         ['HEX', input.value],
++         ['RGB', `rgb(${c.r}, ${c.g}, ${c.b})`],
++         ['HSL', rgbToHslText(c)],
++         ['CSS（背景）', `background-color: ${input.value};`],
++         ['CSS（文字）', `color: ${input.value};`],
++       ]));
++     };
++     input.addEventListener('input', update);
++     update();
++   }},
++  {id: 'random-color', cat: 'color', name: 'ランダムカラー', kind: 'custom',
++   desc: 'ランダムな色を生成します。',
++   render: body => {
++     const btn = h('button', 'action', '生成する');
++     body.appendChild(btn);
++     const swatch = h('span', 'swatch');
++     body.appendChild(swatch);
++     const out = h('div', 'result-rows');
++     body.appendChild(out);
++     const update = () => {
++       const rnd = new Uint8Array(3);
++       crypto.getRandomValues(rnd);
++       const c = {r: rnd[0], g: rnd[1], b: rnd[2]};
++       swatch.style.background = rgbCss(c);
++       out.replaceChildren(...rowsEls([
++         ['HEX', rgbToHex(c)],
++         ['RGB', `rgb(${c.r}, ${c.g}, ${c.b})`],
++         ['HSL', rgbToHslText(c)],
++       ]));
++     };
++     btn.addEventListener('click', update);
++     update();
++   }},
++  {id: 'contrast-ratio', cat: 'color', name: 'コントラスト比',
++   kind: 'form',
++   desc: '2色のコントラスト比と WCAG の達成度を表示します。',
++   fields: [
++     {k: 'fg', label: '文字色', type: 'color', def: '#202124'},
++     {k: 'bg', label: '背景色', type: 'color', def: '#ffffff'},
++   ],
++   fn: v => {
++     const ratio = contrastRatio(parseColor(v.fg), parseColor(v.bg));
++     return [
++       ['コントラスト比', `${roundNice(ratio)} : 1`],
++       ['WCAG AA（通常文字 4.5:1）', ratio >= 4.5 ? '達成' : '未達成'],
++       ['WCAG AA（大きな文字 3:1）', ratio >= 3 ? '達成' : '未達成'],
++       ['WCAG AAA（通常文字 7:1）', ratio >= 7 ? '達成' : '未達成'],
++     ];
++   }},
++  {id: 'gradient-css', cat: 'color', name: 'グラデーション CSS 生成',
++   kind: 'custom',
++   desc: '2色の線形グラデーションの CSS を生成します。',
++   render: body => {
++     const wrap = h('div', 'fields');
++     const c1 = h('input');
++     c1.type = 'color';
++     c1.value = '#1a73e8';
++     const c2 = h('input');
++     c2.type = 'color';
++     c2.value = '#00a8de';
++     const dir = h('select');
++     for (const [val, label] of [['to right', '右へ'], ['to left', '左へ'],
++                                 ['to bottom', '下へ'], ['to top', '上へ'],
++                                 ['to bottom right', '右下へ'],
++                                 ['45deg', '45度']]) {
++       const o = h('option', null, label);
++       o.value = val;
++       dir.appendChild(o);
++     }
++     const col1 = h('div');
++     col1.appendChild(h('label', null, '色 1'));
++     col1.appendChild(c1);
++     const col2 = h('div');
++     col2.appendChild(h('label', null, '色 2'));
++     col2.appendChild(c2);
++     const col3 = h('div');
++     col3.appendChild(h('label', null, '方向'));
++     col3.appendChild(dir);
++     wrap.appendChild(col1);
++     wrap.appendChild(col2);
++     wrap.appendChild(col3);
++     body.appendChild(wrap);
++     const swatch = h('span', 'swatch');
++     body.appendChild(swatch);
++     const out = h('div', 'result');
++     body.appendChild(out);
++     const update = () => {
++       const css = `linear-gradient(${dir.value}, ${c1.value}, ` +
++           `${c2.value})`;
++       swatch.style.background = css;
++       out.textContent = `background: ${css};`;
++     };
++     for (const el of [c1, c2, dir]) {
++       el.addEventListener('input', update);
++     }
++     update();
++   }},
++  {id: 'shade-variations', cat: 'color', name: '明暗バリエーション',
++   kind: 'form',
++   desc: '基準色を明るく・暗くした色の一覧を表示します。',
++   fields: [
++     {k: 'base', label: '基準色', type: 'color', def: '#1a73e8'},
++   ],
++   fn: v => {
++     const c = parseColor(v.base);
++     const rows = [];
++     for (const p of [50, 40, 30, 20, 10]) {
++       rows.push([`明るく ${p}%`, rgbToHex(mixColor(c,
++           {r: 255, g: 255, b: 255}, p / 100))]);
++     }
++     rows.push(['基準色', rgbToHex(c)]);
++     for (const p of [10, 20, 30, 40, 50]) {
++       rows.push([`暗く ${p}%`, rgbToHex(mixColor(c,
++           {r: 0, g: 0, b: 0}, p / 100))]);
++     }
++     return rows;
++   }},
++  {id: 'color-mix', cat: 'color', name: '色の混合', kind: 'form',
++   desc: '2色を任意の割合で混ぜます。',
++   fields: [
++     {k: 'c1', label: '色 1', type: 'color', def: '#ff0000'},
++     {k: 'c2', label: '色 2', type: 'color', def: '#0000ff'},
++     {k: 'ratio', label: '色 2 の割合（%）', type: 'number', def: '50'},
++   ],
++   fn: v => {
++     const ratio = Math.min(100, Math.max(0, +v.ratio || 0)) / 100;
++     const mixed = mixColor(parseColor(v.c1), parseColor(v.c2), ratio);
++     return [
++       ['混合結果（HEX）', rgbToHex(mixed)],
++       ['混合結果（RGB）', `rgb(${mixed.r}, ${mixed.g}, ${mixed.b})`],
++       ['混合結果（HSL）', rgbToHslText(mixed)],
++     ];
++   }},
++
++  /* ---------------- Web・参照 ---------------- */
++  {id: 'ua-display', cat: 'web', name: '自分のブラウザ情報', kind: 'custom',
++   desc: 'このブラウザ・環境の情報を表示します。',
++   render: body => {
++     const rows = [
++       ['User Agent', navigator.userAgent],
++       ['プラットフォーム', navigator.platform || '不明'],
++       ['言語', navigator.language],
++       ['CPU コア数（論理）', String(navigator.hardwareConcurrency || '不明')],
++       ['デバイスメモリ（概算）',
++        navigator.deviceMemory ? `約 ${navigator.deviceMemory} GB` : '不明'],
++       ['画面', `${screen.width} × ${screen.height}`],
++       ['表示領域', `${innerWidth} × ${innerHeight}`],
++       ['色深度', `${screen.colorDepth} bit`],
++       ['タッチ対応', navigator.maxTouchPoints > 0 ?
++           `対応（${navigator.maxTouchPoints} 点）` : '非対応'],
++       ['Cookie 有効', navigator.cookieEnabled ? 'はい' : 'いいえ'],
++       ['オンライン状態', navigator.onLine ? 'オンライン' : 'オフライン'],
++     ];
++     const wrap = h('div', 'result-rows');
++     wrap.replaceChildren(...rowsEls(rows));
++     body.appendChild(wrap);
++   }},
++  {id: 'ua-parse', cat: 'web', name: 'User Agent 解析', kind: 'io',
++   desc: 'User Agent 文字列からブラウザと OS を推定します（簡易判定）。',
++   fn: text => {
++     const ua = text.trim();
++     if (!ua) {
++       return '';
++     }
++     const pick = (list) => {
++       for (const [re, name] of list) {
++         const m = ua.match(re);
++         if (m) {
++           return `${name} ${m[1] || ''}`.trim();
++         }
++       }
++       return '不明';
++     };
++     const browser = pick([
++       [/Edg\/([\d.]+)/, 'Microsoft Edge'],
++       [/OPR\/([\d.]+)/, 'Opera'],
++       [/Chrome\/([\d.]+)/, 'Chrome / Chromium'],
++       [/Firefox\/([\d.]+)/, 'Firefox'],
++       [/Version\/([\d.]+).*Safari/, 'Safari'],
++     ]);
++     const os = pick([
++       [/Windows NT ([\d.]+)/, 'Windows NT'],
++       [/Mac OS X ([\d_]+)/, 'macOS'],
++       [/Android ([\d.]+)/, 'Android'],
++       [/iPhone OS ([\d_]+)/, 'iOS'],
++       [/Linux/, 'Linux'],
++     ]);
++     return `ブラウザ: ${browser}\nOS: ${os}\nモバイル: ` +
++         (/Mobile|Android|iPhone|iPad/.test(ua) ? 'はい' : 'いいえ');
++   }},
++  {id: 'http-status', cat: 'web', name: 'HTTP ステータスコード表',
++   kind: 'table', desc: '代表的な HTTP ステータスコードの一覧です。',
++   head: ['コード', '名称', '意味'],
++   rows: [
++     ['100', 'Continue', 'リクエストの続きを送信してよい'],
++     ['101', 'Switching Protocols', 'プロトコルの切り替え'],
++     ['200', 'OK', '成功'],
++     ['201', 'Created', 'リソースを作成した'],
++     ['204', 'No Content', '内容なし（成功）'],
++     ['301', 'Moved Permanently', '恒久的に移転した'],
++     ['302', 'Found', '一時的に移転した'],
++     ['304', 'Not Modified', '変更なし（キャッシュ利用）'],
++     ['307', 'Temporary Redirect', '一時的なリダイレクト（メソッド維持）'],
++     ['308', 'Permanent Redirect', '恒久的なリダイレクト（メソッド維持）'],
++     ['400', 'Bad Request', 'リクエストが不正'],
++     ['401', 'Unauthorized', '認証が必要'],
++     ['403', 'Forbidden', 'アクセス禁止'],
++     ['404', 'Not Found', 'リソースが見つからない'],
++     ['405', 'Method Not Allowed', 'メソッドが許可されていない'],
++     ['408', 'Request Timeout', 'リクエストのタイムアウト'],
++     ['409', 'Conflict', '競合が発生した'],
++     ['410', 'Gone', '恒久的に削除された'],
++     ['413', 'Content Too Large', 'リクエストが大きすぎる'],
++     ['415', 'Unsupported Media Type', '対応していないメディア形式'],
++     ['418', 'I\'m a teapot', 'ティーポット（ジョークとして定義）'],
++     ['422', 'Unprocessable Content', '文法は正しいが処理できない'],
++     ['429', 'Too Many Requests', 'リクエストが多すぎる（レート制限）'],
++     ['500', 'Internal Server Error', 'サーバー内部エラー'],
++     ['501', 'Not Implemented', '実装されていない'],
++     ['502', 'Bad Gateway', 'ゲートウェイのエラー'],
++     ['503', 'Service Unavailable', 'サービス利用不可（過負荷・保守中）'],
++     ['504', 'Gateway Timeout', 'ゲートウェイのタイムアウト'],
++   ]},
++  {id: 'mime-table', cat: 'web', name: 'MIME タイプ表', kind: 'table',
++   desc: '拡張子と MIME タイプの対応表です。',
++   head: ['拡張子', 'MIME タイプ'],
++   rows: [
++     ['.html', 'text/html'],
++     ['.css', 'text/css'],
++     ['.js', 'text/javascript'],
++     ['.json', 'application/json'],
++     ['.xml', 'application/xml'],
++     ['.txt', 'text/plain'],
++     ['.csv', 'text/csv'],
++     ['.md', 'text/markdown'],
++     ['.png', 'image/png'],
++     ['.jpg', 'image/jpeg'],
++     ['.gif', 'image/gif'],
++     ['.svg', 'image/svg+xml'],
++     ['.webp', 'image/webp'],
++     ['.avif', 'image/avif'],
++     ['.ico', 'image/x-icon'],
++     ['.mp3', 'audio/mpeg'],
++     ['.wav', 'audio/wav'],
++     ['.ogg', 'audio/ogg'],
++     ['.mp4', 'video/mp4'],
++     ['.webm', 'video/webm'],
++     ['.pdf', 'application/pdf'],
++     ['.zip', 'application/zip'],
++     ['.gz', 'application/gzip'],
++     ['.tar', 'application/x-tar'],
++     ['.7z', 'application/x-7z-compressed'],
++     ['.woff', 'font/woff'],
++     ['.woff2', 'font/woff2'],
++     ['.ttf', 'font/ttf'],
++     ['.wasm', 'application/wasm'],
++     ['.bin', 'application/octet-stream'],
++   ]},
++  {id: 'special-chars', cat: 'web', name: '特殊文字・HTML 実体表',
++   kind: 'table', desc: 'よく使う記号と HTML 実体参照の一覧です。',
++   head: ['文字', 'HTML 実体', '名前'],
++   rows: [
++     ['&', '&amp;', 'アンパサンド'],
++     ['<', '&lt;', '小なり'],
++     ['>', '&gt;', '大なり'],
++     ['"', '&quot;', 'ダブルクォート'],
++     ['©', '&copy;', '著作権'],
++     ['®', '&reg;', '登録商標'],
++     ['™', '&trade;', '商標'],
++     ['¥', '&yen;', '円記号'],
++     ['€', '&euro;', 'ユーロ'],
++     ['£', '&pound;', 'ポンド'],
++     ['§', '&sect;', '節記号'],
++     ['¶', '&para;', '段落記号'],
++     ['†', '&dagger;', 'ダガー（短剣符）'],
++     ['‡', '&Dagger;', 'ダブルダガー'],
++     ['…', '&hellip;', '三点リーダ'],
++     ['—', '&mdash;', 'ダッシュ（全角）'],
++     ['–', '&ndash;', 'ダッシュ（半角）'],
++     ['←', '&larr;', '左矢印'],
++     ['↑', '&uarr;', '上矢印'],
++     ['→', '&rarr;', '右矢印'],
++     ['↓', '&darr;', '下矢印'],
++     ['↔', '&harr;', '左右矢印'],
++     ['⇒', '&rArr;', '右二重矢印'],
++     ['∀', '&forall;', 'すべての'],
++     ['∃', '&exist;', '存在する'],
++     ['∈', '&isin;', '要素である'],
++     ['∑', '&sum;', '総和'],
++     ['∏', '&prod;', '総乗'],
++     ['√', '&radic;', '平方根'],
++     ['∞', '&infin;', '無限大'],
++     ['±', '&plusmn;', 'プラスマイナス'],
++     ['×', '&times;', '乗算'],
++     ['÷', '&divide;', '除算'],
++     ['≠', '&ne;', '等しくない'],
++     ['≤', '&le;', '以下'],
++     ['≥', '&ge;', '以上'],
++     ['≒', '&#8794;', 'ほぼ等しい'],
++     ['°', '&deg;', '度'],
++     ['′', '&prime;', '分（角度）'],
++     ['″', '&Prime;', '秒（角度）'],
++     ['α', '&alpha;', 'アルファ'],
++     ['β', '&beta;', 'ベータ'],
++     ['π', '&pi;', 'パイ'],
++     ['Ω', '&Omega;', 'オメガ'],
++     ['★', '&#9733;', '黒星'],
++     ['☆', '&#9734;', '白星'],
++     ['●', '&#9679;', '黒丸'],
++     ['○', '&#9675;', '白丸'],
++     ['■', '&#9632;', '黒四角'],
++     ['□', '&#9633;', '白四角'],
++     ['▲', '&#9650;', '黒三角'],
++     ['△', '&#9651;', '白三角'],
++   ]},
++  {id: 'html-colors', cat: 'web', name: 'HTML カラー名表', kind: 'table',
++   desc: 'CSS で使える色名とカラーコードの一覧です。',
++   head: ['色名', 'HEX', 'RGB'],
++   rows: [
++     ['black', '#000000', 'rgb(0, 0, 0)'],
++     ['white', '#ffffff', 'rgb(255, 255, 255)'],
++     ['red', '#ff0000', 'rgb(255, 0, 0)'],
++     ['lime', '#00ff00', 'rgb(0, 255, 0)'],
++     ['blue', '#0000ff', 'rgb(0, 0, 255)'],
++     ['yellow', '#ffff00', 'rgb(255, 255, 0)'],
++     ['cyan', '#00ffff', 'rgb(0, 255, 255)'],
++     ['magenta', '#ff00ff', 'rgb(255, 0, 255)'],
++     ['silver', '#c0c0c0', 'rgb(192, 192, 192)'],
++     ['gray', '#808080', 'rgb(128, 128, 128)'],
++     ['maroon', '#800000', 'rgb(128, 0, 0)'],
++     ['olive', '#808000', 'rgb(128, 128, 0)'],
++     ['green', '#008000', 'rgb(0, 128, 0)'],
++     ['purple', '#800080', 'rgb(128, 0, 128)'],
++     ['teal', '#008080', 'rgb(0, 128, 128)'],
++     ['navy', '#000080', 'rgb(0, 0, 128)'],
++     ['orange', '#ffa500', 'rgb(255, 165, 0)'],
++     ['pink', '#ffc0cb', 'rgb(255, 192, 203)'],
++     ['brown', '#a52a2a', 'rgb(165, 42, 42)'],
++     ['gold', '#ffd700', 'rgb(255, 215, 0)'],
++     ['violet', '#ee82ee', 'rgb(238, 130, 238)'],
++     ['indigo', '#4b0082', 'rgb(75, 0, 130)'],
++     ['coral', '#ff7f50', 'rgb(255, 127, 80)'],
++     ['salmon', '#fa8072', 'rgb(250, 128, 114)'],
++     ['khaki', '#f0e68c', 'rgb(240, 230, 140)'],
++     ['beige', '#f5f5dc', 'rgb(245, 245, 220)'],
++     ['ivory', '#fffff0', 'rgb(255, 255, 240)'],
++     ['lavender', '#e6e6fa', 'rgb(230, 230, 250)'],
++     ['skyblue', '#87ceeb', 'rgb(135, 206, 235)'],
++     ['steelblue', '#4682b4', 'rgb(70, 130, 180)'],
++     ['seagreen', '#2e8b57', 'rgb(46, 139, 87)'],
++     ['forestgreen', '#228b22', 'rgb(34, 139, 34)'],
++     ['limegreen', '#32cd32', 'rgb(50, 205, 50)'],
++     ['crimson', '#dc143c', 'rgb(220, 20, 60)'],
++     ['tomato', '#ff6347', 'rgb(255, 99, 71)'],
++     ['orangered', '#ff4500', 'rgb(255, 69, 0)'],
++     ['darkorange', '#ff8c00', 'rgb(255, 140, 0)'],
++     ['chocolate', '#d2691e', 'rgb(210, 105, 30)'],
++     ['slategray', '#708090', 'rgb(112, 128, 144)'],
++     ['dimgray', '#696969', 'rgb(105, 105, 105)'],
++   ]},
++  {id: 'keyboard-codes', cat: 'web', name: 'キーボードコード表',
++   kind: 'table',
++   desc: 'KeyboardEvent の code / key / keyCode の対応表です。',
++   head: ['キー', 'code', 'key', 'keyCode'],
++   rows: [
++     ['Enter', 'Enter', 'Enter', '13'],
++     ['Esc', 'Escape', 'Escape', '27'],
++     ['Space', 'Space', ' ', '32'],
++     ['Tab', 'Tab', 'Tab', '9'],
++     ['Backspace', 'Backspace', 'Backspace', '8'],
++     ['Delete', 'Delete', 'Delete', '46'],
++     ['←', 'ArrowLeft', 'ArrowLeft', '37'],
++     ['↑', 'ArrowUp', 'ArrowUp', '38'],
++     ['→', 'ArrowRight', 'ArrowRight', '39'],
++     ['↓', 'ArrowDown', 'ArrowDown', '40'],
++     ['Home', 'Home', 'Home', '36'],
++     ['End', 'End', 'End', '35'],
++     ['PageUp', 'PageUp', 'PageUp', '33'],
++     ['PageDown', 'PageDown', 'PageDown', '34'],
++     ['Shift', 'ShiftLeft / ShiftRight', 'Shift', '16'],
++     ['Ctrl', 'ControlLeft / ControlRight', 'Control', '17'],
++     ['Alt', 'AltLeft / AltRight', 'Alt', '18'],
++     ['Meta（Windows / ⌘）', 'MetaLeft / MetaRight', 'Meta', '91'],
++     ['CapsLock', 'CapsLock', 'CapsLock', '20'],
++     ['A〜Z', 'KeyA〜KeyZ', 'a〜z', '65〜90'],
++     ['0〜9（上段）', 'Digit0〜Digit9', '0〜9', '48〜57'],
++     ['0〜9（テンキー）', 'Numpad0〜Numpad9', '0〜9', '96〜105'],
++     ['F1〜F12', 'F1〜F12', 'F1〜F12', '112〜123'],
++     ['半角/全角', 'Backquote', 'Zenkaku / Hankaku', '243'],
++     ['変換', 'Convert', 'Convert', '28'],
++     ['無変換', 'NonConvert', 'NonConvert', '29'],
++     ['カタカナ/ひらがな', 'KanaMode', 'KanaMode', '21'],
++   ]},
++  {id: 'ascii-table', cat: 'web', name: 'ASCII 表', kind: 'custom',
++   desc: '印字可能な ASCII 文字（32〜126）の一覧です。',
++   render: body => {
++     const table = h('table', 'ref');
++     const thead = h('thead');
++     const htr = h('tr');
++     for (const label of ['10進', '16進', '文字']) {
++       htr.appendChild(h('th', null, label));
++     }
++     thead.appendChild(htr);
++     table.appendChild(thead);
++     const tbody = h('tbody');
++     for (let code = 32; code <= 126; code++) {
++       const tr = h('tr');
++       tr.appendChild(h('td', null, String(code)));
++       tr.appendChild(h('td', null,
++           '0x' + code.toString(16).toUpperCase()));
++       tr.appendChild(h('td', null,
++           code === 32 ? '（空白）' : String.fromCharCode(code)));
++       tbody.appendChild(tr);
++     }
++     table.appendChild(tbody);
++     body.appendChild(table);
++   }},
++  {id: 'regex-cheatsheet', cat: 'web', name: '正規表現チートシート',
++   kind: 'table', desc: 'よく使う正規表現のパターン集です。',
++   head: ['パターン', '意味'],
++   rows: [
++     ['.', '改行以外の任意の1文字'],
++     ['\\d', '数字（0-9）'],
++     ['\\D', '数字以外'],
++     ['\\w', '単語文字（英数字と _）'],
++     ['\\W', '単語文字以外'],
++     ['\\s', '空白文字'],
++     ['\\S', '空白以外'],
++     ['^', '行の先頭'],
++     ['$', '行の末尾'],
++     ['\\b', '単語の境界'],
++     ['a*', 'a の0回以上の繰り返し'],
++     ['a+', 'a の1回以上の繰り返し'],
++     ['a?', 'a の0回または1回'],
++     ['a{3}', 'a の3回'],
++     ['a{2,5}', 'a の2〜5回'],
++     ['[abc]', 'a, b, c のいずれか'],
++     ['[^abc]', 'a, b, c 以外'],
++     ['[a-z]', 'a〜z の範囲'],
++     ['(abc)', 'グループ（キャプチャ）'],
++     ['(?:abc)', 'グループ（キャプチャなし）'],
++     ['a|b', 'a または b'],
++     ['\\.', 'ドットそのもの（エスケープ）'],
++     ['(?=abc)', '先読み（直後に abc）'],
++     ['(?!abc)', '否定先読み（直後に abc でない）'],
++     ['(?<=abc)', '後読み（直前に abc）'],
++     ['(?<!abc)', '否定後読み（直前に abc でない）'],
++   ]},
++  {id: 'port-numbers', cat: 'web', name: 'ポート番号表', kind: 'table',
++   desc: '代表的なウェルノウンポートの一覧です。',
++   head: ['ポート', 'サービス', '説明'],
++   rows: [
++     ['20/21', 'FTP', 'ファイル転送'],
++     ['22', 'SSH', 'リモートログイン'],
++     ['23', 'Telnet', 'リモートログイン（平文）'],
++     ['25', 'SMTP', 'メール送信'],
++     ['53', 'DNS', '名前解決'],
++     ['67/68', 'DHCP', 'IP アドレスの自動割り当て'],
++     ['80', 'HTTP', 'Web'],
++     ['110', 'POP3', 'メール受信'],
++     ['143', 'IMAP', 'メール受信'],
++     ['443', 'HTTPS', '暗号化された Web'],
++     ['465', 'SMTPS', 'メール送信（SSL/TLS）'],
++     ['587', 'SMTP Submission', 'メール投稿'],
++     ['993', 'IMAPS', 'IMAP（SSL/TLS）'],
++     ['995', 'POP3S', 'POP3（SSL/TLS）'],
++     ['3306', 'MySQL', 'データベース'],
++     ['3389', 'RDP', 'Windows リモートデスクトップ'],
++     ['5432', 'PostgreSQL', 'データベース'],
++     ['5900', 'VNC', 'リモートデスクトップ'],
++     ['6379', 'Redis', 'キーバリューストア'],
++     ['8080', 'HTTP Alt', '代替 HTTP（開発用など）'],
++     ['8443', 'HTTPS Alt', '代替 HTTPS'],
++     ['27017', 'MongoDB', 'データベース'],
++   ]},
++];
++
++/* ------------------------------------------------------------------ */
++/* Data and helpers used by the tools above                            */
++/* ------------------------------------------------------------------ */
++
++const MORSE = {
++  'A': '.-', 'B': '-...', 'C': '-.-.', 'D': '-..', 'E': '.',
++  'F': '..-.', 'G': '--.', 'H': '....', 'I': '..', 'J': '.---',
++  'K': '-.-', 'L': '.-..', 'M': '--', 'N': '-.', 'O': '---',
++  'P': '.--.', 'Q': '--.-', 'R': '.-.', 'S': '...', 'T': '-',
++  'U': '..-', 'V': '...-', 'W': '.--', 'X': '-..-', 'Y': '-.--',
++  'Z': '--..', '1': '.----', '2': '..---', '3': '...--',
++  '4': '....-', '5': '.....', '6': '-....', '7': '--...',
++  '8': '---..', '9': '----.', '0': '-----', '.': '.-.-.-',
++  ',': '--..--', '?': '..--..', '\'': '.----.', '!': '-.-.--',
++  '/': '-..-.', '(': '-.--.', ')': '-.--.-', '&': '.-...',
++  ':': '---...', ';': '-.-.-.', '=': '-...-', '+': '.-.-.',
++  '-': '-....-', '_': '..--.-', '"': '.-..-.', '$': '...-..-',
++  '@': '.--.-.',
++};
++const MORSE_REV = {};
++for (const k of Object.keys(MORSE)) {
++  MORSE_REV[MORSE[k]] = k;
++}
++
++function parseCsv(text) {
++  const rows = [];
++  let row = [];
++  let field = '';
++  let quoted = false;
++  const s = text.replace(/\r\n?/g, '\n');
++  for (let i = 0; i < s.length; i++) {
++    const ch = s[i];
++    if (quoted) {
++      if (ch === '"') {
++        if (s[i + 1] === '"') {
++          field += '"';
++          i++;
++        } else {
++          quoted = false;
++        }
++      } else {
++        field += ch;
++      }
++    } else if (ch === '"') {
++      quoted = true;
++    } else if (ch === ',') {
++      row.push(field);
++      field = '';
++    } else if (ch === '\n') {
++      row.push(field);
++      rows.push(row);
++      row = [];
++      field = '';
++    } else {
++      field += ch;
++    }
++  }
++  if (field !== '' || row.length) {
++    row.push(field);
++    rows.push(row);
++  }
++  return rows;
++}
++
++function diffLines(aText, bText) {
++  const a = splitLines(aText);
++  const b = splitLines(bText);
++  if (a.length * b.length > 4000000) {
++    return 'テキストが大きすぎます（目安として各2000行程度まで）。';
++  }
++  const dp = [];
++  for (let i = 0; i <= a.length; i++) {
++    dp.push(new Uint32Array(b.length + 1));
++  }
++  for (let i = a.length - 1; i >= 0; i--) {
++    for (let j = b.length - 1; j >= 0; j--) {
++      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 :
++          Math.max(dp[i + 1][j], dp[i][j + 1]);
++    }
++  }
++  const out = [];
++  let added = 0;
++  let removed = 0;
++  let i = 0;
++  let j = 0;
++  while (i < a.length && j < b.length) {
++    if (a[i] === b[j]) {
++      out.push('  ' + a[i]);
++      i++;
++      j++;
++    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
++      out.push('- ' + a[i]);
++      i++;
++      removed++;
++    } else {
++      out.push('+ ' + b[j]);
++      j++;
++      added++;
++    }
++  }
++  while (i < a.length) {
++    out.push('- ' + a[i]);
++    i++;
++    removed++;
++  }
++  while (j < b.length) {
++    out.push('+ ' + b[j]);
++    j++;
++    added++;
++  }
++  return `追加 ${added} 行 / 削除 ${removed} 行\n` + out.join('\n');
++}
++
++function roundNice(n) {
++  if (!isFinite(n)) {
++    return '—';
++  }
++  return String(Math.round(n * 1e6) / 1e6);
++}
++
++const BYTE_UNITS = {
++  'B': {label: 'B', factor: 1},
++  'KB': {label: 'KB (10^3 B)', factor: 1e3},
++  'MB': {label: 'MB (10^6 B)', factor: 1e6},
++  'GB': {label: 'GB (10^9 B)', factor: 1e9},
++  'TB': {label: 'TB (10^12 B)', factor: 1e12},
++  'KiB': {label: 'KiB (2^10 B)', factor: 1024},
++  'MiB': {label: 'MiB (2^20 B)', factor: 1024 ** 2},
++  'GiB': {label: 'GiB (2^30 B)', factor: 1024 ** 3},
++  'TiB': {label: 'TiB (2^40 B)', factor: 1024 ** 4},
++};
++const LENGTH_UNITS = {
++  'mm': {label: 'mm', factor: 0.001},
++  'cm': {label: 'cm', factor: 0.01},
++  'm': {label: 'm', factor: 1},
++  'km': {label: 'km', factor: 1000},
++  'in': {label: 'インチ', factor: 0.0254},
++  'ft': {label: 'フィート', factor: 0.3048},
++  'yd': {label: 'ヤード', factor: 0.9144},
++  'mi': {label: 'マイル', factor: 1609.344},
++  'nmi': {label: '海里', factor: 1852},
++};
++const WEIGHT_UNITS = {
++  'mg': {label: 'mg', factor: 0.001},
++  'g': {label: 'g', factor: 1},
++  'kg': {label: 'kg', factor: 1000},
++  't': {label: 't', factor: 1e6},
++  'oz': {label: 'オンス', factor: 28.349523125},
++  'lb': {label: 'ポンド', factor: 453.59237},
++};
++const TIME_UNITS = {
++  's': {label: '秒', factor: 1},
++  'min': {label: '分', factor: 60},
++  'h': {label: '時間', factor: 3600},
++  'd': {label: '日', factor: 86400},
++  'w': {label: '週', factor: 604800},
++  'y': {label: '年（365日）', factor: 31536000},
++};
++
++function convertUnit(value, fromKey, units) {
++  const base = value * units[fromKey].factor;
++  return Object.keys(units).map(k => [
++    units[k].label, roundNice(base / units[k].factor)]);
++}
++
++/* Color helpers (colors are plain {r, g, b} objects, 0-255). */
++
++function parseColor(str) {
++  const s = (str || '').trim().toLowerCase();
++  let m = s.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/);
++  if (m) {
++    let hex = m[1];
++    if (hex.length === 3) {
++      hex = [...hex].map(c => c + c).join('');
++    }
++    return {
++      r: parseInt(hex.substr(0, 2), 16),
++      g: parseInt(hex.substr(2, 2), 16),
++      b: parseInt(hex.substr(4, 2), 16),
++    };
++  }
++  m = s.match(/^rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/);
++  if (m) {
++    return {r: +m[1], g: +m[2], b: +m[3]};
++  }
++  m = s.match(/^hsl\(\s*([\d.]+)\s*,\s*([\d.]+)%\s*,\s*([\d.]+)%\s*\)$/);
++  if (m) {
++    return hslToRgb(+m[1], +m[2] / 100, +m[3] / 100);
++  }
++  throw new Error('色として解釈できません（#rrggbb / rgb() / hsl() 形式で入力してください）。');
++}
++
++function hslToRgb(hDeg, s, l) {
++  const h = (((hDeg % 360) + 360) % 360) / 60;
++  const c = (1 - Math.abs(2 * l - 1)) * s;
++  const x = c * (1 - Math.abs((h % 2) - 1));
++  const m = l - c / 2;
++  let rgb;
++  if (h < 1) {
++    rgb = [c, x, 0];
++  } else if (h < 2) {
++    rgb = [x, c, 0];
++  } else if (h < 3) {
++    rgb = [0, c, x];
++  } else if (h < 4) {
++    rgb = [0, x, c];
++  } else if (h < 5) {
++    rgb = [x, 0, c];
++  } else {
++    rgb = [c, 0, x];
++  }
++  return {
++    r: Math.round((rgb[0] + m) * 255),
++    g: Math.round((rgb[1] + m) * 255),
++    b: Math.round((rgb[2] + m) * 255),
++  };
++}
++
++function rgbToHsl(c) {
++  const r = c.r / 255;
++  const g = c.g / 255;
++  const b = c.b / 255;
++  const max = Math.max(r, g, b);
++  const min = Math.min(r, g, b);
++  const l = (max + min) / 2;
++  if (max === min) {
++    return [0, 0, l];
++  }
++  const d = max - min;
++  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
++  let h;
++  if (max === r) {
++    h = ((g - b) / d + (g < b ? 6 : 0)) * 60;
++  } else if (max === g) {
++    h = ((b - r) / d + 2) * 60;
++  } else {
++    h = ((r - g) / d + 4) * 60;
++  }
++  return [h, s, l];
++}
++
++function rgbToHex(c) {
++  return '#' + [c.r, c.g, c.b]
++      .map(v => v.toString(16).padStart(2, '0')).join('');
++}
++
++function rgbCss(c) {
++  return `rgb(${c.r}, ${c.g}, ${c.b})`;
++}
++
++function rgbToHslText(c) {
++  const [hDeg, s, l] = rgbToHsl(c);
++  return `hsl(${Math.round(hDeg)}, ${Math.round(s * 100)}%, ` +
++      `${Math.round(l * 100)}%)`;
++}
++
++function rgbToHsvText(c) {
++  const r = c.r / 255;
++  const g = c.g / 255;
++  const b = c.b / 255;
++  const max = Math.max(r, g, b);
++  const min = Math.min(r, g, b);
++  const d = max - min;
++  let hDeg = 0;
++  if (d !== 0) {
++    if (max === r) {
++      hDeg = ((g - b) / d + (g < b ? 6 : 0)) * 60;
++    } else if (max === g) {
++      hDeg = ((b - r) / d + 2) * 60;
++    } else {
++      hDeg = ((r - g) / d + 4) * 60;
++    }
++  }
++  const s = max === 0 ? 0 : d / max;
++  return `hsv(${Math.round(hDeg)}, ${Math.round(s * 100)}%, ` +
++      `${Math.round(max * 100)}%)`;
++}
++
++function mixColor(c1, c2, t) {
++  return {
++    r: Math.round(c1.r + (c2.r - c1.r) * t),
++    g: Math.round(c1.g + (c2.g - c1.g) * t),
++    b: Math.round(c1.b + (c2.b - c1.b) * t),
++  };
++}
++
++function contrastRatio(c1, c2) {
++  const lum = c => {
++    const f = v => {
++      const s = v / 255;
++      return s <= 0.03928 ? s / 12.92 :
++          Math.pow((s + 0.055) / 1.055, 2.4);
++    };
++    return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b);
++  };
++  const l1 = lum(c1);
++  const l2 = lum(c2);
++  return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
++}
++
++/* Wareki (Japanese era) helpers. */
++
++const ERAS = {
++  '令和': {start: new Date(2019, 4, 1)},
++  '平成': {start: new Date(1989, 0, 8)},
++  '昭和': {start: new Date(1926, 11, 25)},
++  '大正': {start: new Date(1912, 6, 30)},
++  '明治': {start: new Date(1868, 0, 25)},
++};
++
++function toWareki(date) {
++  for (const name of Object.keys(ERAS)) {
++    const start = ERAS[name].start;
++    if (date >= start) {
++      const year = date.getFullYear() - start.getFullYear() + 1;
++      return `${name}${year === 1 ? '元' : year}年` +
++          `${date.getMonth() + 1}月${date.getDate()}日`;
++    }
++  }
++  return null;
++}
++
++function rowsEls(rows) {
++  return rows.map(([k, v]) => {
++    const row = h('div', 'row');
++    row.appendChild(h('span', 'k', k));
++    row.appendChild(h('span', 'v', String(v)));
++    return row;
++  });
++}
++
++/* ------------------------------------------------------------------ */
++/* Rendering                                                           */
++/* ------------------------------------------------------------------ */
++
++function makeOutput(body) {
++  const out = h('div');
++  body.appendChild(out);
++  const err = h('div', 'error');
++  body.appendChild(err);
++  let token = 0;
++  return {
++    show(value) {
++      const my = ++token;
++      const render = v => {
++        if (my !== token) {
++          return;
++        }
++        err.textContent = '';
++        if (typeof v === 'string') {
++          const div = h('div', 'result', v);
++          out.replaceChildren(div);
++        } else if (Array.isArray(v)) {
++          const wrap = h('div', 'result-rows');
++          wrap.replaceChildren(...rowsEls(v));
++          out.replaceChildren(wrap);
++        } else {
++          out.replaceChildren();
++        }
++      };
++      if (value && typeof value.then === 'function') {
++        value.then(render, e => {
++          if (my === token) {
++            err.textContent = String((e && e.message) || e);
++            out.replaceChildren();
++          }
++        });
++      } else {
++        render(value);
++      }
++    },
++    fail(e) {
++      token++;
++      err.textContent = String((e && e.message) || e);
++      out.replaceChildren();
++    },
++  };
++}
++
++function buildIo(tool, body) {
++  const opts = {};
++  function run() {
++    const my = ++token;
++    try {
++      const v = tool.fn(ta.value, opts);
++      if (v && typeof v.then === 'function') {
++        v.then(r => {
++          if (my === token) {
++            outTa.value = r;
++            err.textContent = '';
++          }
++        }, e => {
++          if (my === token) {
++            err.textContent = String((e && e.message) || e);
++          }
++        });
++      } else {
++        outTa.value = v;
++        err.textContent = '';
++      }
++    } catch (e) {
++      err.textContent = String((e && e.message) || e);
++    }
++  }
++  let token = 0;
++  if (tool.opts) {
++    const wrap = h('div', 'fields');
++    for (const opt of tool.opts) {
++      const col = h('div');
++      col.appendChild(h('label', null, opt.label));
++      let input;
++      if (opt.type === 'select') {
++        input = h('select');
++        for (const [val, label] of opt.options) {
++          const o = h('option', null, label);
++          o.value = val;
++          input.appendChild(o);
++        }
++        opts[opt.k] = input.value;
++      } else if (opt.type === 'check') {
++        input = h('input');
++        input.type = 'checkbox';
++        input.checked = !!opt.def;
++        opts[opt.k] = input.checked;
++      }
++      input.addEventListener('change', () => {
++        opts[opt.k] = opt.type === 'check' ? input.checked : input.value;
++        run();
++      });
++      col.appendChild(input);
++      wrap.appendChild(col);
++    }
++    body.appendChild(wrap);
++  }
++  body.appendChild(h('label', null, '入力'));
++  const ta = h('textarea');
++  ta.spellcheck = false;
++  body.appendChild(ta);
++  body.appendChild(h('label', null, '出力'));
++  const outTa = h('textarea');
++  outTa.readOnly = true;
++  outTa.spellcheck = false;
++  body.appendChild(outTa);
++  const err = h('div', 'error');
++  body.appendChild(err);
++  ta.addEventListener('input', run);
++  run();
++}
++
++function buildStat(tool, body) {
++  const ta = h('textarea');
++  ta.spellcheck = false;
++  body.appendChild(h('label', null, '入力'));
++  body.appendChild(ta);
++  const wrap = h('div', 'result-rows');
++  body.appendChild(wrap);
++  const err = h('div', 'error');
++  body.appendChild(err);
++  const run = () => {
++    try {
++      wrap.replaceChildren(...rowsEls(tool.fn(ta.value)));
++      err.textContent = '';
++    } catch (e) {
++      err.textContent = String((e && e.message) || e);
++    }
++  };
++  ta.addEventListener('input', run);
++  run();
++}
++
++function fieldControl(field) {
++  let input;
++  if (field.type === 'textarea') {
++    input = h('textarea');
++    input.spellcheck = false;
++  } else if (field.type === 'select') {
++    input = h('select');
++    for (const [val, label] of field.options) {
++      const o = h('option', null, label);
++      o.value = val;
++      input.appendChild(o);
++    }
++  } else {
++    input = h('input');
++    input.type = field.type || 'text';
++    if (field.type === 'number') {
++      if (field.min != null) {
++        input.min = field.min;
++      }
++      if (field.max != null) {
++        input.max = field.max;
++      }
++    }
++    input.spellcheck = false;
++  }
++  if (field.type === 'check') {
++    input.checked = !!field.def;
++  } else if (field.def != null) {
++    input.value = field.def;
++  }
++  return input;
++}
++
++function fieldValue(field, input) {
++  return field.type === 'check' ? input.checked : input.value;
++}
++
++function buildForm(tool, body) {
++  const output = makeOutput(body);
++  const wrap = h('div', 'fields');
++  body.insertBefore(wrap, body.firstChild);
++  const inputs = tool.fields.map(field => {
++    const col = h('div');
++    col.appendChild(h('label', null, field.label));
++    const input = fieldControl(field);
++    col.appendChild(input);
++    wrap.appendChild(col);
++    return [field, input];
++  });
++  const collect = () => {
++    const values = {};
++    for (const [field, input] of inputs) {
++      values[field.k] = fieldValue(field, input);
++    }
++    return values;
++  };
++  const run = () => {
++    try {
++      output.show(tool.fn(collect()));
++    } catch (e) {
++      output.fail(e);
++    }
++  };
++  if (tool.button) {
++    const btn = h('button', 'action', tool.button);
++    btn.addEventListener('click', run);
++    body.insertBefore(btn, body.lastChild.previousSibling);
++  } else {
++    for (const [, input] of inputs) {
++      input.addEventListener('input', run);
++      input.addEventListener('change', run);
++    }
++  }
++  run();
++}
++
++function buildTable(tool, body) {
++  const table = h('table', 'ref');
++  const thead = h('thead');
++  const htr = h('tr');
++  for (const label of tool.head) {
++    htr.appendChild(h('th', null, label));
++  }
++  thead.appendChild(htr);
++  table.appendChild(thead);
++  const tbody = h('tbody');
++  for (const row of tool.rows) {
++    const tr = h('tr');
++    for (const cell of row) {
++      tr.appendChild(h('td', null, cell));
++    }
++    tbody.appendChild(tr);
++  }
++  table.appendChild(tbody);
++  body.appendChild(table);
++}
++
++const BUILDERS = {
++  io: buildIo,
++  stat: buildStat,
++  form: buildForm,
++  table: buildTable,
++  custom: (tool, body) => tool.render(body),
++};
++
++function renderTool(tool) {
++  const card = h('section', 'tool');
++  card.appendChild(h('h3', null, tool.name));
++  if (tool.desc) {
++    card.appendChild(h('p', 'desc', tool.desc));
++  }
++  const body = h('div', 'body');
++  card.appendChild(body);
++  BUILDERS[tool.kind](tool, body);
++  return card;
++}
++
++function init() {
++  const main = document.getElementById('tools');
++  const nav = document.getElementById('cats');
++  const search = document.getElementById('search');
++  const count = document.getElementById('count');
++  const groups = new Map();
++  for (const cat of CATS) {
++    const section = h('section', 'cat-group');
++    section.appendChild(h('h2', null, cat.label));
++    main.appendChild(section);
++    groups.set(cat.key, section);
++  }
++  const cards = TOOLS.map(tool => {
++    const card = renderTool(tool);
++    groups.get(tool.cat).appendChild(card);
++    return {tool, card};
++  });
++  let activeCat = 'all';
++  const navButtons = new Map();
++  const addNav = (key, label) => {
++    const btn = h('button', null, label);
++    btn.addEventListener('click', () => {
++      activeCat = key;
++      for (const [k, b] of navButtons) {
++        b.classList.toggle('active', k === key);
++      }
++      applyFilter();
++    });
++    nav.appendChild(btn);
++    navButtons.set(key, btn);
++  };
++  addNav('all', 'すべて');
++  for (const cat of CATS) {
++    addNav(cat.key, cat.label);
++  }
++  navButtons.get('all').classList.add('active');
++  function applyFilter() {
++    const q = search.value.trim().toLowerCase();
++    let visible = 0;
++    for (const {tool, card} of cards) {
++      const text = (tool.name + ' ' + (tool.desc || '')).toLowerCase();
++      const ok = (activeCat === 'all' || tool.cat === activeCat) &&
++          (!q || text.includes(q));
++      card.classList.toggle('hidden', !ok);
++      if (ok) {
++        visible++;
++      }
++    }
++    for (const section of groups.values()) {
++      const any = [...section.children].some(
++          c => c.tagName === 'SECTION' && !c.classList.contains('hidden'));
++      section.classList.toggle('hidden', !any);
++    }
++    count.textContent = `${visible} / ${TOOLS.length} 個のツール`;
++  }
++  search.addEventListener('input', applyFilter);
++  applyFilter();
++}
++
++init();
+diff --git a/chrome/browser/ui/webui/BUILD.gn b/chrome/browser/ui/webui/BUILD.gn
+index b321f8e..040f257 100644
+--- a/chrome/browser/ui/webui/BUILD.gn
++++ b/chrome/browser/ui/webui/BUILD.gn
+@@ -81,6 +81,7 @@ source_set("configs") {
+     "//chrome/browser/ui/webui/interstitials",
+     "//chrome/browser/ui/webui/local_state",
+     "//chrome/browser/ui/webui/location_internals",
++    "//chrome/browser/ui/webui/lumo_tools",
+     "//chrome/browser/ui/webui/management",
+     "//chrome/browser/ui/webui/media",
+     "//chrome/browser/ui/webui/metrics_internals",
+diff --git a/chrome/browser/ui/webui/chrome_web_ui_configs.cc b/chrome/browser/ui/webui/chrome_web_ui_configs.cc
+index 2f0dab4..5fa2d95 100644
+--- a/chrome/browser/ui/webui/chrome_web_ui_configs.cc
++++ b/chrome/browser/ui/webui/chrome_web_ui_configs.cc
+@@ -38,6 +38,7 @@
+ #include "chrome/browser/ui/webui/interstitials/interstitial_ui.h"
+ #include "chrome/browser/ui/webui/local_state/local_state_ui.h"
+ #include "chrome/browser/ui/webui/location_internals/location_internals_ui.h"
++#include "chrome/browser/ui/webui/lumo_tools/lumo_tools_ui.h"
+ #include "chrome/browser/ui/webui/management/management_ui.h"
+ #include "chrome/browser/ui/webui/media/media_engagement_ui.h"
+ #include "chrome/browser/ui/webui/media/webrtc_logs_ui.h"
+@@ -298,6 +299,7 @@ void RegisterChromeWebUIConfigs() {
+   map.AddWebUIConfig(std::make_unique<InternalDebugPagesDisabledUIConfig>());
+   map.AddWebUIConfig(std::make_unique<InterstitialUIConfig>());
+   map.AddWebUIConfig(std::make_unique<LocalStateUIConfig>());
++  map.AddWebUIConfig(std::make_unique<LumoToolsUIConfig>());
+   map.AddWebUIConfig(std::make_unique<LocationInternalsUIConfig>());
+   map.AddWebUIConfig(std::make_unique<ManagementUIConfig>());
+   map.AddWebUIConfig(std::make_unique<MediaEngagementUIConfig>());
+diff --git a/chrome/browser/ui/webui/lumo_tools/BUILD.gn b/chrome/browser/ui/webui/lumo_tools/BUILD.gn
+new file mode 100644
+index 0000000..e59237e
+--- /dev/null
++++ b/chrome/browser/ui/webui/lumo_tools/BUILD.gn
+@@ -0,0 +1,18 @@
++# Copyright 2026 seasea1010
++# Use of this source code is governed by a BSD-style license that can be
++# found in the LICENSE file.
++
++source_set("lumo_tools") {
++  sources = [
++    "lumo_tools_ui.cc",
++    "lumo_tools_ui.h",
++  ]
++  public_deps = [
++    "//chrome/common",
++    "//content/public/browser",
++  ]
++  deps = [
++    "//chrome/browser/resources/lumo_tools:resources",
++    "//ui/webui",
++  ]
++}
+diff --git a/chrome/browser/ui/webui/lumo_tools/lumo_tools_ui.cc b/chrome/browser/ui/webui/lumo_tools/lumo_tools_ui.cc
+new file mode 100644
+index 0000000..db4906b
+--- /dev/null
++++ b/chrome/browser/ui/webui/lumo_tools/lumo_tools_ui.cc
+@@ -0,0 +1,27 @@
++// Copyright 2026 seasea1010
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/ui/webui/lumo_tools/lumo_tools_ui.h"
++
++#include "chrome/grit/lumo_tools_resources.h"
++#include "chrome/grit/lumo_tools_resources_map.h"
++#include "content/public/browser/browser_context.h"
++#include "content/public/browser/web_contents.h"
++#include "content/public/browser/web_ui.h"
++#include "content/public/browser/web_ui_data_source.h"
++#include "ui/webui/webui_util.h"
++
++LumoToolsUI::LumoToolsUI(content::WebUI* web_ui)
++    : content::WebUIController(web_ui) {
++  content::WebUIDataSource* source = content::WebUIDataSource::CreateAndAdd(
++      web_ui->GetWebContents()->GetBrowserContext(),
++      chrome::kChromeUIToolsHost);
++
++  // Add required resources. The page is fully self-contained:
++  // tools.html plus its stylesheet and script are the only files.
++  webui::SetupWebUIDataSource(source, kLumoToolsResources,
++                              IDR_LUMO_TOOLS_TOOLS_HTML);
++}
++
++LumoToolsUI::~LumoToolsUI() = default;
+diff --git a/chrome/browser/ui/webui/lumo_tools/lumo_tools_ui.h b/chrome/browser/ui/webui/lumo_tools/lumo_tools_ui.h
+new file mode 100644
+index 0000000..d84372b
+--- /dev/null
++++ b/chrome/browser/ui/webui/lumo_tools/lumo_tools_ui.h
+@@ -0,0 +1,35 @@
++// Copyright 2026 seasea1010
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_WEBUI_LUMO_TOOLS_LUMO_TOOLS_UI_H_
++#define CHROME_BROWSER_UI_WEBUI_LUMO_TOOLS_LUMO_TOOLS_UI_H_
++
++#include "chrome/common/webui_url_constants.h"
++#include "content/public/browser/web_ui_controller.h"
++#include "content/public/browser/webui_config.h"
++#include "content/public/common/url_constants.h"
++
++class LumoToolsUI;
++
++class LumoToolsUIConfig : public content::DefaultWebUIConfig<LumoToolsUI> {
++ public:
++  LumoToolsUIConfig()
++      : DefaultWebUIConfig(content::kChromeUIScheme,
++                           chrome::kChromeUIToolsHost) {}
++};
++
++// The WebUI for chrome://tools (Lumo patch 0028): a collection of
++// small utilities that run entirely in the page's own resources
++// (no browser-side handler, no network access). Registering the
++// "tools" host under the chrome scheme is enough to also make the
++// page reachable as thorium://tools and lumo://tools, because the
++// internal URL scheme aliases (patch 0023) rewrite any host's
++// scheme to chrome:// before WebUI config lookup.
++class LumoToolsUI : public content::WebUIController {
++ public:
++  explicit LumoToolsUI(content::WebUI* web_ui);
++  ~LumoToolsUI() override;
++};
++
++#endif  // CHROME_BROWSER_UI_WEBUI_LUMO_TOOLS_LUMO_TOOLS_UI_H_
+diff --git a/chrome/common/webui_url_constants.h b/chrome/common/webui_url_constants.h
+index 29dd4f6..4233ee5 100644
+--- a/chrome/common/webui_url_constants.h
++++ b/chrome/common/webui_url_constants.h
+@@ -344,6 +344,7 @@ inline constexpr char kChromeUITermsHost[] = "terms";
+ inline constexpr char kChromeUITermsURL[] = "chrome://terms/";
+ inline constexpr char kChromeUIThemeHost[] = "theme";
+ inline constexpr char kChromeUIThemeURL[] = "chrome://theme/";
++inline constexpr char kChromeUIToolsHost[] = "tools";
+ inline constexpr char kChromeUITopChromeDomain[] = "top-chrome";
+ inline constexpr char kChromeUITranslateInternalsHost[] = "translate-internals";
+ inline constexpr char kChromeUIUntrustedComposeHost[] = "compose";

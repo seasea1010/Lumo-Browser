@@ -1,8 +1,8 @@
 diff --git a/components/webui/version/resources/about_version.html b/components/webui/version/resources/about_version.html
-index 3d0a96a..16c1c77 100644
+index 3d0a96a..8462325 100644
 --- a/components/webui/version/resources/about_version.html
 +++ b/components/webui/version/resources/about_version.html
-@@ -49,33 +49,17 @@ about:version template page
+@@ -49,33 +49,19 @@ about:version template page
            <img alt="$i18n{logo_alt_text}" src="images/product_logo.png">
          </picture>
  </if>
@@ -13,6 +13,8 @@ index 3d0a96a..16c1c77 100644
 +          <div>Created by seasea1010</div>
 +          <div>このブラウザは、AI（Muse）の全面的な支援によって作成されました。企画・指示は seasea1010、実装・ビルド作業の大部分は AI が担当しています。</div>
 +          <div>Lumo is based on Thorium and Chromium. Thorium and Chromium are open source software released under the BSD License; their license terms and attributions are preserved in this build (see the THORIUM_VERSION.txt and AUTHORS links below).</div>
++          <div>uBlock Origin, a wide-spectrum content blocker by Raymond Hill (gorhill) and contributors, is bundled with Lumo and licensed under the GNU General Public License v3 (GPLv3). Source: https://github.com/gorhill/uBlock</div>
++          <div>uBlock Origin Scope, a tool which reports remote server connections, by Raymond Hill (gorhill), is bundled with Lumo and licensed under the GNU General Public License v3 (GPLv3). Source: https://github.com/gorhill/uBO-Scope</div>
 +        </div>
          <br/>
            <div id="thor_version"><a target="_self" rel="noopener" href="chrome://resources/text/thorium_version.txt">THORIUM_VERSION.txt</a></div>

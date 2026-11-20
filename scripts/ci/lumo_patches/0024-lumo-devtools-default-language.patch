@@ -1,0 +1,13 @@
+diff --git a/third_party/devtools-frontend/src/front_end/ui/settings/MainSettings.ts b/third_party/devtools-frontend/src/front_end/ui/settings/MainSettings.ts
+index a0d3f9b..1cbeef8 100644
+--- a/third_party/devtools-frontend/src/front_end/ui/settings/MainSettings.ts
++++ b/third_party/devtools-frontend/src/front_end/ui/settings/MainSettings.ts
+@@ -28,7 +28,7 @@ export const sidebarPositionSettingDescriptor: Common.Settings.SettingDescriptor
+ export const languageSettingDescriptor: Common.Settings.SettingDescriptor<string> = {
+   name: 'language',
+   type: Common.Settings.SettingType.ENUM,
+-  defaultValue: 'en-US',
++  defaultValue: 'ja',
+   storageType: Common.Settings.SettingStorageType.SYNCED,
+ };
+ 

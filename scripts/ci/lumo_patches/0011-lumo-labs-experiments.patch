@@ -16,25 +16,25 @@ index a40d871..5bd9413 100644
 +      ダークモードの時間帯自動切替
 +    </message>
 +    <message name="IDS_CHROMELABS_LUMO_DARK_MODE_SCHEDULE_DESCRIPTION" desc="Description of the Lumo Labs experiment shown in the Labs bubble.">
-+      時間帯に応じてライトテーマとダークテーマを自動で切り替えます（実験中：現在はフラグ登録のみで、切替処理は未実装です）。
++      時間帯に応じてライトテーマとダークテーマを自動で切り替えます。夜間（19時から7時）はダーク、昼間はライトに切り替わります（Lumo パッチ 0015）。
 +    </message>
 +    <message name="IDS_CHROMELABS_LUMO_TRACKING_PROTECTION_STRICT_NAME" desc="Name of the Lumo Labs experiment shown in the Labs bubble.">
 +      トラッキング防止の厳格モード
 +    </message>
 +    <message name="IDS_CHROMELABS_LUMO_TRACKING_PROTECTION_STRICT_DESCRIPTION" desc="Description of the Lumo Labs experiment shown in the Labs bubble.">
-+      トラッキング防止を標準より厳しくします（実験中：現在はフラグ登録のみです）。
++      トラッキング防止を標準より厳しくします。有効な間は、サードパーティ Cookie のブロック、Do Not Track の送信、広告プライバシー機能の無効化が適用されます（Lumo パッチ 0016）。
 +    </message>
 +    <message name="IDS_CHROMELABS_LUMO_FULL_PAGE_SCREENSHOT_NAME" desc="Name of the Lumo Labs experiment shown in the Labs bubble.">
 +      ページ全体スクリーンショット
 +    </message>
 +    <message name="IDS_CHROMELABS_LUMO_FULL_PAGE_SCREENSHOT_DESCRIPTION" desc="Description of the Lumo Labs experiment shown in the Labs bubble.">
-+      表示範囲を超えたページ全体のスクリーンショットを撮れるようにします（実験中：現在はフラグ登録のみです）。
++      表示範囲を超えたページ全体のスクリーンショットを撮れるようにします。有効にすると、アプリメニューからページ全体を PNG 画像としてダウンロードフォルダに保存できます（Lumo パッチ 0017）。
 +    </message>
 +    <message name="IDS_CHROMELABS_LUMO_TAB_GROUP_SESSION_SAVE_NAME" desc="Name of the Lumo Labs experiment shown in the Labs bubble.">
 +      タブグループのセッション保存／復元
 +    </message>
 +    <message name="IDS_CHROMELABS_LUMO_TAB_GROUP_SESSION_SAVE_DESCRIPTION" desc="Description of the Lumo Labs experiment shown in the Labs bubble.">
-+      タブグループをセッションとして保存し、後で復元できるようにします（実験中：現在はフラグ登録のみです）。
++      タブグループをセッションとして保存し、後で復元できるようにします。有効にすると、アプリメニューから現在のタブグループを保存したり、保存したグループを復元したりできます（Lumo パッチ 0018）。
 +    </message>
      <message name="IDS_LUMO_LAUNCH_THORIUM_PROFILE" desc="App menu item that launches Lumo with the original Thorium user profile data directory.">
        もともとのThoriumのユーザープロファイルデータの保存場所から起動
@@ -54,22 +54,22 @@ index cdf6898..c6b2b9f 100644
 +
 +    {"lumo-dark-mode-schedule",
 +     "Dark Mode Time Schedule",
-+     "Switches between the light and dark themes based on the time of day. Reserved experiment: currently only registers the flag; the scheduling itself is not implemented yet.",
++     "Switches between the light and dark themes based on the time of day (dark from 19:00 to 07:00, light otherwise). Implemented by Lumo patch 0015.",
 +     kOsDesktop, FEATURE_VALUE_TYPE(features::kLumoDarkModeSchedule)},
 +
 +    {"lumo-tracking-protection-strict",
 +     "Strict Tracking Protection",
-+     "Applies stricter tracking protection than the standard mode. Reserved experiment: currently only registers the flag.",
++     "Applies stricter tracking protection than the standard mode: blocks third-party cookies, sends Do Not Track, and turns the ad privacy features off. Implemented by Lumo patch 0016.",
 +     kOsDesktop, FEATURE_VALUE_TYPE(features::kLumoTrackingProtectionStrict)},
 +
 +    {"lumo-full-page-screenshot",
 +     "Full Page Screenshot",
-+     "Captures a screenshot of the whole page, beyond the visible viewport. Reserved experiment: currently only registers the flag.",
++     "Captures a screenshot of the whole page, beyond the visible viewport, from the app menu and saves it as a PNG file in the downloads folder. Implemented by Lumo patch 0017.",
 +     kOsDesktop, FEATURE_VALUE_TYPE(features::kLumoFullPageScreenshot)},
 +
 +    {"lumo-tab-group-session-save",
 +     "Tab Group Session Save and Restore",
-+     "Saves tab groups as sessions and restores them later. Reserved experiment: currently only registers the flag.",
++     "Saves tab groups as sessions and restores them later, from the app menu. Implemented by Lumo patch 0018.",
 +     kOsDesktop, FEATURE_VALUE_TYPE(features::kLumoTabGroupSessionSave)},
 +
      {"thorium-2024",
@@ -155,9 +155,9 @@ index 9900309..cb77a87 100644
  BASE_FEATURE(kLumoGlicMenu, base::FEATURE_DISABLED_BY_DEFAULT);
  
 +// Lumo Labs experiments (Lumo patch 0011). All default to off and
-+// are toggled from Lumo Labs / chrome://flags. Only
-+// kLumoHoverCardMemoryUsage has a behavioral hook so far; the
-+// others are registered placeholders for staged implementation.
++// are toggled from Lumo Labs / chrome://flags. Only the hover
++// card experiment is hooked up here; the other four are
++// implemented by Lumo patches 0015-0018.
 +BASE_FEATURE(kLumoHoverCardMemoryUsage, base::FEATURE_DISABLED_BY_DEFAULT);
 +
 +BASE_FEATURE(kLumoDarkModeSchedule, base::FEATURE_DISABLED_BY_DEFAULT);

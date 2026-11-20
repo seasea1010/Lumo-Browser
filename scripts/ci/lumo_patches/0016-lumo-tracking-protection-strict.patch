@@ -1,0 +1,57 @@
+diff --git a/chrome/browser/profiles/profile_impl.cc b/chrome/browser/profiles/profile_impl.cc
+index 81e83a8..18068fe 100644
+--- a/chrome/browser/profiles/profile_impl.cc
++++ b/chrome/browser/profiles/profile_impl.cc
+@@ -14,6 +14,7 @@
+ #include "base/command_line.h"
+ #include "base/compiler_specific.h"
+ #include "base/environment.h"
++#include "base/feature_list.h"
+ #include "base/files/file.h"
+ #include "base/files/file_path.h"
+ #include "base/files/file_util.h"
+@@ -107,6 +108,7 @@
+ #include "chrome/browser/transition_manager/full_browser_transition_manager.h"
+ #include "chrome/browser/ui/signin/dice_migration_service.h"
+ #include "chrome/browser/ui/startup/startup_browser_creator.h"
++#include "chrome/browser/ui/ui_features.h"
+ #include "chrome/browser/ui/webui/prefs_internals_source.h"
+ #include "chrome/browser/updates/announcement_notification/announcement_notification_service.h"
+ #include "chrome/browser/updates/announcement_notification/announcement_notification_service_factory.h"
+@@ -149,6 +151,7 @@
+ #include "components/policy/core/common/cloud/user_cloud_policy_manager.h"
+ #include "components/policy/core/common/policy_pref_names.h"
+ #include "components/pref_registry/pref_registry_syncable.h"
++#include "components/privacy_sandbox/privacy_sandbox_prefs.h"
+ #include "components/prefs/pref_service.h"
+ #include "components/prefs/scoped_user_pref_update.h"
+ #include "components/profile_metrics/browser_profile_type.h"
+@@ -737,6 +740,28 @@ void ProfileImpl::DoFinalInit(CreateMode create_mode) {
+ 
+   PrefService* prefs = GetPrefs();
+ 
++  // Lumo (patch 0016): while the kLumoTrackingProtectionStrict
++  // experiment is enabled, tighten this profile's privacy
++  // settings at every startup: block third-party cookies, send
++  // Do Not Track, enable Global Privacy Control, and turn the
++  // ad privacy (Privacy Sandbox) features off. The values are
++  // written to the profile prefs, so they stay visible (and
++  // editable) in the normal settings UI; turning the experiment
++  // off stops re-applying them on later starts but does not
++  // restore whatever values were there before.
++  if (base::FeatureList::IsEnabled(
++          features::kLumoTrackingProtectionStrict)) {
++    prefs->SetInteger(
++        prefs::kCookieControlsMode,
++        static_cast<int>(CookieControlsMode::kBlockThirdParty));
++    prefs->SetBoolean(prefs::kEnableDoNotTrack, true);
++    prefs->SetBoolean(prefs::kEnableGPC, true);
++    prefs->SetBoolean(prefs::kPrivacySandboxM1TopicsEnabled, false);
++    prefs->SetBoolean(prefs::kPrivacySandboxM1FledgeEnabled, false);
++    prefs->SetBoolean(prefs::kPrivacySandboxM1AdMeasurementEnabled,
++                      false);
++  }
++
+   // Do not override the existing pref in case a profile directory is copied, or
+   // if the file system does not support creation time and the property (i.e.
+   // st_ctim in posix which is actually the last status change time when the

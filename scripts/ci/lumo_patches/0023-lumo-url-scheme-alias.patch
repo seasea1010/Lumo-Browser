@@ -1,0 +1,174 @@
+diff --git a/chrome/browser/extensions/extension_tab_util.cc b/chrome/browser/extensions/extension_tab_util.cc
+index 476bc17..663360c 100644
+--- a/chrome/browser/extensions/extension_tab_util.cc
++++ b/chrome/browser/extensions/extension_tab_util.cc
+@@ -1103,7 +1103,8 @@ bool ExtensionTabUtil::IsKillURL(const GURL& url) {
+   }
+ 
+   if (!url.SchemeIs(content::kChromeUIScheme) &&
+-      !url.SchemeIs(content::kThoriumUIScheme)) {
++      !url.SchemeIs(content::kThoriumUIScheme) &&
++      !url.SchemeIs(content::kLumoUIScheme)) {
+     return false;
+   }
+ 
+diff --git a/chrome/browser/history/history_utils.cc b/chrome/browser/history/history_utils.cc
+index 537a516..2cd0e78 100644
+--- a/chrome/browser/history/history_utils.cc
++++ b/chrome/browser/history/history_utils.cc
+@@ -26,6 +26,7 @@ bool CanAddURLToHistory(const GURL& url) {
+       url.SchemeIs(content::kChromeDevToolsScheme) ||
+       url.SchemeIs(content::kChromeUIScheme) ||
+       url.SchemeIs(content::kThoriumUIScheme) ||
++      url.SchemeIs(content::kLumoUIScheme) ||
+       url.SchemeIs(content::kChromeUIUntrustedScheme) ||
+       url.SchemeIs(content::kViewSourceScheme) ||
+       url.SchemeIs(chrome::kChromeNativeScheme) ||
+diff --git a/chrome/browser/profiles/profile_io_data.cc b/chrome/browser/profiles/profile_io_data.cc
+index 3ffc9b7..0850629 100644
+--- a/chrome/browser/profiles/profile_io_data.cc
++++ b/chrome/browser/profiles/profile_io_data.cc
+@@ -45,6 +45,7 @@ bool ProfileIOData::IsHandledProtocol(std::string_view scheme) {
+ #endif
+       content::kChromeUIScheme,
+       content::kThoriumUIScheme,
++      content::kLumoUIScheme,
+       content::kChromeUIUntrustedScheme,
+       url::kDataScheme,
+ #if BUILDFLAG(IS_CHROMEOS)
+diff --git a/chrome/browser/thorium_url_utils.cc b/chrome/browser/thorium_url_utils.cc
+index 08b14d3..d76abdd 100644
+--- a/chrome/browser/thorium_url_utils.cc
++++ b/chrome/browser/thorium_url_utils.cc
+@@ -13,7 +13,8 @@
+ namespace thorium {
+ 
+ GURL CanonicalizeInternalURL(const GURL& url) {
+-  if (!url.SchemeIs(content::kThoriumUIScheme)) {
++  if (!url.SchemeIs(content::kThoriumUIScheme) &&
++      !url.SchemeIs(content::kLumoUIScheme)) {
+     return url;
+   }
+ 
+diff --git a/chrome/browser/thorium_url_utils.h b/chrome/browser/thorium_url_utils.h
+index 4a85849..7dbc7cb 100644
+--- a/chrome/browser/thorium_url_utils.h
++++ b/chrome/browser/thorium_url_utils.h
+@@ -16,8 +16,9 @@ class BrowserContext;
+ 
+ namespace thorium {
+ 
+-// Converts the user-facing `thorium://` alias to the canonical `chrome://`
+-// scheme. All URL components other than the scheme are preserved.
++// Converts the user-facing `thorium://` and `lumo://` aliases to the
++// canonical `chrome://` scheme. All URL components other than the scheme
++// are preserved.
+ GURL CanonicalizeInternalURL(const GURL& url);
+ 
+ // Canonicalizes the internal URL alias before Chromium's normal browser URL
+diff --git a/chrome/browser/ui/incognito_allowed_url.cc b/chrome/browser/ui/incognito_allowed_url.cc
+index 1db9738..9843b0e 100644
+--- a/chrome/browser/ui/incognito_allowed_url.cc
++++ b/chrome/browser/ui/incognito_allowed_url.cc
+@@ -24,7 +24,8 @@ bool IsHostAllowedInIncognito(const GURL& url) {
+   std::string_view scheme = url.scheme();
+   std::string_view host = url.host();
+   if (scheme != content::kChromeUIScheme &&
+-      scheme != content::kThoriumUIScheme) {
++      scheme != content::kThoriumUIScheme &&
++      scheme != content::kLumoUIScheme) {
+     return true;
+   }
+ 
+diff --git a/components/url_formatter/url_fixer.cc b/components/url_formatter/url_fixer.cc
+index 887085a..a36cf4e 100644
+--- a/components/url_formatter/url_fixer.cc
++++ b/components/url_formatter/url_fixer.cc
+@@ -39,6 +39,7 @@ namespace {
+ // Hardcode these constants to avoid dependences on //chrome and //content.
+ const char kChromeUIScheme[] = "chrome";
+ const char kThoriumUIScheme[] = "thorium";
++const char kLumoUIScheme[] = "lumo";
+ const char kDevToolsScheme[] = "devtools";
+ const char kChromeUIDefaultHost[] = "version";
+ const char kViewSourceScheme[] = "view-source";
+@@ -447,7 +448,7 @@ std::string SegmentURLInternal(std::string* text, url::Parsed* parts) {
+       if (GetValidScheme(*text, &parts->scheme, &scheme) &&
+           (url::IsStandard(scheme) || scheme == url::kAboutScheme ||
+            scheme == kChromeUIScheme || scheme == kThoriumUIScheme ||
+-           scheme == url::kFileScheme)) {
++           scheme == kLumoUIScheme || scheme == url::kFileScheme)) {
+         found_scheme = true;
+       } else {
+         (*text)[semicolon] = ';';
+@@ -460,11 +461,11 @@ std::string SegmentURLInternal(std::string* text, url::Parsed* parts) {
+     }
+   }
+ 
+-  // Proceed with about, chrome, thorium, and devtools schemes,
++  // Proceed with about, chrome, thorium, lumo, and devtools schemes,
+   // but not file or nonstandard schemes.
+   if ((scheme != url::kAboutScheme) && (scheme != kChromeUIScheme) &&
+-      (scheme != kThoriumUIScheme) && (scheme != kDevToolsScheme) &&
+-      !url::IsStandard(scheme)) {
++      (scheme != kThoriumUIScheme) && (scheme != kLumoUIScheme) &&
++      (scheme != kDevToolsScheme) && !url::IsStandard(scheme)) {
+     return scheme;
+   }
+ 
+@@ -618,12 +619,14 @@ GURL FixupURLInternal(const std::string& text,
+   // For some schemes whose layouts we understand, we rebuild the URL.
+   const bool chrome_url = (scheme == url::kAboutScheme) ||
+                           (scheme == kChromeUIScheme) ||
+-                          (scheme == kThoriumUIScheme);
++                          (scheme == kThoriumUIScheme) ||
++                          (scheme == kLumoUIScheme);
+   const bool devtools_url = (scheme == kDevToolsScheme);
+   if (chrome_url || devtools_url || url::IsStandard(scheme)) {
+     // Canonicalize the internal URL aliases to the chrome: scheme.
+     const bool canonicalize_internal_scheme =
+-        scheme == url::kAboutScheme || scheme == kThoriumUIScheme;
++        scheme == url::kAboutScheme || scheme == kThoriumUIScheme ||
++        scheme == kLumoUIScheme;
+     std::string url(canonicalize_internal_scheme ? kChromeUIScheme : scheme);
+     url.append(url::kStandardSchemeSeparator);
+ 
+@@ -751,7 +754,11 @@ bool IsEquivalentScheme(const std::string& scheme1,
+          (scheme1 == kThoriumUIScheme && scheme2 == url::kAboutScheme) ||
+          (scheme1 == url::kAboutScheme && scheme2 == kThoriumUIScheme) ||
+          (scheme1 == kThoriumUIScheme && scheme2 == kChromeUIScheme) ||
+-         (scheme1 == kChromeUIScheme && scheme2 == kThoriumUIScheme);
++         (scheme1 == kChromeUIScheme && scheme2 == kThoriumUIScheme) ||
++         (scheme1 == kLumoUIScheme && scheme2 == url::kAboutScheme) ||
++         (scheme1 == url::kAboutScheme && scheme2 == kLumoUIScheme) ||
++         (scheme1 == kLumoUIScheme && scheme2 == kChromeUIScheme) ||
++         (scheme1 == kChromeUIScheme && scheme2 == kLumoUIScheme);
+ }
+ 
+ }  // namespace url_formatter
+diff --git a/content/common/url_schemes.cc b/content/common/url_schemes.cc
+index f3ec4c1..98f1b97 100644
+--- a/content/common/url_schemes.cc
++++ b/content/common/url_schemes.cc
+@@ -70,6 +70,7 @@ void RegisterContentSchemes(bool should_lock_registry) {
+   url::AddStandardScheme(kChromeDevToolsScheme, url::SCHEME_WITH_HOST);
+   url::AddStandardScheme(kChromeUIScheme, url::SCHEME_WITH_HOST);
+   url::AddStandardScheme(kThoriumUIScheme, url::SCHEME_WITH_HOST);
++  url::AddStandardScheme(kLumoUIScheme, url::SCHEME_WITH_HOST);
+   url::AddStandardScheme(kChromeUIUntrustedScheme, url::SCHEME_WITH_HOST);
+   url::AddStandardScheme(kChromeErrorScheme, url::SCHEME_WITH_HOST);
+   for (auto& scheme : schemes.standard_schemes)
+diff --git a/content/public/common/url_constants.h b/content/public/common/url_constants.h
+index 629a0ea..ca9df0b 100644
+--- a/content/public/common/url_constants.h
++++ b/content/public/common/url_constants.h
+@@ -22,6 +22,9 @@ inline constexpr char kChromeUIScheme[] = "chrome";  // Used for WebUIs.
+ // User-facing Thorium alias for `kChromeUIScheme`. Navigations are
+ // canonicalized to `chrome://` before WebUI loading.
+ inline constexpr char kThoriumUIScheme[] = "thorium";
++// User-facing Lumo alias for `kChromeUIScheme` (Lumo patch 0023).
++// Registered and canonicalized exactly like the Thorium alias above.
++inline constexpr char kLumoUIScheme[] = "lumo";
+ inline constexpr char kChromeNativeScheme[] = "chrome-native";
+ inline constexpr char kChromeUIUntrustedScheme[] = "chrome-untrusted";
+ inline constexpr char kViewSourceScheme[] = "view-source";

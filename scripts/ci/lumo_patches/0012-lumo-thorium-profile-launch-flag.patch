@@ -1,0 +1,94 @@
+diff --git a/chrome/app/generated_resources.grd b/chrome/app/generated_resources.grd
+index 5bd9413..7b020ff 100644
+--- a/chrome/app/generated_resources.grd
++++ b/chrome/app/generated_resources.grd
+@@ -19160,6 +19160,12 @@ Please help our engineers fix this problem. Tell us what happened right before y
+     <message name="IDS_LUMO_LAUNCH_THORIUM_PROFILE" desc="App menu item that launches Lumo with the original Thorium user profile data directory.">
+       もともとのThoriumのユーザープロファイルデータの保存場所から起動
+     </message>
++    <message name="IDS_CHROMELABS_LUMO_LAUNCH_THORIUM_PROFILE_NAME" desc="Name of the Lumo Labs experiment that shows the Thorium-profile launch menu item.">
++      Thorium プロファイルで起動するメニュー項目を表示
++    </message>
++    <message name="IDS_CHROMELABS_LUMO_LAUNCH_THORIUM_PROFILE_DESCRIPTION" desc="Description of the Lumo Labs experiment that shows the Thorium-profile launch menu item.">
++      アプリメニューに「もともとのThoriumのユーザープロファイルデータの保存場所から起動」を追加します。誤って押してしまうのを防ぐため、既定では表示されません。
++    </message>
+     <message name="IDS_LUMO_DEV_STAGE_LABEL" desc="Label shown at the top-left of every Lumo browser window stating that the browser is in an experimental development stage.">
+       このブラウザーは試験的な開発段階です
+     </message>
+diff --git a/chrome/browser/thorium_flag_entries.h b/chrome/browser/thorium_flag_entries.h
+index c6b2b9f..c5b0283 100644
+--- a/chrome/browser/thorium_flag_entries.h
++++ b/chrome/browser/thorium_flag_entries.h
+@@ -52,6 +52,11 @@
+      "Saves tab groups as sessions and restores them later, from the app menu. Implemented by Lumo patch 0018.",
+      kOsDesktop, FEATURE_VALUE_TYPE(features::kLumoTabGroupSessionSave)},
+ 
++    {"lumo-launch-thorium-profile",
++     "Launch with Thorium Profile Menu Item",
++     "Shows the app-menu item that launches Lumo with the original Thorium user profile data directory. The item is hidden by default so it cannot be clicked by accident.",
++     kOsDesktop, FEATURE_VALUE_TYPE(features::kLumoLaunchThoriumProfile)},
++
+     {"thorium-2024",
+      "Enable Experimental Thorium 2024 (Th24) UI",
+      "Enable a new \"hybrid\" UI, which restores many parts of the pre-Chrome Refresh 2023 UI. Good for people "
+diff --git a/chrome/browser/ui/toolbar/chrome_labs/chrome_labs_model.cc b/chrome/browser/ui/toolbar/chrome_labs/chrome_labs_model.cc
+index 00bbd6e..8e80dcf 100644
+--- a/chrome/browser/ui/toolbar/chrome_labs/chrome_labs_model.cc
++++ b/chrome/browser/ui/toolbar/chrome_labs/chrome_labs_model.cc
+@@ -124,6 +124,22 @@ const std::vector<LabInfo>& GetData() {
+         kLumoTabGroupSessionSaveFlagDescription,
+         "chrome-labs-lumo-tab-group-session-save", version_info::Channel::BETA);
+ 
++    const char kLumoLaunchThoriumProfileFlagId[] =
++        "lumo-launch-thorium-profile";
++    const std::u16string kLumoLaunchThoriumProfileFlagName =
++        l10n_util::GetStringUTF16(
++            IDS_CHROMELABS_LUMO_LAUNCH_THORIUM_PROFILE_NAME);
++    const std::u16string kLumoLaunchThoriumProfileFlagDescription =
++        l10n_util::GetStringUTF16(
++            IDS_CHROMELABS_LUMO_LAUNCH_THORIUM_PROFILE_DESCRIPTION);
++
++    lab_info.emplace_back(
++        kLumoLaunchThoriumProfileFlagId,
++        kLumoLaunchThoriumProfileFlagName,
++        kLumoLaunchThoriumProfileFlagDescription,
++        "chrome-labs-lumo-launch-thorium-profile",
++        version_info::Channel::BETA);
++
+     const char kRestoreTabsFlagId[] = "restore-tab-button";
+     const std::u16string kRestoreTabsFlagName =
+         l10n_util::GetStringUTF16(IDS_CHROMELABS_RESTORE_TAB_BUTTON_NAME);
+diff --git a/chrome/browser/ui/ui_features.cc b/chrome/browser/ui/ui_features.cc
+index cb77a87..236a3c8 100644
+--- a/chrome/browser/ui/ui_features.cc
++++ b/chrome/browser/ui/ui_features.cc
+@@ -71,6 +71,13 @@ BASE_FEATURE(kLumoFullPageScreenshot, base::FEATURE_DISABLED_BY_DEFAULT);
+ 
+ BASE_FEATURE(kLumoTabGroupSessionSave, base::FEATURE_DISABLED_BY_DEFAULT);
+ 
++// Lumo Labs experiment (Lumo patch 0012, task 15): when enabled,
++// the app-menu item that launches a new process with the original
++// Thorium user profile data directory (Lumo patch 0007) is shown,
++// and its command is enabled. Hidden by default so the item
++// cannot be clicked by accident.
++BASE_FEATURE(kLumoLaunchThoriumProfile, base::FEATURE_DISABLED_BY_DEFAULT);
++
+ // Kill switch for crbug.com/559656985. When enabled, the press-and-hold Esc
+ // timer also exits tab fullscreen (unless browser fullscreen is underneath)
+ // when it fires while Esc is locked via the Keyboard Lock API. When disabled,
+diff --git a/chrome/browser/ui/ui_features.h b/chrome/browser/ui/ui_features.h
+index d3c6e40..d853c33 100644
+--- a/chrome/browser/ui/ui_features.h
++++ b/chrome/browser/ui/ui_features.h
+@@ -58,6 +58,11 @@ BASE_DECLARE_FEATURE(kLumoFullPageScreenshot);
+ // Lumo Labs experiment (Lumo patch 0011): Tab Group Session Save and Restore.
+ BASE_DECLARE_FEATURE(kLumoTabGroupSessionSave);
+ 
++// Lumo Labs experiment (Lumo patch 0012): shows the app-menu item
++// that launches with the original Thorium user profile (the item
++// itself is patch 0007). Hidden by default; see task 15.
++BASE_DECLARE_FEATURE(kLumoLaunchThoriumProfile);
++
+ BASE_DECLARE_FEATURE(kKeyboardLockHeldEscExitsTabFullscreen);
+ 
+ // All feature flags associated with Glow Up, apart from those in

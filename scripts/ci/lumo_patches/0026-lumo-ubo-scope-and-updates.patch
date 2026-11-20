@@ -1,0 +1,104 @@
+diff --git a/chrome/browser/extensions/preinstalled_extensions.cc b/chrome/browser/extensions/preinstalled_extensions.cc
+index daa3be1..c4183b3 100644
+--- a/chrome/browser/extensions/preinstalled_extensions.cc
++++ b/chrome/browser/extensions/preinstalled_extensions.cc
+@@ -47,16 +47,28 @@ using extensions::mojom::ManifestLocation;
+ 
+ // The upstream GitHub CRX has its own signing key, distinct from the CWS ID.
+ constexpr char kUBlockOriginExtensionId[] = "fkgkibajhfbepljeaefdnfnegdcjomkh";
+-constexpr char kUBlockOriginVersion[] = "1.75.0";
++constexpr char kUBlockOriginVersion[] = "1.76.4";
++
++// uBlock Origin Scope, by Raymond Hill (gorhill), is published only
++// through the Chrome Web Store, under this store ID. It is registered
++// below with the store update URL instead of a bundled package, so
++// the extension updater downloads it from the store and keeps it
++// updated. Both extensions are GPLv3; see the credits on the version
++// page.
++constexpr char kUBoScopeExtensionId[] = "bbdpgcaljkaaigfcomhidmneffjjjfgp";
+ 
+ // Keep the source in the profile: the external installer reads it
+ // asynchronously. The signed CRX is verified by the normal external-file
+-// installation path.
++// installation path. No update URL is registered here on purpose: the
++// upstream CRX's own manifest carries the update URL of the update
++// manifest published in the gorhill/uBlock repository (served through
++// the jsDelivr CDN), so once installed, the extension updater keeps
++// uBlock Origin updated directly from GitHub Releases.
+ base::FilePath WriteUBlockOriginCrx(base::FilePath profile_path,
+                                     std::string crx_data) {
+   const base::FilePath directory =
+       profile_path.AppendASCII("Preinstalled Extensions");
+-  const base::FilePath path = directory.AppendASCII("uBlock0_1.75.0.crx");
++  const base::FilePath path = directory.AppendASCII("uBlock0_1.76.4.crx");
+   if (crx_data.empty() || !base::CreateDirectory(directory) ||
+       !base::WriteFile(path, crx_data)) {
+     return base::FilePath();
+@@ -308,6 +320,14 @@ void Provider::SetPrefs(base::DictValue prefs) {
+   }
+ #endif  // BUILDFLAG(ENABLE_PLATFORM_APPS)
+ 
++  // Lumo: preinstall uBlock Origin Scope from the Chrome Web Store.
++  // AddExtension registers only the store update URL, so the updater
++  // downloads the extension on first run and keeps it updated from
++  // the store afterwards.
++  if (perform_new_installation_ && IsLocaleSupported()) {
++    AddExtension(kUBoScopeExtensionId, prefs);
++  }
++
+   // Only a newly created profile gets uBO. Normal external-provider handling
+   // preserves user uninstalls and does not downgrade an existing installation.
+   if (perform_new_installation_) {
+diff --git a/chrome/browser/resources/BUILD.gn b/chrome/browser/resources/BUILD.gn
+index 2079d68..4f94272 100644
+--- a/chrome/browser/resources/BUILD.gn
++++ b/chrome/browser/resources/BUILD.gn
+@@ -247,7 +247,7 @@ if (enable_extensions_core) {
+   if (!is_chromeos) {
+     action("download_ublock_origin") {
+       script = "ublock_origin/download.py"
+-      outputs = [ "$target_gen_dir/ublock_origin/uBlock0_1.75.0.crx" ]
++      outputs = [ "$target_gen_dir/ublock_origin/uBlock0_1.76.4.crx" ]
+       args = [ rebase_path(outputs[0], root_build_dir) ]
+     }
+   }
+@@ -288,7 +288,7 @@ if (enable_extensions_core) {
+     deps = [ "//chrome/browser/resources/glic/extension:build_ts" ]
+     if (!is_chromeos) {
+       deps += [ ":download_ublock_origin" ]
+-      inputs += [ "$target_gen_dir/ublock_origin/uBlock0_1.75.0.crx" ]
++      inputs += [ "$target_gen_dir/ublock_origin/uBlock0_1.76.4.crx" ]
+     }
+ 
+     if (is_chromeos) {
+diff --git a/chrome/browser/resources/component_extension_resources.grd b/chrome/browser/resources/component_extension_resources.grd
+index 5f45018..4cd19df 100644
+--- a/chrome/browser/resources/component_extension_resources.grd
++++ b/chrome/browser/resources/component_extension_resources.grd
+@@ -70,7 +70,7 @@
+         <include name="IDR_ARC_SUPPORT_UI_JS" file="chromeos/arc_support/ui.js" type="chrome_html" />
+       </if>
+       <if expr="not is_chromeos">
+-        <include name="IDR_THORIUM_UBLOCK_ORIGIN_CRX" file="${root_gen_dir}/chrome/browser/resources/ublock_origin/uBlock0_1.75.0.crx" use_base_dir="false" resource_path="ublock_origin/uBlock0_1.75.0.crx" type="BINDATA" />
++        <include name="IDR_THORIUM_UBLOCK_ORIGIN_CRX" file="${root_gen_dir}/chrome/browser/resources/ublock_origin/uBlock0_1.76.4.crx" use_base_dir="false" resource_path="ublock_origin/uBlock0_1.76.4.crx" type="BINDATA" />
+       </if>
+     </includes>
+ 
+diff --git a/chrome/browser/resources/ublock_origin/download.py b/chrome/browser/resources/ublock_origin/download.py
+index cb2cdf9..d84f9e2 100644
+--- a/chrome/browser/resources/ublock_origin/download.py
++++ b/chrome/browser/resources/ublock_origin/download.py
+@@ -13,10 +13,10 @@ import tempfile
+ import urllib.request
+ 
+ URL = (
+-    "https://github.com/gorhill/uBlock/releases/download/1.75.0/"
+-    "uBlock0_1.75.0.chromium.crx"
++    "https://github.com/gorhill/uBlock/releases/download/1.76.4/"
++    "uBlock0_1.76.4.chromium.crx"
+ )
+-SHA256 = "d688ed3f0262ec4f8bdcd4c8f65987c5444c560aeb387a9e02aca1facdfa7046"
++SHA256 = "ee44e69bb7a0e162bf08632929a5059bd676dfaa3ae2267e3c4eb11cc949b21a"
+ 
+ 
+ def fetch(output):

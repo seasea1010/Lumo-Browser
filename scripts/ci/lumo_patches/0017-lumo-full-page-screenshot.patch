@@ -1,0 +1,255 @@
+diff --git a/chrome/app/chrome_command_ids.h b/chrome/app/chrome_command_ids.h
+index b8e2810..52d3f34 100644
+--- a/chrome/app/chrome_command_ids.h
++++ b/chrome/app/chrome_command_ids.h
+@@ -296,6 +296,9 @@
+ #define IDC_SHOW_TABS_FROM_OTHER_DEVICES_SIDE_PANEL 40304
+ #define IDC_CHROME_ENTERPRISE_RELEASE_NOTES 40305
+ #define IDC_SHOW_TTC_MENU 40306
++// Lumo: capture a full-page screenshot of the active tab
++// (Lumo patch 0017).
++#define IDC_LUMO_FULL_PAGE_SCREENSHOT 40307
+ 
+ // Spell-check
+ #define IDC_SPELLCHECK_SUGGESTION_0     41000
+diff --git a/chrome/app/generated_resources.grd b/chrome/app/generated_resources.grd
+index b34ba25..cae4dad 100644
+--- a/chrome/app/generated_resources.grd
++++ b/chrome/app/generated_resources.grd
+@@ -19160,6 +19160,9 @@ Please help our engineers fix this problem. Tell us what happened right before y
+     <message name="IDS_LUMO_LAUNCH_THORIUM_PROFILE" desc="App menu item that launches Lumo with the original Thorium user profile data directory.">
+       もともとのThoriumのユーザープロファイルデータの保存場所から起動
+     </message>
++    <message name="IDS_LUMO_FULL_PAGE_SCREENSHOT" desc="App menu item that saves a full-page screenshot of the active tab to the downloads folder.">
++      ページ全体のスクリーンショットを保存
++    </message>
+     <message name="IDS_CHROMELABS_LUMO_LAUNCH_THORIUM_PROFILE_NAME" desc="Name of the Lumo Labs experiment that shows the Thorium-profile launch menu item.">
+       Thorium プロファイルで起動するメニュー項目を表示
+     </message>
+diff --git a/chrome/browser/ui/browser_command_controller.cc b/chrome/browser/ui/browser_command_controller.cc
+index 1cd273b..ce74ee5 100644
+--- a/chrome/browser/ui/browser_command_controller.cc
++++ b/chrome/browser/ui/browser_command_controller.cc
+@@ -9,22 +9,29 @@
+ #include <algorithm>
+ #include <string>
+ 
++#include "base/base64.h"
+ #include "base/check_deref.h"
+ #include "base/command_line.h"
+ #include "base/debug/debugging_buildflags.h"
+ #include "base/files/file_path.h"
+ #include "base/path_service.h"
+ #include "base/process/launch.h"
++#include "base/files/file_util.h"
+ #include "base/debug/profiler.h"
+ #include "base/feature_list.h"
+ #include "base/functional/bind.h"
+ #include "base/i18n/number_formatting.h"
+ #include "base/i18n/rtl.h"
++#include "base/json/json_reader.h"
++#include "base/json/json_writer.h"
+ #include "base/metrics/histogram_functions.h"
+ #include "base/metrics/user_metrics.h"
+ #include "base/notimplemented.h"
+ #include "base/strings/strcat.h"
++#include "base/strings/stringprintf.h"
++#include "base/task/thread_pool.h"
+ #include "base/time/time.h"
++#include "base/values.h"
+ #include "build/branding_buildflags.h"
+ #include "build/build_config.h"
+ #include "chrome/app/chrome_command_ids.h"
+@@ -34,6 +41,7 @@
+ #include "chrome/browser/browsing_data/browsing_data_important_sites_util.h"
+ #include "chrome/browser/defaults.h"
+ #include "chrome/browser/devtools/devtools_window.h"
++#include "chrome/browser/download/download_prefs.h"
+ #include "chrome/browser/enterprise/isolated_mode/isolated_mode_settings_service_factory.h"
+ #include "chrome/browser/feedback/public/feedback_source.h"
+ #include "chrome/browser/feedback/show_feedback_page.h"
+@@ -138,6 +146,8 @@
+ #include "components/tabs/public/tab_interface.h"
+ #include "components/translate/core/browser/translate_manager.h"
+ #include "components/zoom/zoom_controller.h"
++#include "content/public/browser/devtools_agent_host.h"
++#include "content/public/browser/devtools_agent_host_client.h"
+ #include "content/public/browser/navigation_controller.h"
+ #include "content/public/browser/navigation_entry.h"
+ #include "content/public/browser/render_frame_host.h"
+@@ -280,6 +290,117 @@ actions::ActionItem* FindAction(actions::ActionId action_id,
+   return actions::ActionManager::Get().FindAction(action_id, root_action_item);
+ }
+ 
++// Lumo (patch 0017): one-shot DevTools protocol client that
++// captures a full-page screenshot of a tab through
++// Page.captureScreenshot with captureBeyondViewport, then writes
++// the PNG into the profile's downloads folder. The client owns
++// itself: it attaches, drives the two protocol calls, and
++// deletes itself when the capture finishes, fails, or the agent
++// host goes away.
++class LumoFullPageScreenshotClient
++    : public content::DevToolsAgentHostClient {
++ public:
++  LumoFullPageScreenshotClient(
++      scoped_refptr<content::DevToolsAgentHost> host,
++      base::FilePath download_dir)
++      : host_(std::move(host)), download_dir_(std::move(download_dir)) {}
++  ~LumoFullPageScreenshotClient() override = default;
++
++  // Attaches and starts the capture. Takes ownership of `this`
++  // in all cases: if attaching fails (for example because
++  // DevTools is already attached to the tab), deletes itself
++  // and returns false.
++  bool Start() {
++    if (!host_->AttachClient(this)) {
++      delete this;
++      return false;
++    }
++    SendCommand(1, "Page.enable", base::DictValue());
++    return true;
++  }
++
++  // content::DevToolsAgentHostClient:
++  void DispatchProtocolMessage(
++      content::DevToolsAgentHost* agent_host,
++      base::span<const uint8_t> message) override {
++    std::optional<base::Value> parsed = base::JSONReader::Read(
++        std::string_view(reinterpret_cast<const char*>(message.data()),
++                         message.size()));
++    if (!parsed || !parsed->is_dict()) {
++      return;
++    }
++    const base::DictValue& dict = parsed->GetDict();
++    const int id = dict.FindInt("id").value_or(0);
++    if (id == 1) {
++      base::DictValue params;
++      params.Set("format", "png");
++      params.Set("captureBeyondViewport", true);
++      params.Set("fromSurface", true);
++      SendCommand(2, "Page.captureScreenshot", std::move(params));
++      return;
++    }
++    if (id == 2) {
++      const base::DictValue* result = dict.FindDict("result");
++      const std::string* data =
++          result ? result->FindString("data") : nullptr;
++      if (data) {
++        SavePng(*data);
++      }
++      Finish();
++    }
++  }
++
++  void AgentHostClosed(content::DevToolsAgentHost* agent_host) override {
++    // The host is gone, so there is nothing to detach from;
++    // just clean up.
++    host_ = nullptr;
++    delete this;
++  }
++
++ private:
++  void SendCommand(int id, const char* method, base::DictValue params) {
++    base::DictValue command;
++    command.Set("id", id);
++    command.Set("method", method);
++    command.Set("params", std::move(params));
++    std::string json;
++    base::JSONWriter::Write(command, &json);
++    host_->DispatchProtocolMessage(
++        this, std::vector<uint8_t>(json.begin(), json.end()));
++  }
++
++  void SavePng(const std::string& base64_data) {
++    std::optional<std::vector<uint8_t>> png =
++        base::Base64Decode(base64_data);
++    if (!png) {
++      return;
++    }
++    base::Time::Exploded exploded;
++    base::Time::Now().LocalExplode(&exploded);
++    const base::FilePath path = download_dir_.AppendASCII(
++        base::StringPrintf(
++            "lumo-screenshot-%04d%02d%02d-%02d%02d%02d.png",
++            exploded.year, exploded.month, exploded.day_of_month,
++            exploded.hour, exploded.minute, exploded.second));
++    const std::string png_string(png->begin(), png->end());
++    base::ThreadPool::PostTask(
++        FROM_HERE, {base::MayBlock()},
++        base::BindOnce(
++            [](const base::FilePath& file_path, std::string data) {
++              base::WriteFile(file_path, data);
++            },
++            path, png_string));
++  }
++
++  void Finish() {
++    host_->DetachClient(this);
++    delete this;
++  }
++
++  scoped_refptr<content::DevToolsAgentHost> host_;
++  base::FilePath download_dir_;
++};
++
+ #if BUILDFLAG(IS_CHROMEOS)
+ bool IsLockedForOnTask(BrowserWindowInterface* browser) {
+   if (features::IsUseUnifiedLockedStateControllerEnabled()) {
+@@ -1626,6 +1747,24 @@ void BrowserCommandController::HandleCommandWithDisposition(
+       break;
+     }
+ #endif  // BUILDFLAG(IS_WIN)
++    case IDC_LUMO_FULL_PAGE_SCREENSHOT: {
++      // Lumo: capture the whole page of the active tab as a PNG
++      // in the downloads folder (Lumo patch 0017). The client
++      // owns itself and finishes asynchronously.
++      content::WebContents* web_contents =
++          browser_->tab_strip_model()->GetActiveWebContents();
++      if (web_contents) {
++        const base::FilePath download_dir =
++            DownloadPrefs::FromBrowserContext(profile())
++                ->DownloadPath();
++        (new LumoFullPageScreenshotClient(
++             content::DevToolsAgentHost::GetOrCreateForTab(
++                 web_contents),
++             download_dir))
++            ->Start();
++      }
++      break;
++    }
+     case IDC_OPEN_GLIC: {
+       auto* service =
+           glic::GlicKeyedServiceFactory::GetGlicKeyedService(profile());
+@@ -1902,6 +2041,12 @@ void BrowserCommandController::InitCommandState() {
+       IDC_LUMO_LAUNCH_THORIUM_PROFILE,
+       base::FeatureList::IsEnabled(features::kLumoLaunchThoriumProfile));
+ #endif
++  // Lumo: full-page screenshot of the active tab (Lumo patch
++  // 0017). The command follows the kLumoFullPageScreenshot
++  // experiment, which also gates the app-menu item.
++  command_updater_->UpdateCommandEnabled(
++      IDC_LUMO_FULL_PAGE_SCREENSHOT,
++      base::FeatureList::IsEnabled(features::kLumoFullPageScreenshot));
+   command_updater_->UpdateCommandEnabled(IDC_FIND_AND_EDIT_MENU, true);
+   command_updater_->UpdateCommandEnabled(IDC_SAVE_AND_SHARE_MENU, true);
+   command_updater_->UpdateCommandEnabled(IDC_SHOW_READING_MODE_SIDE_PANEL,
+diff --git a/chrome/browser/ui/toolbar/app_menu_model.cc b/chrome/browser/ui/toolbar/app_menu_model.cc
+index e126fa4..7229584 100644
+--- a/chrome/browser/ui/toolbar/app_menu_model.cc
++++ b/chrome/browser/ui/toolbar/app_menu_model.cc
+@@ -2222,6 +2222,15 @@ void AppMenuModel::Build() {
+   }
+ #endif
+ 
++  // Lumo: capture a full-page screenshot of the active tab
++  // (Lumo patch 0017). Shown only while the
++  // kLumoFullPageScreenshot experiment is enabled in Lumo Labs.
++  if (base::FeatureList::IsEnabled(features::kLumoFullPageScreenshot) &&
++      !browser_->GetProfile()->IsOffTheRecord()) {
++    AddItemWithStringId(IDC_LUMO_FULL_PAGE_SCREENSHOT,
++                        IDS_LUMO_FULL_PAGE_SCREENSHOT);
++  }
++
+   if (!browser_->GetProfile()->IsGuestSession()) {
+     sub_menus_.push_back(
+         std::make_unique<PasswordsAndAutofillSubMenuModel>(this));

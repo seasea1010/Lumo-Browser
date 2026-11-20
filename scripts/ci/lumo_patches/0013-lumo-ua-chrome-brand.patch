@@ -1,0 +1,21 @@
+diff --git a/components/embedder_support/user_agent_utils.cc b/components/embedder_support/user_agent_utils.cc
+index 3c042e1..d96a998 100644
+--- a/components/embedder_support/user_agent_utils.cc
++++ b/components/embedder_support/user_agent_utils.cc
+@@ -165,6 +165,16 @@ const blink::UserAgentBrandList GetUserAgentBrandList(
+   std::optional<std::string> brand;
+ #if !BUILDFLAG(CHROMIUM_BRANDING)
+   brand = version_info::GetProductName();
++#else
++  // Lumo: advertise the "Google Chrome" brand in the UA-CH brand
++  // list (Lumo patch 0013, task 20). Chromium-branding builds
++  // normally carry no product brand, so sites that gate on the
++  // brand list — the Chrome Web Store's "switch to Chrome"
++  // banner is the visible one — treat the browser as not being
++  // Chrome. The brand is paired with the Chromium version,
++  // exactly as in Chrome itself. Only the brand list changes;
++  // the User-Agent string is not affected.
++  brand = "Google Chrome";
+ #endif
+ 
+   std::string brand_version =

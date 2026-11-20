@@ -1,0 +1,120 @@
+diff --git a/chrome/app/settings_strings.grdp b/chrome/app/settings_strings.grdp
+index da6dc08..0ef216a 100644
+--- a/chrome/app/settings_strings.grdp
++++ b/chrome/app/settings_strings.grdp
+@@ -1118,6 +1118,12 @@
+     <message name="IDS_SETTINGS_PERFORMANCE_MEMORY_SAVER_MODE_AGGRESSIVE_DESCRIPTION" desc="Description for the aggressive memory saver aggressiveness option">
+       Get maximum memory savings. Your tabs become inactive after a shorter period of time.
+     </message>
++    <message name="IDS_SETTINGS_PERFORMANCE_MEMORY_SAVER_MODE_LUMO_FASTEST_LABEL" desc="Label for the Lumo fastest memory saver aggressiveness option (Lumo patch 0021)">
++      最も速くタブを非アクティブ化します
++    </message>
++    <message name="IDS_SETTINGS_PERFORMANCE_MEMORY_SAVER_MODE_LUMO_FASTEST_DESCRIPTION" desc="Description for the Lumo fastest memory saver aggressiveness option (Lumo patch 0021)">
++      タブが約4分間操作されなかったら非アクティブ化します。最も多くのメモリを節約できます。
++    </message>
+     <message name="IDS_SETTINGS_PERFORMANCE_TAB_DISCARDING_EXCEPTIONS_ADD_BUTTON_ARIA_LABEL" desc="Accessibility label which will be read by screen readers when focusing the tab discarding exceptions list add button. Sites added to the list will not be discarded by memory saver.">
+       Add to the "always keep these sites active" list
+     </message>
+diff --git a/chrome/browser/performance_manager/policies/memory_saver_mode_policy.cc b/chrome/browser/performance_manager/policies/memory_saver_mode_policy.cc
+index 76a12a2..bb3e369 100644
+--- a/chrome/browser/performance_manager/policies/memory_saver_mode_policy.cc
++++ b/chrome/browser/performance_manager/policies/memory_saver_mode_policy.cc
+@@ -207,6 +207,10 @@ base::TimeDelta MemorySaverModePolicy::GetTimeBeforeDiscardForCurrentMode()
+       return base::Hours(4);
+     case MemorySaverModeAggressiveness::kAggressive:
+       return base::Hours(2);
++    case MemorySaverModeAggressiveness::kLumoFastest:
++      // Lumo: the fastest tier discards a tab after about
++      // 4 minutes of inactivity (Lumo patch 0021).
++      return base::Minutes(4);
+   }
+   NOTREACHED();
+ }
+@@ -218,6 +222,7 @@ int MemorySaverModePolicy::GetMaxNumRevisitsForCurrentMode() const {
+     case MemorySaverModeAggressiveness::kMedium:
+       return 15;
+     case MemorySaverModeAggressiveness::kAggressive:
++    case MemorySaverModeAggressiveness::kLumoFastest:
+       return 15;
+   }
+   NOTREACHED();
+diff --git a/chrome/browser/resources/settings/performance_page/memory_page.html.ts b/chrome/browser/resources/settings/performance_page/memory_page.html.ts
+index 1b9435c..d0054bb 100644
+--- a/chrome/browser/resources/settings/performance_page/memory_page.html.ts
++++ b/chrome/browser/resources/settings/performance_page/memory_page.html.ts
+@@ -51,6 +51,14 @@ export function getHtml(this: SettingsMemoryPageElement) {
+             $i18n{memorySaverModeAggressiveDescription}
+           </div>
+         </controlled-radio-button>
++        <controlled-radio-button id="lumoFastestButton"
++            label="$i18n{memorySaverModeLumoFastestLabel}"
++            name="${MemorySaverModeAggressiveness.LUMO_FASTEST}"
++            pref-key="performance_tuning.high_efficiency_mode.aggressiveness">
++          <div class="cr-secondary-text">
++            $i18n{memorySaverModeLumoFastestDescription}
++          </div>
++        </controlled-radio-button>
+       </settings-radio-group>
+     </div>
+   </cr-collapse>
+diff --git a/chrome/browser/resources/settings/performance_page/performance_metrics_proxy.ts b/chrome/browser/resources/settings/performance_page/performance_metrics_proxy.ts
+index 9b9def2..b2966d0 100644
+--- a/chrome/browser/resources/settings/performance_page/performance_metrics_proxy.ts
++++ b/chrome/browser/resources/settings/performance_page/performance_metrics_proxy.ts
+@@ -24,9 +24,11 @@ export enum MemorySaverModeAggressiveness {
+   CONSERVATIVE = 0,
+   MEDIUM = 1,
+   AGGRESSIVE = 2,
++  // Lumo: fastest tier (Lumo patch 0021).
++  LUMO_FASTEST = 3,
+ 
+   // Must be last.
+-  COUNT = 3,
++  COUNT = 4,
+ }
+ 
+ // These values are persisted to logs. Entries should not be renumbered and
+diff --git a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
+index 04b75b5..c035e90 100644
+--- a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
++++ b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
+@@ -1310,6 +1310,10 @@ void AddPerformanceStrings(content::WebUIDataSource* html_source) {
+        IDS_SETTINGS_PERFORMANCE_MEMORY_SAVER_MODE_MEDIUM_DESCRIPTION},
+       {"memorySaverModeAggressiveDescription",
+        IDS_SETTINGS_PERFORMANCE_MEMORY_SAVER_MODE_AGGRESSIVE_DESCRIPTION},
++      {"memorySaverModeLumoFastestLabel",
++       IDS_SETTINGS_PERFORMANCE_MEMORY_SAVER_MODE_LUMO_FASTEST_LABEL},
++      {"memorySaverModeLumoFastestDescription",
++       IDS_SETTINGS_PERFORMANCE_MEMORY_SAVER_MODE_LUMO_FASTEST_DESCRIPTION},
+       {"batteryPageTitle", IDS_SETTINGS_PERFORMANCE_BATTERY_PAGE_TITLE},
+       {"batterySaverModeLabel",
+        IDS_SETTINGS_PERFORMANCE_BATTERY_SAVER_MODE_SETTING},
+diff --git a/components/performance_manager/public/user_tuning/prefs.h b/components/performance_manager/public/user_tuning/prefs.h
+index fef19f1..58e69a0 100644
+--- a/components/performance_manager/public/user_tuning/prefs.h
++++ b/components/performance_manager/public/user_tuning/prefs.h
+@@ -44,7 +44,10 @@ enum class MemorySaverModeAggressiveness {
+   kConservative = 0,
+   kMedium = 1,
+   kAggressive = 2,
+-  kMaxValue = kAggressive,
++  // Lumo: fastest tier (Lumo patch 0021). Tabs become inactive
++  // after about 4 minutes; see MemorySaverModePolicy.
++  kLumoFastest = 3,
++  kMaxValue = kLumoFastest,
+ };
+ 
+ inline constexpr char kMemorySaverModeAggressiveness[] =
+diff --git a/components/performance_manager/user_tuning/prefs.cc b/components/performance_manager/user_tuning/prefs.cc
+index 8effd2c..495a742 100644
+--- a/components/performance_manager/user_tuning/prefs.cc
++++ b/components/performance_manager/user_tuning/prefs.cc
+@@ -76,7 +76,7 @@ MemorySaverModeAggressiveness GetCurrentMemorySaverMode(
+     PrefService* pref_service) {
+   int mode = pref_service->GetInteger(kMemorySaverModeAggressiveness);
+   if (mode < static_cast<int>(MemorySaverModeAggressiveness::kConservative) ||
+-      mode > static_cast<int>(MemorySaverModeAggressiveness::kAggressive)) {
++      mode > static_cast<int>(MemorySaverModeAggressiveness::kMaxValue)) {
+     int medium_mode = static_cast<int>(MemorySaverModeAggressiveness::kMedium);
+     pref_service->SetInteger(kMemorySaverModeAggressiveness, medium_mode);
+     mode = medium_mode;

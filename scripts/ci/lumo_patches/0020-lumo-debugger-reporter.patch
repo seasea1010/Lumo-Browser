@@ -1,0 +1,544 @@
+diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
+index f4c617f..a90742b 100644
+--- a/chrome/browser/BUILD.gn
++++ b/chrome/browser/BUILD.gn
+@@ -854,6 +854,8 @@ source_set("core") {
+     "global_features.cc",
+     "icon_manager.cc",
+     "intranet_redirect_detector.cc",
++    "lumo/lumo_debugger_reporter.cc",
++    "lumo/lumo_debugger_reporter.h",
+     "memory_details.cc",
+     "net_benchmarking.cc",
+     "platform_util_internal.cc",
+@@ -1258,6 +1260,7 @@ source_set("core") {
+     "//services/device/public/cpp/geolocation",
+     "//services/device/public/cpp/geolocation:buildflags",
+     "//services/metrics",
++    "//services/network/public/cpp",
+     "//ui/base:ozone_buildflags",
+     "//ui/display/util",
+     "//ui/gl:buildflags",
+diff --git a/chrome/browser/chrome_browser_main.cc b/chrome/browser/chrome_browser_main.cc
+index e80b61c..e8d7d43 100644
+--- a/chrome/browser/chrome_browser_main.cc
++++ b/chrome/browser/chrome_browser_main.cc
+@@ -43,6 +43,7 @@
+ #include "chrome/browser/gpu/chrome_browser_main_extra_parts_gpu.h"
+ #include "chrome/browser/language/url_language_histogram_factory.h"
+ #include "chrome/browser/lifetime/browser_shutdown.h"
++#include "chrome/browser/lumo/lumo_debugger_reporter.h"
+ #include "chrome/browser/media/router/chrome_media_router_factory.h"
+ #include "chrome/browser/media/webrtc/media_capture_devices_dispatcher.h"
+ #include "chrome/browser/media/webrtc/webrtc_log_util.h"
+@@ -1741,6 +1742,11 @@ void ChromeBrowserMainParts::PostBrowserStart() {
+     chrome_extra_part->PostBrowserStart();
+   }
+ 
++  // Lumo (patch 0020): when this session was launched by the Lumo
++  // debugger app (--lumo-debugger-endpoint), report the startup
++  // event and start the session's tab reports. No-op otherwise.
++  lumo::debugger::StartSession();
++
+   browser_process_->browser_policy_connector()->OnBrowserStarted();
+ 
+ #if BUILDFLAG(ENABLE_PROCESS_SINGLETON)
+@@ -2245,6 +2251,12 @@ void ChromeBrowserMainParts::PostMainMessageLoopRun() {
+   // Android specific MessageLoop
+   NOTREACHED();
+ #else
++  // Lumo (patch 0020): report the shutdown to the debugger app when
++  // this session was launched by it. Fire-and-forget; the network
++  // stack is still up at this point of the shutdown sequence, but
++  // delivery is best effort. No-op without the endpoint switch.
++  lumo::debugger::ReportShutdown();
++
+   // Shutdown the UpgradeDetector here before `ChromeBrowserMainPartsAsh`
+   // disconnects DBus services in its PostDestroyThreads.
+   UpgradeDetector::GetInstance()->Shutdown();
+diff --git a/chrome/browser/first_run/upgrade_util_win.cc b/chrome/browser/first_run/upgrade_util_win.cc
+index fae67c5..bdd9519 100644
+--- a/chrome/browser/first_run/upgrade_util_win.cc
++++ b/chrome/browser/first_run/upgrade_util_win.cc
+@@ -50,6 +50,7 @@
+ #include "chrome/browser/browser_process.h"
+ #include "chrome/browser/chrome_process_singleton.h"
+ #include "chrome/browser/first_run/upgrade_util.h"
++#include "chrome/browser/lumo/lumo_debugger_reporter.h"
+ #include "chrome/browser/shell_integration.h"
+ #include "chrome/browser/win/browser_util.h"
+ #include "chrome/common/chrome_switches.h"
+@@ -491,7 +492,24 @@ bool RelaunchChromeBrowserImpl(const base::CommandLine& command_line,
+     chrome_exe_command_line.RemoveSwitch(switches::kWaitForParentHandle);
+   }
+ 
+-  return base::LaunchProcess(chrome_exe_command_line, launch_options).IsValid();
++  const bool launched =
++      base::LaunchProcess(chrome_exe_command_line, launch_options).IsValid();
++  // Lumo (patch 0020): report the relaunch attempt to the debugger
++  // app when this session was launched by it (which executable was
++  // started, whether patch 0014's fallback was used, and whether
++  // the launch succeeded). The fallback flag is derived here, at
++  // the end, instead of inside patch 0014's block: relaunch_exe
++  // still equals the canonical installer path unless the fallback
++  // replaced it (the fallback only triggers when that path does
++  // not exist, so it can never equal the running exe by accident).
++  // Keeping 0014's lines untouched also keeps its patch
++  // reverse-checkable on branding re-runs. No-op without
++  // --lumo-debugger-endpoint.
++  lumo::debugger::ReportRelaunch(
++      relaunch_exe,
++      relaunch_exe != chrome_exe.DirName().Append(installer::kChromeExe),
++      launched);
++  return launched;
+ }
+ 
+ bool IsUpdatePendingRestart() {
+diff --git a/chrome/browser/lumo/lumo_debugger_reporter.cc b/chrome/browser/lumo/lumo_debugger_reporter.cc
+new file mode 100644
+index 0000000..85d95d0
+--- /dev/null
++++ b/chrome/browser/lumo/lumo_debugger_reporter.cc
+@@ -0,0 +1,388 @@
++// Copyright 2026 seasea1010
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/lumo/lumo_debugger_reporter.h"
++
++#include <map>
++#include <memory>
++#include <set>
++#include <string>
++#include <utility>
++#include <vector>
++
++#include "base/command_line.h"
++#include "base/feature_list.h"
++#include "base/files/file_path.h"
++#include "base/functional/bind.h"
++#include "base/functional/function_ref.h"
++#include "base/json/json_writer.h"
++#include "base/no_destructor.h"
++#include "base/observer_list_types.h"
++#include "base/path_service.h"
++#include "base/process/process.h"
++#include "base/process/process_metrics.h"
++#include "base/scoped_observation.h"
++#include "base/strings/utf_string_conversions.h"
++#include "base/task/sequenced_task_runner.h"
++#include "base/time/time.h"
++#include "base/timer/timer.h"
++#include "base/values.h"
++#include "build/build_config.h"
++#include "chrome/browser/browser_process.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/profiles/profile_manager.h"
++#include "chrome/browser/net/system_network_context_manager.h"
++#include "chrome/browser/ui/browser_window/public/browser_collection_observer.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
++#include "chrome/browser/ui/tabs/tab_strip_model.h"
++#include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
++#include "chrome/browser/ui/ui_features.h"
++#include "chrome/common/chrome_paths.h"
++#include "components/version_info/version_info.h"
++#include "content/public/browser/render_frame_host.h"
++#include "content/public/browser/render_process_host.h"
++#include "content/public/browser/web_contents.h"
++#include "net/base/load_flags.h"
++#include "net/traffic_annotation/network_traffic_annotation.h"
++#include "services/network/public/cpp/resource_request.h"
++#include "services/network/public/cpp/simple_url_loader.h"
++#include "url/gurl.h"
++
++namespace lumo::debugger {
++
++bool IsEnabled() {
++  const base::CommandLine* command_line =
++      base::CommandLine::ForCurrentProcess();
++  return command_line->HasSwitch(kEndpointSwitch) &&
++         !command_line->GetSwitchValueASCII(kEndpointSwitch).empty();
++}
++
++namespace {
++
++// Serializes |payload| as JSON and POSTs it to the endpoint from
++// the command line. Fire-and-forget: the loader owns itself until
++// the request finishes or times out (3 seconds), the response is
++// ignored, and any failure (no browser process, no network context,
++// invalid endpoint URL) silently drops the event. Never blocks the
++// caller beyond building the request.
++void PostJson(base::Value::Dict payload) {
++  if (!g_browser_process) {
++    return;
++  }
++  auto* network_context_manager =
++      g_browser_process->system_network_context_manager();
++  if (!network_context_manager) {
++    return;
++  }
++  auto* factory = network_context_manager->GetURLLoaderFactory();
++  if (!factory) {
++    return;
++  }
++  std::string json;
++  if (!base::JSONWriter::Write(payload, &json)) {
++    return;
++  }
++  auto request = std::make_unique<network::ResourceRequest>();
++  request->url = GURL(base::CommandLine::ForCurrentProcess()
++                          ->GetSwitchValueASCII(kEndpointSwitch));
++  if (!request->url.is_valid()) {
++    return;
++  }
++  request->method = "POST";
++  request->load_flags = net::LOAD_BYPASS_CACHE | net::LOAD_DISABLE_CACHE;
++  request->credentials_mode = network::mojom::CredentialsMode::kOmit;
++  static constexpr net::NetworkTrafficAnnotationTag kAnnotation =
++      net::DefineNetworkTrafficAnnotation("lumo_debugger_event", R"(
++        semantics {
++          sender: "Lumo Debugger Reporter"
++          description:
++            "Sends opt-in diagnostic events (startup, tab list, "
++            "relaunch, shutdown) as JSON to the Lumo debugger app "
++            "running on the user's own machine. Only sent in "
++            "sessions the debugger app itself launched with "
++            "--lumo-debugger-endpoint; a normally launched browser "
++            "never sends these."
++          trigger:
++            "Browser startup, tab open/close/title/URL changes "
++            "(debounced, plus a 5 second periodic refresh), "
++            "relaunch, and shutdown, only when "
++            "--lumo-debugger-endpoint is present."
++          data:
++            "Event type; for startup: browser version, user data "
++            "directory path, profile name, enabled Lumo feature "
++            "names; for tabs: title, URL and renderer process "
++            "private memory of tabs in normal (non-incognito) "
++            "windows only; for relaunch: target executable path "
++            "and success flag. No passwords, API keys, or "
++            "incognito data."
++          destination: LOCAL
++        }
++        policy {
++          cookies_allowed: NO
++          setting:
++            "Only active in sessions launched with "
++            "--lumo-debugger-endpoint."
++          policy_exception_justification:
++            "Opt-in local diagnostics for the browser owner's own "
++            "debugger app."
++        })");
++  auto loader =
++      network::SimpleURLLoader::Create(std::move(request), kAnnotation);
++  loader->AttachStringForUpload(json, "application/json");
++  loader->SetTimeoutDuration(base::Seconds(3));
++  network::SimpleURLLoader* loader_ptr = loader.get();
++  loader_ptr->DownloadToString(
++      factory,
++      base::BindOnce(
++          [](std::unique_ptr<network::SimpleURLLoader> owned_loader,
++             std::unique_ptr<std::string> body) {
++            // The response body (or a null body on failure) is
++            // ignored; |owned_loader| is destroyed here, once the
++            // request has completed.
++          },
++          std::move(loader)),
++      1024);
++}
++
++// Builds the "tabs" array: one entry per tab in normal,
++// non-off-the-record browser windows. Incognito windows are
++// excluded entirely because tab titles and URLs are private.
++//
++// memory_bytes is the private memory footprint of the renderer
++// process hosting the tab's primary main frame. This is a
++// per-process value: tabs sharing a renderer process (same site,
++// not yet isolated into their own processes, etc.) each report
++// that process's full footprint, so the numbers are an
++// approximation of per-tab cost, not an exact split.
++base::Value::List CollectTabs() {
++  base::Value::List tabs;
++  std::map<base::ProcessHandle, uint64_t> memory_by_pid;
++  GlobalBrowserCollection::GetInstance()->ForEach(
++      [&tabs, &memory_by_pid](BrowserWindowInterface* browser) {
++        Profile* profile = browser->GetProfile();
++        if (browser->GetType() !=
++                BrowserWindowInterface::Type::TYPE_NORMAL ||
++            !profile || profile->IsOffTheRecord()) {
++          return true;
++        }
++        TabStripModel* model = browser->GetTabStripModel();
++        if (!model) {
++          return true;
++        }
++        for (int i = 0; i < model->count(); ++i) {
++          content::WebContents* web_contents = model->GetWebContentsAt(i);
++          if (!web_contents) {
++            continue;
++          }
++          base::Value::Dict tab;
++          tab.Set("title", base::UTF16ToUTF8(web_contents->GetTitle()));
++          tab.Set("url", web_contents->GetLastCommittedURL().spec());
++          uint64_t memory_bytes = 0;
++          if (content::RenderFrameHost* frame =
++                  web_contents->GetPrimaryMainFrame()) {
++            if (content::RenderProcessHost* host = frame->GetProcess()) {
++              const base::Process& process = host->GetProcess();
++              if (process.IsValid()) {
++                const base::ProcessHandle pid = process.Handle();
++                auto [it, inserted] = memory_by_pid.try_emplace(pid, 0);
++                if (inserted) {
++                  if (std::unique_ptr<base::ProcessMetrics> metrics =
++                          base::ProcessMetrics::CreateProcessMetrics(pid)) {
++                    if (auto info = metrics->GetMemoryInfo();
++                        info.has_value()) {
++#if BUILDFLAG(IS_WIN)
++                      // ProcessMemoryInfo::private_bytes only
++                      // exists on Windows; elsewhere a tab's
++                      // memory is reported as 0.
++                      it->second = info->private_bytes;
++#endif
++                    }
++                  }
++                }
++                memory_bytes = it->second;
++              }
++            }
++          }
++          tab.Set("memory_bytes", static_cast<double>(memory_bytes));
++          tabs.Append(std::move(tab));
++        }
++        return true;
++      });
++  return tabs;
++}
++
++// Observes browser and tab strip changes for the whole session and
++// sends "tabs" events: debounced (1 second) after tab-related
++// changes, and every 5 seconds regardless. Leaked intentionally
++// (base::NoDestructor in StartSession's helper below): it must live
++// until the process exits, and its timer simply stops being
++// serviced during shutdown.
++class SessionReporter : public BrowserCollectionObserver,
++                        public TabStripModelObserver {
++ public:
++  SessionReporter() = default;
++  SessionReporter(const SessionReporter&) = delete;
++  SessionReporter& operator=(const SessionReporter&) = delete;
++
++  void Start() {
++    if (started_) {
++      return;
++    }
++    started_ = true;
++    GlobalBrowserCollection* collection =
++        GlobalBrowserCollection::GetInstance();
++    collection_observation_.Observe(collection);
++    collection->ForEach([this](BrowserWindowInterface* browser) {
++      ObserveBrowser(browser);
++      return true;
++    });
++    tabs_timer_.Start(FROM_HERE, base::Seconds(5),
++                      base::BindRepeating(&SessionReporter::SendTabs,
++                                          base::Unretained(this)));
++    ScheduleTabsSend();
++  }
++
++  // BrowserCollectionObserver:
++  void OnBrowserCreated(BrowserWindowInterface* browser) override {
++    ObserveBrowser(browser);
++    ScheduleTabsSend();
++  }
++  void OnBrowserClosed(BrowserWindowInterface* browser) override {
++    ScheduleTabsSend();
++  }
++
++  // TabStripModelObserver:
++  void OnTabStripModelChanged(
++      TabStripModel* tab_strip_model,
++      const TabStripModelChange& change,
++      const TabStripSelectionChange& selection) override {
++    ScheduleTabsSend();
++  }
++  void OnTabChangedAt(tabs::TabInterface* tab,
++                      TabChangeType change_type) override {
++    ScheduleTabsSend();
++  }
++  void OnTabStripModelDestroyed(TabStripModel* tab_strip_model) override {
++    observed_models_.erase(tab_strip_model);
++  }
++
++  void SendTabs() {
++    pending_tabs_send_ = false;
++    base::Value::Dict payload;
++    payload.Set("type", "tabs");
++    payload.Set("tabs", CollectTabs());
++    PostJson(std::move(payload));
++  }
++
++ private:
++  void ObserveBrowser(BrowserWindowInterface* browser) {
++    Profile* profile = browser->GetProfile();
++    if (browser->GetType() != BrowserWindowInterface::Type::TYPE_NORMAL ||
++        !profile || profile->IsOffTheRecord()) {
++      return;
++    }
++    if (TabStripModel* model = browser->GetTabStripModel()) {
++      if (observed_models_.insert(model).second) {
++        model->AddObserver(this);
++      }
++    }
++  }
++
++  void ScheduleTabsSend() {
++    if (pending_tabs_send_) {
++      return;
++    }
++    pending_tabs_send_ = true;
++    base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
++        FROM_HERE,
++        base::BindOnce(&SessionReporter::SendTabs, base::Unretained(this)),
++        base::Seconds(1));
++  }
++
++  bool started_ = false;
++  bool pending_tabs_send_ = false;
++  base::ScopedObservation<GlobalBrowserCollection,
++                          BrowserCollectionObserver>
++      collection_observation_{this};
++  std::set<TabStripModel*> observed_models_;
++  base::RepeatingTimer tabs_timer_;
++};
++
++SessionReporter* GetSessionReporter() {
++  static base::NoDestructor<SessionReporter> reporter;
++  return reporter.get();
++}
++
++void AppendFeatureIfEnabled(base::Value::List* list,
++                            const base::Feature& feature) {
++  if (base::FeatureList::IsEnabled(feature)) {
++    list->Append(feature.name);
++  }
++}
++
++}  // namespace
++
++void StartSession() {
++  if (!IsEnabled()) {
++    return;
++  }
++  base::Value::Dict payload;
++  payload.Set("type", "startup");
++  payload.Set("version",
++              std::string(version_info::GetVersionNumber()));
++  base::FilePath user_data_dir;
++  if (base::PathService::Get(chrome::DIR_USER_DATA_DIR, &user_data_dir)) {
++    payload.Set("user_data_dir", user_data_dir.AsUTF8Unsafe());
++  }
++  std::string profile_name;
++  if (ProfileManager* profile_manager =
++          g_browser_process->profile_manager()) {
++    if (Profile* profile = profile_manager->GetLastUsedProfileIfLoaded()) {
++      profile_name = profile->GetProfileUserName();
++    }
++  }
++  payload.Set("profile_name", profile_name);
++  base::Value::List enabled_features;
++  AppendFeatureIfEnabled(&enabled_features, features::kLumoGlicMenu);
++  AppendFeatureIfEnabled(&enabled_features,
++                         features::kLumoHoverCardMemoryUsage);
++  AppendFeatureIfEnabled(&enabled_features, features::kLumoDarkModeSchedule);
++  AppendFeatureIfEnabled(&enabled_features,
++                         features::kLumoTrackingProtectionStrict);
++  AppendFeatureIfEnabled(&enabled_features, features::kLumoFullPageScreenshot);
++  AppendFeatureIfEnabled(&enabled_features,
++                         features::kLumoTabGroupSessionSave);
++  AppendFeatureIfEnabled(&enabled_features,
++                         features::kLumoLaunchThoriumProfile);
++  payload.Set("enabled_features", std::move(enabled_features));
++  PostJson(std::move(payload));
++
++  GetSessionReporter()->Start();
++}
++
++void ReportRelaunch(const base::FilePath& target_exe,
++                    bool used_fallback,
++                    bool success) {
++  if (!IsEnabled()) {
++    return;
++  }
++  base::Value::Dict payload;
++  payload.Set("type", "relaunch");
++  payload.Set("target_exe", target_exe.AsUTF8Unsafe());
++  payload.Set("used_fallback", used_fallback);
++  payload.Set("success", success);
++  PostJson(std::move(payload));
++}
++
++void ReportShutdown() {
++  if (!IsEnabled()) {
++    return;
++  }
++  base::Value::Dict payload;
++  payload.Set("type", "shutdown");
++  PostJson(std::move(payload));
++}
++
++}  // namespace lumo::debugger
+diff --git a/chrome/browser/lumo/lumo_debugger_reporter.h b/chrome/browser/lumo/lumo_debugger_reporter.h
+new file mode 100644
+index 0000000..93ce49e
+--- /dev/null
++++ b/chrome/browser/lumo/lumo_debugger_reporter.h
+@@ -0,0 +1,48 @@
++// Copyright 2026 seasea1010
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_LUMO_LUMO_DEBUGGER_REPORTER_H_
++#define CHROME_BROWSER_LUMO_LUMO_DEBUGGER_REPORTER_H_
++
++namespace base {
++class FilePath;
++}  // namespace base
++
++namespace lumo::debugger {
++
++// Command-line switch carrying the Lumo debugger app's event
++// endpoint, e.g. --lumo-debugger-endpoint=http://127.0.0.1:47741/event.
++// Only sessions launched with this switch (i.e. by the debugger app
++// itself) ever send events; a normally launched session sends
++// nothing at all.
++inline constexpr char kEndpointSwitch[] = "lumo-debugger-endpoint";
++
++// True when the current process was launched with a non-empty
++// --lumo-debugger-endpoint value.
++bool IsEnabled();
++
++// Sends the "startup" event (version, user data directory, profile
++// name, enabled Lumo features) and, for the rest of the session,
++// observes tab changes and periodically sends "tabs" events.
++// Called once from ChromeBrowserMainParts::PostBrowserStart().
++// No-op when the endpoint switch is absent.
++void StartSession();
++
++// Sends the "relaunch" event: |target_exe| is the executable the
++// relaunch tried to start, |used_fallback| whether patch 0014's
++// fallback to the running executable kicked in, and |success|
++// whether the new process was created. No-op when disabled.
++void ReportRelaunch(const base::FilePath& target_exe,
++                    bool used_fallback,
++                    bool success);
++
++// Sends the "shutdown" event (type only). Called from
++// ChromeBrowserMainParts::PostMainMessageLoopRun(). Fire-and-
++// forget: this late in shutdown the network stack may already be
++// going away, so delivery is best effort. No-op when disabled.
++void ReportShutdown();
++
++}  // namespace lumo::debugger
++
++#endif  // CHROME_BROWSER_LUMO_LUMO_DEBUGGER_REPORTER_H_

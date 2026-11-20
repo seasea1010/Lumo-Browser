@@ -1,0 +1,27 @@
+diff --git a/chrome/browser/first_run/upgrade_util_win.cc b/chrome/browser/first_run/upgrade_util_win.cc
+index ca023f9..fae67c5 100644
+--- a/chrome/browser/first_run/upgrade_util_win.cc
++++ b/chrome/browser/first_run/upgrade_util_win.cc
+@@ -439,8 +439,20 @@ bool RelaunchChromeBrowserImpl(const base::CommandLine& command_line,
+   // Explicitly make sure to relaunch chrome.exe rather than old_chrome.exe.
+   // This can happen when old_chrome.exe is launched by a user.
+   base::CommandLine chrome_exe_command_line = command_line;
+-  chrome_exe_command_line.SetProgram(
+-      chrome_exe.DirName().Append(installer::kChromeExe));
++  base::FilePath relaunch_exe =
++      chrome_exe.DirName().Append(installer::kChromeExe);
++  if (!base::PathExists(relaunch_exe)) {
++    // Lumo: the portable package renames the browser executable
++    // (thorium.exe -> lumo.exe), so the canonical installer name
++    // does not exist next to the running executable, and a
++    // relaunch (the Chrome Labs / chrome://flags "Relaunch"
++    // button, chrome://restart) would try to launch a
++    // nonexistent path and the browser would never come back
++    // (task 23). Fall back to the executable that is actually
++    // running.
++    relaunch_exe = chrome_exe;
++  }
++  chrome_exe_command_line.SetProgram(relaunch_exe);
+ 
+   // Set the working directory to the exe's directory. This avoids a handle to
+   // the version directory being kept open in the relaunched child process.

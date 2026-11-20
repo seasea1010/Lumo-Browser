@@ -1,0 +1,108 @@
+diff --git a/chrome/browser/themes/theme_service.cc b/chrome/browser/themes/theme_service.cc
+index 4cbe547..4a98928 100644
+--- a/chrome/browser/themes/theme_service.cc
++++ b/chrome/browser/themes/theme_service.cc
+@@ -15,6 +15,7 @@
+ #include "base/auto_reset.h"
+ #include "base/command_line.h"
+ #include "base/containers/fixed_flat_map.h"
++#include "base/feature_list.h"
+ #include "base/functional/bind.h"
+ #include "base/location.h"
+ #include "base/memory/raw_ptr.h"
+@@ -31,6 +32,7 @@
+ #include "base/task/sequenced_task_runner.h"
+ #include "base/task/single_thread_task_runner.h"
+ #include "base/task/thread_pool.h"
++#include "base/time/time.h"
+ #include "base/trace_event/trace_event.h"
+ #include "build/build_config.h"
+ #include "chrome/browser/browser_process.h"
+@@ -50,6 +52,7 @@
+ #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
+ #include "chrome/browser/ui/browser_window/public/profile_browser_collection.h"
+ #include "chrome/browser/ui/color/chrome_color_id.h"
++#include "chrome/browser/ui/ui_features.h"
+ #include "chrome/common/buildflags.h"
+ #include "chrome/common/chrome_constants.h"
+ #include "chrome/common/chrome_switches.h"
+@@ -366,6 +369,19 @@ void ThemeService::Init() {
+ 
+   InitFromPrefs();
+ 
++  // Lumo (patch 0015): while the kLumoDarkModeSchedule
++  // experiment is enabled, the schedule owns the browser color
++  // scheme. Apply the current time-of-day scheme right away and
++  // re-check every minute. When the experiment is off, none of
++  // this runs and the color scheme is left to the user/OS.
++  if (base::FeatureList::IsEnabled(features::kLumoDarkModeSchedule)) {
++    ApplyLumoDarkModeSchedule();
++    lumo_dark_mode_schedule_timer_.Start(
++        FROM_HERE, base::Minutes(1),
++        base::BindRepeating(&ThemeService::ApplyLumoDarkModeSchedule,
++                            base::Unretained(this)));
++  }
++
+   // ThemeObserver should be constructed before calling
+   // OnExtensionServiceReady. Otherwise, the ThemeObserver won't be
+   // constructed in time to observe the corresponding events.
+@@ -717,6 +733,20 @@ ThemeService::BrowserColorScheme ThemeService::GetBrowserColorScheme() const {
+       profile_->GetPrefs()->GetInteger(prefs::kBrowserColorScheme));
+ }
+ 
++void ThemeService::ApplyLumoDarkModeSchedule() {
++  // Lumo (patch 0015): the night window is fixed at 19:00-07:00
++  // local time. Only called while the kLumoDarkModeSchedule
++  // experiment is enabled.
++  base::Time::Exploded exploded;
++  base::Time::Now().LocalExplode(&exploded);
++  const bool is_night = exploded.hour >= 19 || exploded.hour < 7;
++  const BrowserColorScheme target =
++      is_night ? BrowserColorScheme::kDark : BrowserColorScheme::kLight;
++  if (GetBrowserColorScheme() != target) {
++    SetBrowserColorScheme(target);
++  }
++}
++
+ bool ThemeService::BrowserUsesDarkColors() const {
+   const BrowserColorScheme color_scheme = GetBrowserColorScheme();
+   return color_scheme == BrowserColorScheme::kDark ||
+diff --git a/chrome/browser/themes/theme_service.h b/chrome/browser/themes/theme_service.h
+index b5f70e3..7e925dc 100644
+--- a/chrome/browser/themes/theme_service.h
++++ b/chrome/browser/themes/theme_service.h
+@@ -15,6 +15,7 @@
+ #include "base/observer_list.h"
+ #include "base/scoped_observation.h"
+ #include "base/task/cancelable_task_tracker.h"
++#include "base/timer/timer.h"
+ #include "chrome/browser/search/background/theme_delegate.h"
+ #include "chrome/browser/themes/browser_theme_provider_delegate.h"
+ #include "chrome/browser/themes/theme_helper.h"
+@@ -200,6 +201,14 @@ class ThemeService : public KeyedService,
+   // Gets the browser color scheme preference.
+   virtual BrowserColorScheme GetBrowserColorScheme() const;
+ 
++  // Lumo (patch 0015): applies the kLumoDarkModeSchedule
++  // experiment. Sets the browser color scheme to dark at night
++  // (19:00-07:00 local time) and to light during the day. Called
++  // once from Init() and then once a minute by
++  // lumo_dark_mode_schedule_timer_ while the experiment is
++  // enabled; a no-op when the scheme already matches.
++  void ApplyLumoDarkModeSchedule();
++
+   // Returns true if either the browser color scheme is dark, or the browser
+   // color scheme is "system" and the native theme is dark.
+   bool BrowserUsesDarkColors() const;
+@@ -418,6 +427,11 @@ class ThemeService : public KeyedService,
+   raw_ptr<Profile> profile_;
+   PrefChangeRegistrar pref_change_registrar_;
+ 
++  // Lumo (patch 0015): drives ApplyLumoDarkModeSchedule() once a
++  // minute while the kLumoDarkModeSchedule experiment is enabled.
++  // Never started when the experiment is off.
++  base::RepeatingTimer lumo_dark_mode_schedule_timer_;
++
+   const raw_ref<const ThemeHelper> theme_helper_;
+   scoped_refptr<CustomThemeSupplier> theme_supplier_;
+ 
