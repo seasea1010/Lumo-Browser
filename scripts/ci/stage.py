@@ -111,6 +111,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import xml.etree.ElementTree as ET
 from pathlib import Path, PureWindowsPath
 
 # Helium's convention: exit code 42 means "build incomplete, resume later".
@@ -1520,7 +1521,13 @@ def filter_unappliable_series(thorium_root, chromium_src):
 #    first-profile name, the Chrome Labs title, the flags page
 #    title, the FRE sign-in title — the last two with their ja
 #    translations re-keyed to the new grit ids, since a body edit
-#    moves the fingerprint the runtime looks translations up by).
+#    moves the fingerprint the runtime looks translations up by),
+#    then the systematic Thorium -> Lumo pass over the desktop
+#    GRD/GRDP files (lumo_systematic_brand_pass: the 2026-11-19
+#    audit found ~945 branded bodies the targeted edits cannot
+#    cover), the same replacement for the chrome://flags entry
+#    header's display strings, and the Labs origin suffixes
+#    (" (Thorium)" / " (Lumo)") on the Labs experiment names.
 #    GRD strings are edited by message name rather than by patch
 #    because Thorium's GRD rebase rewrites them during setup.py, so
 #    their exact post-setup wording is Thorium-version data, not
@@ -1711,6 +1718,21 @@ LUMO_ICON_COPIES = (
     ("wordmark_white.png",
      "components/resources/default_200_percent/chromium/"
      "product_logo_white.png"),
+)
+
+# Preinstalled extension packages (patch 0027): signed CRX files
+# committed under scripts/ci/lumo_extensions/ (see the README
+# there), copied into the tree so the component resources GRD can
+# embed them. At runtime the browser writes each CRX into new
+# profiles and registers it as an external extension
+# (chrome/browser/extensions/preinstalled_extensions.cc), the
+# same seeding design as the bundled uBlock Origin. The
+# destination directory is Lumo-only, so the copy creates it.
+LUMO_EXTENSION_CRX_COPIES = (
+    # (asset in scripts/ci/lumo_extensions/, destination in the tree)
+    ("chrome_info_viewer_1.0.0.crx",
+     "chrome/browser/resources/chrome_info_viewer/"
+     "chrome_info_viewer_1.0.0.crx"),
 )
 
 # grit translation fingerprint of the message "Thorium Experiments"
@@ -2008,6 +2030,1347 @@ def lumo_string_replacements(chromium_src):
     return results
 
 
+# ---------------------------------------------------------------------------
+# Systematic Thorium -> Lumo brand pass (build #24, task 19).
+#
+# The 2026-11-19 full audit of the branded tree
+# (goals/cef-chromium/files/lumo-thorium-strings-audit.md) found
+# ~945 desktop GRD/GRDP messages whose bodies still name Thorium:
+# Thorium's GRD rebase writes the product name literally into
+# message bodies, so the targeted replacements above can never
+# keep up. This pass replaces the word "Thorium" with "Lumo" in
+# the TEXT of every desktop message that actually ships in the
+# Windows build, and re-keys the Japanese translations to the
+# new grit ids (a body edit moves the fingerprint the runtime
+# looks translations up by; see _retarget_xtb_translation).
+#
+# Scope and protections (audit classes B and C):
+#  * Only the files in LUMO_SYSTEMATIC_GRD_FILES are touched
+#    (desktop chrome/app + components string files). Android and
+#    ChromeOS string files are not in the list at all.
+#  * A message wrapped in <if> gates is edited only when every
+#    gate evaluates true for the Windows build (evaluated against
+#    LUMO_GRD_WINDOWS_DEFINES), so variants for other platforms,
+#    the Google-branded flavor, Chrome for Testing and titlecase
+#    variants are left alone.
+#  * Excluded by name or body (class B — keeping "Thorium" is
+#    CORRECT there): the decided BSD attribution ("Based on
+#    Thorium and Chromium"), the decided bilingual Labs/flags
+#    titles, the Thorium 2024 UI experiment NAME, Lumo's own
+#    strings that reference the real Thorium browser/profile
+#    (IDS_LUMO_* / *_LUMO_*), the updater service names (no
+#    updater ships), "ThoriumOS", the "Not used in Thorium"
+#    placeholders, and bodies already carrying a Labs origin
+#    suffix from lumo_labs_origin_suffix_pass below.
+#  * desc/meaning attributes, comments and <ph> element content
+#    are never touched — only message text nodes.
+#
+# The word match is ASCII-case-sensitive "Thorium" not flanked
+# by ASCII letters or digits, applied to the raw text segments OUTSIDE
+# <ph> elements: in the raw body a placeholder tag boundary is
+# a word boundary (the user sees "sign in to Thorium" as words
+# even where a link placeholder follows), while grit's
+# presentable content would glue the placeholder name onto the
+# word. New grit ids are therefore always computed from the
+# EDITED segment re-parsed, never from a string substitution on
+# the presentable content.
+#
+# Idempotent: after one run the edited bodies contain no
+# "Thorium" word in their text nodes, the exclusions cover the
+# intentional remainder, and the JA entries already sit at the
+# new ids (a re-run finds no candidates and no stale entries).
+# The loud check is a post-pass invariant — zero unprotected
+# Windows-build messages still containing the word — rather
+# than an edit count, so a branding re-run (which legitimately
+# edits nothing) passes while a silently broken pass on a
+# fresh tree fails. Measured on the pinned tree: 819 EN
+# messages edited, 721 ja XTB entries re-keyed or duplicated
+# (see _retarget_xtb_entry for the shared-id duplication).
+# ---------------------------------------------------------------------------
+
+LUMO_SYSTEMATIC_GRD_FILES = (
+    "chrome/app/app_management_strings.grdp",
+    "chrome/app/chromium_strings.grd",
+    "chrome/app/extensions_strings.grdp",
+    "chrome/app/generated_resources.grd",
+    "chrome/app/settings_chromium_strings.grdp",
+    "chrome/app/settings_strings.grdp",
+    "chrome/app/shared_settings_strings.grdp",
+    "components/autofill_payments_strings.grdp",
+    "components/autofill_strings.grdp",
+    "components/components_chromium_strings.grd",
+    "components/error_page_strings.grdp",
+    "components/flags_strings.grdp",
+    "components/heavy_ad_intervention_strings.grdp",
+    "components/management_strings.grdp",
+    "components/new_or_sad_tab_strings.grdp",
+    "components/page_info_strings.grdp",
+    "components/reset_password_strings.grdp",
+    "components/security_interstitials_strings.grdp",
+    "components/ssl_errors_strings.grdp",
+    "components/version_ui_strings.grdp",
+)
+
+# Japanese XTBs the re-keyed translations can live in. An id is
+# looked up in ALL of them: a message's translation occasionally
+# sits in a sibling GRD's XTB (IDS_FLAGS_UI_RELAUNCH_NOTICE lives
+# in components_chromium_strings.grd but its ja entry exists in
+# chromium_strings_ja.xtb as well). The Google-Chrome-branded
+# XTBs are a different channel and are not searched.
+LUMO_SYSTEMATIC_JA_XTB_FILES = (
+    "chrome/app/resources/chromium_strings_ja.xtb",
+    "chrome/app/resources/generated_resources_ja.xtb",
+    "components/strings/components_strings_ja.xtb",
+    "components/strings/components_chromium_strings_ja.xtb",
+    "components/strings/privacy_sandbox_strings_ja.xtb",
+)
+
+# grit <if expr> defines for the Windows desktop build Lumo
+# ships. Unknown identifiers (a future feature define) make the
+# gate pass, biasing toward replacement; every platform define
+# is listed, so other-platform variants are still excluded.
+LUMO_GRD_WINDOWS_DEFINES = {
+    "is_win": True,
+    "is_macosx": False,
+    "is_linux": False,
+    "is_ios": False,
+    "is_android": False,
+    "is_chromeos": False,
+    "is_fuchsia": False,
+    "is_posix": False,
+    "is_cfm": False,
+    "reven": False,
+    "_google_chrome": False,
+    "_is_chrome_for_testing_branded": False,
+    "toolkit_views": True,
+    "use_titlecase": False,
+    "use_blink": True,
+    "enable_extensions": True,
+    "enable_extensions_core": True,
+    "enable_pdf": True,
+    "enable_printing": True,
+    "enable_vr": True,
+    "enable_webui_ntp": True,
+    "chrome_root_store_cert_management_ui": False,
+}
+
+LUMO_SYSTEMATIC_NAME_EXCLUDES = frozenset({
+    # Decided BSD attribution form (also caught by the
+    # "Based on Thorium" body rule once the targeted
+    # replacement above has run).
+    "IDS_ABOUT_VERSION_COPYRIGHT",
+    # Decided bilingual titles: "Lumo Experiments
+    # (Thorium Experiments)" / "Lumo 試験運用機能（Thorium
+    # 試験運用機能）".
+    "IDS_WINDOW_TITLE_EXPERIMENTS",
+    "IDS_FLAGS_UI_TITLE",
+    # The experiment name itself is kept by decision; only its
+    # description (which names no product) is unaffected anyway.
+    "IDS_CHROMELABS_THORIUM_2024_NAME",
+})
+
+_THORIUM_WORD_RE = re.compile(
+    r"(?<![A-Za-z0-9])Thorium(?![A-Za-z0-9])")
+_GRD_MESSAGE_NAME_RE = re.compile(r'\bname\s*=\s*"([^"]+)"')
+
+
+def _grit_fingerprint(text):
+    """grit extern/FP.FingerPrint: first half of the md5,
+    interpreted as a signed 64-bit integer."""
+    value = int(hashlib.md5(text.encode("utf-8")).hexdigest()[:16], 16)
+    if value & 0x8000000000000000:
+        value = -((~value & 0xFFFFFFFFFFFFFFFF) + 1)
+    return value
+
+
+def _grit_message_id(content, meaning=""):
+    """grit extern/tclib.GenerateMessageId over the presentable
+    content (see _grd_presentable_content), sign bit stripped."""
+    fp = _grit_fingerprint(content)
+    if meaning:
+        fp = (_grit_fingerprint(meaning) + (fp << 1)
+              + (1 if fp < 0 else 0))
+    return str(fp & 0x7FFFFFFFFFFFFFFF)
+
+
+def _grd_presentable_content(elem):
+    """The string grit fingerprints: the message's text with
+    each <ph> element replaced by its upper-cased name,
+    leading/trailing whitespace stripped."""
+    parts = [elem.text or ""]
+    for child in elem:
+        if child.tag != "ph":
+            raise StageError(
+                f"unexpected <{child.tag}> element inside message "
+                f"{elem.get('name')!r}; grit messages only carry "
+                "<ph> placeholders.")
+        parts.append((child.get("name") or "").upper())
+        parts.append(child.tail or "")
+    return "".join(parts).strip()
+
+
+def _grd_text_nodes(elem):
+    """The message's raw text segments (before/between/after its
+    <ph> elements) — where the user-visible words live."""
+    nodes = [elem.text or ""]
+    for child in elem:
+        nodes.append(child.tail or "")
+    return nodes
+
+
+def _grd_if_applies(expr):
+    """Evaluate a grit <if expr> for the Windows build. The
+    pinned tree's exprs are pure and/or/not combinations of
+    defines (verified); anything unparseable is drift and fails
+    loudly, while an unknown DEFINE makes the gate pass."""
+    if not expr:
+        return True
+    try:
+        return bool(eval(expr, {"__builtins__": {}},
+                         dict(LUMO_GRD_WINDOWS_DEFINES)))
+    except NameError:
+        return True
+    except Exception as exc:
+        raise StageError(
+            f"cannot evaluate grit <if expr={expr!r}>: {exc}")
+
+
+def _walk_grd_messages(elem, ifs, out):
+    """Collect (message element, enclosing <if> exprs) in
+    document order.
+
+    GRD conditionals come in two shapes: messages directly
+    under <if expr="...">, and <if> wrapping <then>/<else>
+    branches. A <then> branch applies when the expr holds; an
+    <else> branch applies when it does NOT, so the else side
+    inherits the negated expr. (Treating both branches as
+    gated by the bare expr would skip every default variant
+    written as the else of a branding gate — e.g. the regular
+    "About Thorium" is the <else> of the Chrome-for-Testing
+    gate in settings_chromium_strings.grdp.)"""
+    if elem.tag == "message":
+        out.append((elem, ifs))
+    for child in elem:
+        child_ifs = ifs
+        if elem.tag == "if":
+            expr = elem.get("expr") or ""
+            if expr:
+                if child.tag == "else":
+                    child_ifs = ifs + (f"not ({expr})",)
+                else:
+                    child_ifs = ifs + (expr,)
+        _walk_grd_messages(child, child_ifs, out)
+
+
+def _xml_tag_end(text, start, desc):
+    """Index of the ">" closing the tag that starts at `start`,
+    skipping over quoted attribute values."""
+    quote = None
+    j = start
+    while j < len(text):
+        ch = text[j]
+        if quote:
+            if ch == quote:
+                quote = None
+        elif ch in "\"'":
+            quote = ch
+        elif ch == ">":
+            return j
+        j += 1
+    raise StageError(f"{desc}: unterminated tag at offset {start}")
+
+
+def _grd_message_spans(text, desc):
+    """(start, end, body_start) of every <message>...</message>
+    in document order, skipping XML comments (which may contain
+    commented-out messages). Pairs 1:1 with the elements from
+    _walk_grd_messages / ElementTree iteration."""
+    spans = []
+    i = 0
+    n = len(text)
+    while i < n:
+        comment = text.find("<!--", i)
+        match = re.search(r"<message(?=[\s>])", text[i:])
+        mpos = i + match.start() if match else -1
+        if comment != -1 and (mpos == -1 or comment < mpos):
+            end = text.find("-->", comment)
+            if end == -1:
+                raise StageError(f"{desc}: unterminated XML comment")
+            i = end + 3
+            continue
+        if mpos == -1:
+            break
+        tag_end = _xml_tag_end(text, mpos, desc)
+        close = text.find("</message>", tag_end)
+        if close == -1:
+            raise StageError(
+                f"{desc}: <message> at offset {mpos} has no "
+                "</message>; self-closing messages are not "
+                "expected in GRD files.")
+        spans.append((mpos, close + len("</message>"), tag_end + 1))
+        i = close + len("</message>")
+    return spans
+
+
+def _replace_thorium_word_outside_ph(raw, desc):
+    """Replace the word Thorium -> Lumo in the text segments of
+    a raw message/translation body, leaving <ph>...</ph> element
+    spans byte-identical. Returns (new_raw, replacements)."""
+    out = []
+    count = 0
+    i = 0
+    while i < len(raw):
+        match = re.search(r"<ph(?=[\s/>])", raw[i:])
+        if not match:
+            seg, k = _THORIUM_WORD_RE.subn("Lumo", raw[i:])
+            out.append(seg)
+            count += k
+            break
+        start = i + match.start()
+        seg, k = _THORIUM_WORD_RE.subn("Lumo", raw[i:start])
+        out.append(seg)
+        count += k
+        tag_end = _xml_tag_end(raw, start, desc)
+        if raw[tag_end - 1] == "/":
+            out.append(raw[start:tag_end + 1])
+            i = tag_end + 1
+        else:
+            close = raw.find("</ph>", tag_end)
+            if close == -1:
+                raise StageError(f"{desc}: unterminated <ph> element")
+            out.append(raw[start:close + len("</ph>")])
+            i = close + len("</ph>")
+    return "".join(out), count
+
+
+def _lumo_systematic_excluded(name, content, joined_nodes):
+    """Audit class B/C protections for the systematic pass."""
+    if name in LUMO_SYSTEMATIC_NAME_EXCLUDES:
+        return True
+    if name.startswith("IDS_LUMO_") or "_LUMO_" in name:
+        # Lumo's own strings; several intentionally reference
+        # the real Thorium (profile dir, the removed Gemini
+        # item's name, the welcome credit's attribution).
+        return True
+    if name.startswith("IDS_UPDATER_SERVICE_"):
+        # Omaha updater strings; no updater ships in Lumo.
+        return True
+    if "Based on Thorium" in content:
+        return True
+    if "ThoriumOS" in joined_nodes:
+        return True
+    if "Not used in Thorium" in joined_nodes:
+        # Invisible placeholders kept in sync with the resource
+        # maps; not brand display.
+        return True
+    stripped = content.strip()
+    if stripped.endswith(" (Thorium)") or stripped.endswith(" (Lumo)"):
+        # Already carries a Labs origin suffix (task 25 pass);
+        # the suffix word is data, not a product reference.
+        return True
+    return False
+
+
+def _retarget_xtb_entry(text, old_id, new_id, new_body,
+                        keep_old, desc):
+    """Apply one systematic-pass re-keying to an XTB text.
+
+    Normal case: the entry at old_id moves to new_id with
+    new_body. When keep_old is set — an unedited message still
+    uses old_id, e.g. an Android/ChromeOS-gated twin with the
+    same body (grit ids are content fingerprints, so twins
+    share the id AND the translation entry) — the old entry
+    STAYS and the new entry is inserted next to it, so neither
+    message loses its translation. Returns (new_text, changed).
+    Raises StageError when an entry at new_id already exists
+    with a different body.
+    """
+    old_match = re.search(
+        r'<translation id="' + re.escape(old_id) + r'">(.*?)'
+        r"</translation>", text, re.S)
+    if not old_match:
+        return text, 0
+    new_match = re.search(
+        r'<translation id="' + re.escape(new_id) + r'">(.*?)'
+        r"</translation>", text, re.S)
+    if new_match:
+        if new_match.group(1) != new_body:
+            raise StageError(
+                f"{desc}: translation id {new_id} already "
+                "present with a different body; refusing to "
+                "overwrite it.")
+        if keep_old:
+            return text, 0
+        # Destination already correct (an identical twin op
+        # landed first): just drop the stale old entry.
+        return (text[:old_match.start()] + text[old_match.end():]), 1
+    entry = (f'<translation id="{new_id}">{new_body}'
+             "</translation>")
+    if keep_old:
+        return (text[:old_match.end()] + "\n" + entry
+                + text[old_match.end():]), 1
+    return (text[:old_match.start()] + entry
+            + text[old_match.end():]), 1
+
+
+def lumo_systematic_brand_pass(chromium_src):
+    """Systematic Thorium -> Lumo replacement over the desktop
+    GRD/GRDP files, with the ja XTB re-keying (task 19).
+
+    Returns [(description, count)] like lumo_string_replacements.
+    Raises StageError on any drift from the pinned tree's shape.
+    """
+    id_ops = {}     # old grit id -> (new grit id, new content)
+    known_ids = {}  # grit id -> presentable content (pre-edit)
+    final_ids = set()  # grit ids in use after the pass
+    total_en = 0
+    for rel in LUMO_SYSTEMATIC_GRD_FILES:
+        path = chromium_src / rel
+        if not path.is_file():
+            raise StageError(
+                f"systematic brand pass: file missing: {path}")
+        text = path.read_text(encoding="utf-8")
+        try:
+            root = ET.fromstring(text.encode("utf-8"))
+        except ET.ParseError as exc:
+            raise StageError(
+                f"systematic brand pass: cannot parse {rel}: {exc}")
+        msgs = []
+        _walk_grd_messages(root, (), msgs)
+        spans = _grd_message_spans(text, rel)
+        if len(spans) != len(msgs):
+            raise StageError(
+                f"systematic brand pass: {rel}: found "
+                f"{len(spans)} raw <message> spans for "
+                f"{len(msgs)} parsed messages; the file's shape "
+                "drifted from what this pass can safely edit.")
+        edits = []
+        for idx, ((elem, ifs), span) in enumerate(zip(msgs, spans)):
+            start, end, body_start = span
+            name = elem.get("name") or ""
+            seg_name = _GRD_MESSAGE_NAME_RE.search(
+                text[start:body_start])
+            if not seg_name or seg_name.group(1) != name:
+                raise StageError(
+                    f"systematic brand pass: {rel}: raw span "
+                    f"#{idx} does not pair with parsed message "
+                    f"{name!r}; refusing to edit by position.")
+            content = _grd_presentable_content(elem)
+            meaning = elem.get("meaning") or ""
+            old_id = _grit_message_id(content, meaning)
+            prev = known_ids.setdefault(old_id, content)
+            if prev != content:
+                raise StageError(
+                    f"systematic brand pass: grit id {old_id} "
+                    f"maps to two different messages ({rel}: "
+                    f"{name}); refusing to continue.")
+            nodes = _grd_text_nodes(elem)
+            if not any(_THORIUM_WORD_RE.search(t) for t in nodes):
+                final_ids.add(old_id)
+                continue
+            if _lumo_systematic_excluded(name, content,
+                                         "".join(nodes)):
+                final_ids.add(old_id)
+                continue
+            if not all(_grd_if_applies(e) for e in ifs):
+                final_ids.add(old_id)
+                continue
+            body = text[body_start:end - len("</message>")]
+            new_body, n = _replace_thorium_word_outside_ph(
+                body, f"{rel}: {name}")
+            if n == 0:
+                raise StageError(
+                    f"systematic brand pass: {rel}: {name} was "
+                    "selected for replacement but its raw body "
+                    "has no replaceable 'Thorium'; the file's "
+                    "shape drifted.")
+            new_seg = (text[start:body_start] + new_body
+                       + "</message>")
+            try:
+                new_elem = ET.fromstring(new_seg.encode("utf-8"))
+            except ET.ParseError as exc:
+                raise StageError(
+                    f"systematic brand pass: {rel}: {name}: "
+                    f"edited message no longer parses: {exc}")
+            if any(_THORIUM_WORD_RE.search(t)
+                   for t in _grd_text_nodes(new_elem)):
+                raise StageError(
+                    f"systematic brand pass: {rel}: {name} "
+                    "still contains 'Thorium' in a text node "
+                    "after replacement.")
+            new_content = _grd_presentable_content(new_elem)
+            new_id = _grit_message_id(new_content, meaning)
+            op = id_ops.setdefault(old_id, (new_id, new_content))
+            if op != (new_id, new_content):
+                raise StageError(
+                    f"systematic brand pass: grit id {old_id} "
+                    "would be re-keyed inconsistently.")
+            final_ids.add(new_id)
+            edits.append((idx, new_seg))
+        if edits:
+            for idx, new_seg in sorted(edits, reverse=True):
+                start, end, _ = spans[idx]
+                text = text[:start] + new_seg + text[end:]
+            path.write_bytes(text.encode("utf-8"))
+            total_en += len(edits)
+
+    # A re-keyed id must not already belong to a DIFFERENT
+    # message that stays unchanged (its translation would be
+    # stolen). Measured on the pinned tree: no collisions.
+    for old_id, (new_id, new_content) in id_ops.items():
+        if new_id in known_ids and known_ids[new_id] != new_content:
+            raise StageError(
+                f"systematic brand pass: new grit id {new_id} "
+                "already belongs to a different unchanged "
+                "message; refusing to re-key.")
+
+    total_ja = 0
+    for rel in LUMO_SYSTEMATIC_JA_XTB_FILES:
+        path = chromium_src / rel
+        if not path.is_file():
+            raise StageError(
+                f"systematic brand pass: file missing: {path}")
+        text = path.read_text(encoding="utf-8")
+        changed = 0
+        for old_id, (new_id, _new_content) in id_ops.items():
+            if old_id == new_id:
+                continue
+            match = re.search(
+                r'<translation id="' + old_id + r'">(.*?)'
+                r"</translation>", text, re.S)
+            if not match:
+                continue
+            new_body, _ = _replace_thorium_word_outside_ph(
+                match.group(1), f"{rel}: translation {old_id}")
+            text, n = _retarget_xtb_entry(
+                text, old_id, new_id, new_body,
+                old_id in final_ids,
+                f"{rel}: translation {old_id}")
+            changed += n
+        if changed:
+            path.write_bytes(text.encode("utf-8"))
+            total_ja += changed
+
+    # Post-pass invariant, checked on the final file state:
+    # no message that ships in the Windows build and is not
+    # protected may still contain the word in a text node. This
+    # is what makes the pass safe to re-run (branding re-runs
+    # after a setup interruption): a re-run edits nothing and
+    # the invariant already holds, while a pass that silently
+    # stopped working on a fresh tree leaves ~800 violations
+    # and fails here instead of shipping Thorium strings.
+    remaining = 0
+    for rel in LUMO_SYSTEMATIC_GRD_FILES:
+        path = chromium_src / rel
+        text = path.read_text(encoding="utf-8")
+        try:
+            root = ET.fromstring(text.encode("utf-8"))
+        except ET.ParseError as exc:
+            raise StageError(
+                f"systematic brand pass: post-pass parse of "
+                f"{rel} failed: {exc}")
+        msgs = []
+        _walk_grd_messages(root, (), msgs)
+        for elem, ifs in msgs:
+            nodes = _grd_text_nodes(elem)
+            if not any(_THORIUM_WORD_RE.search(t) for t in nodes):
+                continue
+            name = elem.get("name") or ""
+            content = _grd_presentable_content(elem)
+            if _lumo_systematic_excluded(name, content,
+                                         "".join(nodes)):
+                continue
+            if not all(_grd_if_applies(e) for e in ifs):
+                continue
+            remaining += 1
+    if remaining:
+        raise StageError(
+            f"systematic brand pass: {remaining} unprotected "
+            "Windows-build messages still contain 'Thorium' "
+            "after the pass; refusing to ship them.")
+    return [
+        ("systematic GRD pass (Thorium -> Lumo in message text)",
+         total_en),
+        ("systematic ja XTB re-keying", total_ja),
+    ]
+
+
+# ---------------------------------------------------------------------------
+# chrome://flags entries header (task 19, audit A-5).
+#
+# Thorium's extra flag entries live in a C++ header, not a GRD,
+# so the systematic pass cannot see them. The display strings
+# (each entry's name and description literals) name Thorium as
+# the product; replace the word there too. Protected, as in the
+# GRD pass: the "Thorium 2024" experiment name (an occurrence
+# immediately followed by " 2024" stays) and Lumo's own entries
+# referring to the real Thorium: the glic entry quoting the
+# removed item's name ("Open Gemini in Thorium") and the
+# Thorium-profile launch entry (patch 0012, task 15), whose name
+# and description say "with Thorium Profile" / "the original
+# Thorium user profile" — the profile directory belongs to the
+# real Thorium, so those two phrasings stay. Flag ids and
+# feature identifiers are lowercase / non-literal and are never
+# matched.
+# ---------------------------------------------------------------------------
+
+_FLAG_ENTRY_WORD_RE = re.compile(
+    r"(?<![A-Za-z0-9])(?<!Open Gemini in )(?<!with )"
+    r"(?<!original )Thorium(?![A-Za-z0-9])"
+    r"(?! 2024)")
+
+
+def _lumo_flag_translation_entries():
+    """Best-effort load of the batch H translation table's
+    entries ({} when unavailable). Used by the passes that must
+    recognize already-translated literals on a branding re-run;
+    lumo_flag_translation_pass itself loads the table strictly
+    and raises on any problem."""
+    try:
+        data = json.loads(
+            (Path(__file__).resolve().parent
+             / "lumo_flag_translations.json").read_text(
+                encoding="utf-8"))
+        entries = data["entries"]
+        if not isinstance(entries, dict):
+            return {}
+        return entries
+    except (OSError, ValueError, KeyError):
+        return {}
+
+
+def lumo_flag_entries_brand_pass(chromium_src):
+    """Thorium -> Lumo in the flags header's display strings.
+    Returns [(description, count)]; idempotent (protected
+    literals are re-counted as protected on every run)."""
+    path = chromium_src / "chrome/browser/thorium_flag_entries.h"
+    if not path.is_file():
+        raise StageError(f"flag entries pass: file missing: {path}")
+    text = path.read_text(encoding="utf-8")
+    # On a branding re-run, the batch H translation pass has
+    # already rewritten this header's name/description literals
+    # to Japanese. Those literals are final text - several keep
+    # "Thorium" as a protected proper reference (the Thorium
+    # 2024 experiment name, the Thorium-profile launch entry) -
+    # and must not be renamed again, so literals whose content
+    # is a Japanese translation from the table are skipped
+    # (counted as protected when they mention Thorium).
+    translated = {
+        ent["ja"]
+        for key, ent in _lumo_flag_translation_entries().items()
+        if key.startswith("chrome/browser/thorium_flag_entries.h|")
+        and isinstance(ent, dict) and isinstance(ent.get("ja"), str)
+    }
+    literal_re = re.compile(r'"(?:[^"\\]|\\.)*"')
+    replaced = 0
+    protected = 0
+    out = []
+    last = 0
+    for match in literal_re.finditer(text):
+        lit = match.group(0)
+        if translated and _flag_translation_unquote(lit) in translated:
+            if _THORIUM_WORD_RE.search(lit):
+                protected += 1
+            continue
+        if not _THORIUM_WORD_RE.search(lit):
+            continue
+        new_lit, n = _FLAG_ENTRY_WORD_RE.subn("Lumo", lit)
+        if n == 0:
+            protected += 1
+            continue
+        out.append(text[last:match.start()])
+        out.append(new_lit)
+        last = match.end()
+        replaced += n
+    if replaced == 0 and protected == 0:
+        raise StageError(
+            "flag entries pass: no 'Thorium' display strings "
+            "found in thorium_flag_entries.h at all; the pinned "
+            "header may have drifted.")
+    if replaced:
+        out.append(text[last:])
+        path.write_bytes("".join(out).encode("utf-8"))
+    return [("thorium_flag_entries.h display strings", replaced)]
+
+
+# ---------------------------------------------------------------------------
+# Flag display string translation to Japanese (build #24, task 14).
+#
+# chrome://flags shows the flag names and descriptions straight
+# from C++ string constants - they are NOT XTB resources (the
+# flag_descriptions.h header itself says "These messages are not
+# translated"). The full set of user-visible flag strings in the
+# pinned tree (4,074 strings, enumerated mechanically):
+#
+#   chrome/browser/flag_descriptions.h            3,156 constants
+#       inline constexpr char kXxx[] inside
+#       namespace flag_descriptions (Name / Description /
+#       choice labels).
+#   components/commerce/core/flag_descriptions.cc      12
+#   components/enterprise/net/core/flag_descriptions.cc  4
+#   components/contextual_tasks/public/features.cc     48
+#   components/omnibox/common/omnibox_features.cc       2
+#   chrome/browser/ui/tabs/tab_group_home/constants.cc  2
+#       (const char definitions inside namespace
+#       flag_descriptions; the matching headers hold only
+#       extern declarations)
+#   chrome/browser/thorium_flag_entries.h
+#       75 entries x (name, description) = 150 literal fields.
+#   chrome/browser/about_flags.cc
+#       700 FeatureVariation / Choice element labels (the first
+#       literal of each element; elements whose label is a
+#       constant reference draw from the sources above).
+#
+# A patch file rewriting these would run to ~9,000 lines for
+# flag_descriptions.h alone - unreviewable and fragile - so the
+# translations live in a data table instead:
+# scripts/ci/lumo_flag_translations.json maps
+# "<relpath>|<identifier>" -> {"en": ..., "ja": ...}, where the
+# identifier is stable (constant name / flag id + field /
+# variation array + index) and never the English text itself.
+# This pass rewrites each literal group in place, keyed by
+# identifier, with a three-way check per string:
+#   current == en  -> replace with the Japanese literal;
+#   current == ja  -> already translated, skip;
+#   anything else  -> StageError (the pinned tree drifted).
+# A mapping key the tree does not contain, and a tree identifier
+# the mapping does not cover, are likewise StageErrors, so full
+# coverage and idempotency hold by construction. Runs AFTER
+# lumo_flag_entries_brand_pass: the table's "en" values for
+# thorium_flag_entries.h are the post-brand-pass strings (product
+# name already "Lumo"), which is the state this pass sees.
+# A replaced literal group becomes a single UTF-8 literal
+# (precedent: the smart quotes already present in
+# flag_descriptions.h); only backslash and double-quote are
+# escaped, and a translation containing a control character is
+# rejected at load time.
+# ---------------------------------------------------------------------------
+
+_FLAG_TRANSLATION_STR = r'"(?:[^"\\]|\\.)*"'
+_FLAG_TRANSLATION_LITERAL_RE = re.compile(_FLAG_TRANSLATION_STR)
+_FLAG_TRANSLATION_CONST_DEF_RE = re.compile(
+    r"(?:inline\s+constexpr|const)\s+char\s+(k\w+)\[\]\s*=\s*"
+    r"((?:" + _FLAG_TRANSLATION_STR + r"\s*)+);", re.S)
+
+# (relpath, kind) pairs; kind selects the extractor below.
+_FLAG_TRANSLATION_SOURCES = (
+    ("chrome/browser/flag_descriptions.h", "const"),
+    ("components/commerce/core/flag_descriptions.cc", "const"),
+    ("components/enterprise/net/core/flag_descriptions.cc", "const"),
+    ("components/contextual_tasks/public/features.cc", "const"),
+    ("components/omnibox/common/omnibox_features.cc", "const"),
+    ("chrome/browser/ui/tabs/tab_group_home/constants.cc", "const"),
+    ("chrome/browser/thorium_flag_entries.h", "thorium"),
+    ("chrome/browser/about_flags.cc", "variation"),
+)
+
+
+def _flag_translation_unquote(lit):
+    body = lit[1:-1]
+    out = []
+    i = 0
+    while i < len(body):
+        c = body[i]
+        if c == "\\" and i + 1 < len(body):
+            n = body[i + 1]
+            out.append({"n": "\n", "t": "\t", "r": "\r", "\\": "\\",
+                        '"': '"', "'": "'", "0": "\0"}.get(n, "\\" + n))
+            i += 2
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
+def _flag_translation_join(text):
+    return "".join(
+        _flag_translation_unquote(m.group(0))
+        for m in _FLAG_TRANSLATION_LITERAL_RE.finditer(text))
+
+
+def _flag_translation_brace_span(text, open_idx):
+    """(body_start, body_end, close_idx) for the brace opened at
+    open_idx, skipping string literals and // comments."""
+    depth = 0
+    i = open_idx
+    while i < len(text):
+        c = text[i]
+        if c == '"':
+            m = _FLAG_TRANSLATION_LITERAL_RE.match(text, i)
+            i = m.end() if m else i + 1
+            continue
+        if c == "/" and i + 1 < len(text) and text[i + 1] == "/":
+            j = text.find("\n", i)
+            i = len(text) if j < 0 else j
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return open_idx + 1, i, i
+        i += 1
+    raise StageError("flag translation pass: unbalanced braces")
+
+
+def _flag_translation_namespace_bodies(text):
+    """(start, end) body spans of `namespace flag_descriptions`
+    blocks."""
+    spans = []
+    for m in re.finditer(
+            r"namespace\s+(?:\w+::)?flag_descriptions\s*\{", text):
+        start, end, _ = _flag_translation_brace_span(text, m.end() - 1)
+        spans.append((start, end))
+    return spans
+
+
+def _flag_translation_const_spans(text):
+    """{constant name: (start, end, value)} for the flag string
+    constants defined inside namespace flag_descriptions."""
+    out = {}
+    for start, end in _flag_translation_namespace_bodies(text):
+        for m in _FLAG_TRANSLATION_CONST_DEF_RE.finditer(
+                text, start, end):
+            out[m.group(1)] = (
+                m.start(2), m.end(2),
+                _flag_translation_join(m.group(2)))
+    return out
+
+
+_FLAG_TRANSLATION_LITERAL_GROUP_RE = re.compile(
+    r"\s*((?:" + _FLAG_TRANSLATION_STR + r"\s*)+),")
+_FLAG_TRANSLATION_ENTRY_HEAD_RE = re.compile(
+    r'\{\s*"([a-z0-9][a-z0-9\-]*)"\s*,')
+
+
+def _flag_translation_thorium_spans(text):
+    """{"<flag id>:name"/"<flag id>:description": (start, end,
+    value)} for thorium_flag_entries.h entries."""
+    out = {}
+    for m in _FLAG_TRANSLATION_ENTRY_HEAD_RE.finditer(text):
+        flag_id = m.group(1)
+        nm = _FLAG_TRANSLATION_LITERAL_GROUP_RE.match(text, m.end())
+        if not nm:
+            continue
+        dm = _FLAG_TRANSLATION_LITERAL_GROUP_RE.match(text, nm.end())
+        if not dm:
+            continue
+        out[f"{flag_id}:name"] = (
+            nm.start(1), nm.end(1),
+            _flag_translation_join(nm.group(1)))
+        out[f"{flag_id}:description"] = (
+            dm.start(1), dm.end(1),
+            _flag_translation_join(dm.group(1)))
+    return out
+
+
+def _flag_translation_variation_spans(text):
+    """{"<array>[<index>]": (start, end, value)} for the first
+    literal of each FeatureVariation / Choice element in
+    about_flags.cc."""
+    out = {}
+    for am in re.finditer(
+            r"(?:FeatureVariation|Choice)\s+(k\w+)\[\]\s*=\s*\{",
+            text):
+        arr = am.group(1)
+        body_start, body_end, _ = _flag_translation_brace_span(
+            text, am.end() - 1)
+        idx = 0
+        i = body_start
+        while i < body_end:
+            if text[i] == "{":
+                es, ee, close = _flag_translation_brace_span(text, i)
+                m = re.match(
+                    r"\s*((?:" + _FLAG_TRANSLATION_STR + r"\s*)+)",
+                    text[es:ee])
+                if m:
+                    out[f"{arr}[{idx}]"] = (
+                        es + m.start(1), es + m.end(1),
+                        _flag_translation_join(m.group(1)))
+                idx += 1
+                i = close + 1
+            elif text[i] == '"':
+                m = _FLAG_TRANSLATION_LITERAL_RE.match(text, i)
+                i = m.end() if m else i + 1
+            else:
+                i += 1
+    return out
+
+
+_FLAG_TRANSLATION_EXTRACTORS = {
+    "const": _flag_translation_const_spans,
+    "thorium": _flag_translation_thorium_spans,
+    "variation": _flag_translation_variation_spans,
+}
+
+
+def _flag_translation_escape(value):
+    return '"' + value.replace("\\", "\\\\").replace(
+        '"', '\\"') + '"'
+
+
+def lumo_flag_translation_pass(chromium_src, mapping_path=None):
+    """Translate every chrome://flags display string to Japanese
+    (task 14), driven by scripts/ci/lumo_flag_translations.json.
+    Returns [(description, count)]; idempotent (a second run
+    replaces nothing and verifies every string is already the
+    Japanese text)."""
+    if mapping_path is None:
+        mapping_path = (Path(__file__).resolve().parent
+                        / "lumo_flag_translations.json")
+    try:
+        data = json.loads(
+            Path(mapping_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise StageError(
+            f"flag translation pass: cannot load the translation "
+            f"table {mapping_path}: {exc}")
+    if data.get("version") != 1 or not isinstance(
+            data.get("entries"), dict):
+        raise StageError(
+            "flag translation pass: the translation table has an "
+            "unexpected shape (expected {'version': 1, 'entries': "
+            "{...}})")
+    entries = data["entries"]
+    for key, ent in entries.items():
+        if (not isinstance(ent, dict)
+                or not isinstance(ent.get("en"), str)
+                or not isinstance(ent.get("ja"), str)
+                or any(ord(c) < 0x20 for c in ent["ja"])):
+            raise StageError(
+                f"flag translation pass: malformed entry for "
+                f"{key!r} in the translation table")
+
+    found = {}
+    texts = {}
+    for rel, kind in _FLAG_TRANSLATION_SOURCES:
+        path = chromium_src / rel
+        if not path.is_file():
+            raise StageError(
+                f"flag translation pass: file missing: {path}")
+        text = path.read_text(encoding="utf-8")
+        texts[rel] = text
+        for ident, span in _FLAG_TRANSLATION_EXTRACTORS[kind](
+                text).items():
+            found[f"{rel}|{ident}"] = (rel,) + span
+    missing = sorted(set(entries) - set(found))
+    if missing:
+        raise StageError(
+            f"flag translation pass: {len(missing)} translation "
+            f"table key(s) not found in the tree (first: "
+            f"{missing[0]}); the pinned tree may have drifted.")
+    uncovered = sorted(set(found) - set(entries))
+    if uncovered:
+        raise StageError(
+            f"flag translation pass: {len(uncovered)} flag "
+            f"string(s) in the tree have no translation (first: "
+            f"{uncovered[0]}); refusing to leave English flag "
+            f"strings behind.")
+
+    replacements = {}
+    for key, ent in entries.items():
+        rel, start, end, current = found[key]
+        if current == ent["ja"]:
+            continue
+        if current != ent["en"]:
+            raise StageError(
+                f"flag translation pass: {key} holds neither the "
+                f"expected English nor the Japanese text; the "
+                f"pinned tree may have drifted.")
+        replacements.setdefault(rel, []).append(
+            (start, end, _flag_translation_escape(ent["ja"])))
+    total = 0
+    for rel, reps in replacements.items():
+        text = texts[rel]
+        for start, end, new in sorted(reps, reverse=True):
+            text = text[:start] + new + text[end:]
+        (chromium_src / rel).write_bytes(text.encode("utf-8"))
+        total += len(reps)
+    return [("flag display strings translated to Japanese", total)]
+
+
+# ---------------------------------------------------------------------------
+# Labs origin suffixes (build #24, task 25).
+#
+# Every experiment listed in the Chrome Labs bubble gets its
+# origin appended to its NAME: " (Thorium)" for experiments that
+# came from Thorium, " (Lumo)" for experiments Lumo added. The
+# panel names are the IDS_CHROMELABS_*_NAME strings registered
+# in chrome/browser/ui/toolbar/chrome_labs/chrome_labs_model.cc.
+# Origin table (all ten entries shown in the bubble):
+#
+#   IDS_CHROMELABS_THORIUM_2024_NAME            Thorium
+#       Thorium's own Th24 UI experiment (patch series +
+#       thorium_flag_entries.h "thorium-2024").
+#   IDS_CHROMELABS_RESTORE_TAB_BUTTON_NAME      Thorium
+#       Thorium patch other/restore-tab-button.patch.
+#   IDS_CHROMELABS_MIDDLE_CLICK_AUTOSCROLL_NAME Thorium
+#       Thorium's middle-click autoscroll experiment.
+#   IDS_CHROMELABS_LUMO_GLIC_MENU_NAME          Lumo (patch 0006)
+#   IDS_CHROMELABS_LUMO_LAUNCH_THORIUM_PROFILE_NAME
+#                                               Lumo (patch 0012;
+#       the experiment that un-hides patch 0007's Thorium-profile
+#       launch menu item, task 15)
+#   IDS_CHROMELABS_LUMO_HOVER_CARD_MEMORY_USAGE_NAME
+#                                               Lumo (patch 0011)
+#   IDS_CHROMELABS_LUMO_DARK_MODE_SCHEDULE_NAME Lumo (patch 0011)
+#   IDS_CHROMELABS_LUMO_TRACKING_PROTECTION_STRICT_NAME
+#                                               Lumo (patch 0011)
+#   IDS_CHROMELABS_LUMO_FULL_PAGE_SCREENSHOT_NAME
+#                                               Lumo (patch 0011)
+#   IDS_CHROMELABS_LUMO_TAB_GROUP_SESSION_SAVE_NAME
+#                                               Lumo (patch 0011)
+#
+# The Thorium entries carry real ja translations, which are
+# re-keyed to the suffixed body's grit id with the suffix
+# appended to the translation as well (the user sees e.g.
+# "Thorium 2024 UI を有効にする (Thorium)"). The Lumo entries'
+# GRD bodies are already Japanese and have no ja XTB entries,
+# so only the GRD body changes. Runs AFTER the systematic pass:
+# the suffixed bodies are protected from it on re-runs by the
+# origin-suffix exclusion in _lumo_systematic_excluded (and the
+# Th24 name by its name exclusion).
+# ---------------------------------------------------------------------------
+
+LUMO_LABS_ORIGIN_SUFFIXES = (
+    ("IDS_CHROMELABS_THORIUM_2024_NAME", " (Thorium)"),
+    ("IDS_CHROMELABS_RESTORE_TAB_BUTTON_NAME", " (Thorium)"),
+    ("IDS_CHROMELABS_MIDDLE_CLICK_AUTOSCROLL_NAME", " (Thorium)"),
+    ("IDS_CHROMELABS_LUMO_GLIC_MENU_NAME", " (Lumo)"),
+    ("IDS_CHROMELABS_LUMO_LAUNCH_THORIUM_PROFILE_NAME", " (Lumo)"),
+    ("IDS_CHROMELABS_LUMO_HOVER_CARD_MEMORY_USAGE_NAME", " (Lumo)"),
+    ("IDS_CHROMELABS_LUMO_DARK_MODE_SCHEDULE_NAME", " (Lumo)"),
+    ("IDS_CHROMELABS_LUMO_TRACKING_PROTECTION_STRICT_NAME",
+     " (Lumo)"),
+    ("IDS_CHROMELABS_LUMO_FULL_PAGE_SCREENSHOT_NAME", " (Lumo)"),
+    ("IDS_CHROMELABS_LUMO_TAB_GROUP_SESSION_SAVE_NAME", " (Lumo)"),
+)
+
+
+def lumo_labs_origin_suffix_pass(chromium_src):
+    """Append the origin suffix to every Labs experiment name
+    (task 25). Returns [(description, count)]; idempotent."""
+    grd_rel = "chrome/app/generated_resources.grd"
+    xtb_rel = "chrome/app/resources/generated_resources_ja.xtb"
+    grd_path = chromium_src / grd_rel
+    xtb_path = chromium_src / xtb_rel
+    if not grd_path.is_file() or not xtb_path.is_file():
+        raise StageError(
+            f"Labs origin suffix pass: file missing: "
+            f"{grd_path} / {xtb_path}")
+    grd_text = grd_path.read_text(encoding="utf-8")
+    xtb_text = xtb_path.read_text(encoding="utf-8")
+    try:
+        root = ET.fromstring(grd_text.encode("utf-8"))
+    except ET.ParseError as exc:
+        raise StageError(
+            f"Labs origin suffix pass: cannot parse {grd_rel}: "
+            f"{exc}")
+    by_name = {}
+    for elem in root.iter("message"):
+        by_name.setdefault(elem.get("name") or "", []).append(elem)
+    spans = _grd_message_spans(grd_text, grd_rel)
+    span_by_name = {}
+    for start, end, body_start in spans:
+        seg_name = _GRD_MESSAGE_NAME_RE.search(
+            grd_text[start:body_start])
+        if seg_name:
+            span_by_name[seg_name.group(1)] = (start, end,
+                                               body_start)
+
+    grd_edits = []
+    ja_ops = []  # (old_id, new_id, suffix)
+    applied = 0
+    for name, suffix in LUMO_LABS_ORIGIN_SUFFIXES:
+        elems = by_name.get(name)
+        if not elems or len(elems) != 1:
+            raise StageError(
+                f"Labs origin suffix pass: expected exactly one "
+                f"{name} in {grd_rel}, found "
+                f"{len(elems) if elems else 0}.")
+        elem = elems[0]
+        if len(elem):
+            raise StageError(
+                f"Labs origin suffix pass: {name} unexpectedly "
+                "contains placeholder elements; the suffix "
+                "append assumes a plain-text name.")
+        content = _grd_presentable_content(elem)
+        meaning = elem.get("meaning") or ""
+        if content.endswith(suffix):
+            # Already applied; the ja entry (if any) must sit at
+            # THIS body's id and carry the suffix too.
+            cur_id = _grit_message_id(content, meaning)
+            match = re.search(
+                r'<translation id="' + cur_id + r'">(.*?)'
+                r"</translation>", xtb_text, re.S)
+            if match and not match.group(1).endswith(suffix):
+                raise StageError(
+                    f"Labs origin suffix pass: {name} is "
+                    "suffixed in the GRD but its ja translation "
+                    "is not; inconsistent state.")
+            applied += 1
+            continue
+        old_id = _grit_message_id(content, meaning)
+        new_id = _grit_message_id(content + suffix, meaning)
+        if name not in span_by_name:
+            raise StageError(
+                f"Labs origin suffix pass: no raw span found "
+                f"for {name} in {grd_rel}.")
+        start, end, body_start = span_by_name[name]
+        body = grd_text[body_start:end - len("</message>")]
+        stripped = body.strip()
+        if stripped != content:
+            raise StageError(
+                f"Labs origin suffix pass: {name}: raw body "
+                f"{stripped!r} does not match the parsed "
+                f"content {content!r}.")
+        new_body = body.replace(stripped, stripped + suffix, 1)
+        grd_edits.append(
+            (start, end, grd_text[start:body_start] + new_body
+             + "</message>"))
+        ja_ops.append((old_id, new_id, suffix))
+        applied += 1
+
+    if applied != len(LUMO_LABS_ORIGIN_SUFFIXES):
+        raise StageError(
+            f"Labs origin suffix pass: handled {applied} of "
+            f"{len(LUMO_LABS_ORIGIN_SUFFIXES)} Labs names.")
+    for start, end, new_seg in sorted(grd_edits, reverse=True):
+        grd_text = grd_text[:start] + new_seg + grd_text[end:]
+    if grd_edits:
+        grd_path.write_bytes(grd_text.encode("utf-8"))
+
+    ja_changed = 0
+    for old_id, new_id, suffix in ja_ops:
+        match = re.search(
+            r'<translation id="' + old_id + r'">(.*?)'
+            r"</translation>", xtb_text, re.S)
+        if not match:
+            continue  # the Lumo names have no ja entry by design
+        if re.search(r'<translation id="' + new_id + r'">',
+                     xtb_text):
+            raise StageError(
+                f"Labs origin suffix pass: translation id "
+                f"{new_id} already present in {xtb_rel}.")
+        ja_body = match.group(1)
+        if ja_body.endswith(suffix):
+            raise StageError(
+                f"Labs origin suffix pass: ja translation "
+                f"{old_id} already carries the suffix but sits "
+                "at the old id; inconsistent state.")
+        xtb_text = (xtb_text[:match.start()]
+                    + f'<translation id="{new_id}">'
+                    f"{ja_body}{suffix}</translation>"
+                    + xtb_text[match.end():])
+        ja_changed += 1
+    if ja_ops and ja_changed:
+        xtb_path.write_bytes(xtb_text.encode("utf-8"))
+    return [
+        ("Labs origin suffixes (GRD names)", len(grd_edits)),
+        ("Labs origin suffixes (ja re-keying)", ja_changed),
+    ]
+
+
+def _labs_suffixed_patch_variant(data):
+    """Variant of a Lumo patch whose Labs-name GRD bodies carry
+    the task 25 origin suffixes; for reverse checks only.
+
+    lumo_labs_origin_suffix_pass (which runs AFTER the patches
+    in apply_lumo_branding) appends " (Thorium)" / " (Lumo)" to
+    the GRD bodies of the Labs experiment names — several of
+    which were added by Lumo patches themselves (0006, 0011,
+    0012). On a branding re-run, those patches' post-images
+    therefore differ from the patch files by exactly the
+    suffix, and both reverse checks fail even though the
+    patches are fully applied (found in build #24 batch B
+    verification: the second branding pass on a completed tree
+    raised StageError at patch 0006). This variant rewrites
+    the affected added body lines to their suffixed form so
+    the reverse checks can recognize the applied state.
+    Returns None when the patch adds no Labs-name body (the
+    common case). The FORWARD path always uses the original
+    patch: the suffix is appended by the pass afterwards.
+    """
+    suffix_by_name = dict(LUMO_LABS_ORIGIN_SUFFIXES)
+    lines = data.decode("utf-8").split("\n")
+    changed = False
+    in_grd = False
+    pending = None
+    for i, line in enumerate(lines):
+        if line.startswith("diff --git "):
+            in_grd = line.rstrip().endswith(
+                "b/chrome/app/generated_resources.grd")
+            pending = None
+            continue
+        if line.startswith("@@"):
+            pending = None
+            continue
+        if not in_grd:
+            continue
+        if line.startswith("+"):
+            match = re.search(r'<message name="([A-Z0-9_]+)"',
+                              line)
+            if match and match.group(1) in suffix_by_name:
+                pending = suffix_by_name[match.group(1)]
+                continue
+            if pending is not None:
+                # The first added line after the <message ...>
+                # tag is the body (Labs names are single-line
+                # plain text; an immediate </message> would be
+                # an empty body, which does not occur).
+                if "</message>" not in line \
+                        and not line.endswith(pending):
+                    lines[i] = line + pending
+                    changed = True
+                pending = None
+        else:
+            pending = None
+    if not changed:
+        return None
+    return "\n".join(lines).encode("utf-8")
+
+
+def _flag_translated_patch_variant(data):
+    """Variant of a Lumo patch whose thorium_flag_entries.h
+    entry literals carry the batch H Japanese translations; for
+    reverse checks only.
+
+    Patches 0006, 0011 and 0012 add Lumo's own flag entries to
+    thorium_flag_entries.h with English name/description
+    literals. lumo_flag_translation_pass (which runs AFTER the
+    patches in apply_lumo_branding) rewrites those literals to
+    the Japanese texts, so on a branding re-run the three
+    patches' post-images differ from the patch files and both
+    reverse checks fail even though the patches are fully
+    applied (found in build #24 batch H verification: the
+    second branding pass on a completed tree raised StageError
+    at patch 0006). This variant rewrites the ADDED entry
+    blocks to their translated form - keyed by flag id from
+    the translation table, so it tracks the table exactly -
+    and recomputes the hunk headers' new-side line numbers.
+    Context lines are left alone (the -C0 reverse check does
+    not need them). Returns None when the patch adds no
+    translated flag entry. The FORWARD path always uses the
+    original patch: the translation is applied by the pass
+    afterwards.
+    """
+    entries = _lumo_flag_translation_entries()
+    if not entries:
+        return None
+    prefix = "chrome/browser/thorium_flag_entries.h|"
+    ja_by_id = {}
+    for key, ent in entries.items():
+        if key.startswith(prefix) and ":" in key[len(prefix):]:
+            flag_id, field = key[len(prefix):].rsplit(":", 1)
+            if isinstance(ent, dict) and isinstance(
+                    ent.get("ja"), str):
+                ja_by_id.setdefault(flag_id, {})[field] = ent["ja"]
+    if not ja_by_id:
+        return None
+
+    lines = data.decode("utf-8").split("\n")
+    out = []
+    in_target = False
+    changed = False
+    shift = 0
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if line.startswith("diff --git "):
+            in_target = line.rstrip().endswith(
+                "b/chrome/browser/thorium_flag_entries.h")
+            shift = 0
+            out.append(line)
+            i += 1
+            continue
+        if not in_target or not line.startswith("@@"):
+            out.append(line)
+            i += 1
+            continue
+        # One hunk: rewrite its added entry blocks, then fix the
+        # header's new-side start/count by the added-line delta
+        # plus the cumulative shift from earlier hunks of this
+        # file section.
+        header = re.match(
+            r"@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)", line)
+        body = []
+        i += 1
+        while i < len(lines) and not lines[i].startswith("@@") \
+                and not lines[i].startswith("diff --git "):
+            body.append(lines[i])
+            i += 1
+        new_body, delta, rewrote = _flag_translated_hunk_body(
+            body, ja_by_id)
+        if rewrote:
+            changed = True
+        if delta:
+            old_start = int(header.group(3))
+            old_count = int(header.group(4) or "1")
+            line = (f"@@ -{header.group(1)}"
+                    f"{',' + header.group(2) if header.group(2) else ''}"
+                    f" +{old_start + shift},{old_count + delta} @@"
+                    f"{header.group(5)}")
+            shift += delta
+        out.append(line)
+        out.extend(new_body)
+    if not changed:
+        return None
+    return "\n".join(out).encode("utf-8")
+
+
+def _flag_translated_hunk_body(body, ja_by_id):
+    """Rewrite added flag-entry blocks in one hunk body to
+    their translated form. Returns (new_body, added_line_delta,
+    rewrote_any)."""
+    out = []
+    delta = 0
+    rewrote = False
+    i = 0
+    head_re = re.compile(r'\{"([a-z0-9][a-z0-9\-]*)",$')
+    while i < len(body):
+        line = body[i]
+        match = head_re.search(line[1:]) if line.startswith("+") \
+            else None
+        if match and match.group(1) in ja_by_id:
+            # Collect the entry's added lines through the tail
+            # line ending in "},".
+            block = [line]
+            j = i + 1
+            while j < len(body) and body[j].startswith("+") \
+                    and not block[-1][1:].rstrip().endswith("},"):
+                block.append(body[j])
+                j += 1
+            if block[-1][1:].rstrip().endswith("},"):
+                text = "\n".join(b[1:] for b in block)
+                spans = _flag_translation_thorium_spans(text)
+                fields = ja_by_id[match.group(1)]
+                name_key = f"{match.group(1)}:name"
+                desc_key = f"{match.group(1)}:description"
+                if name_key in spans and desc_key in spans \
+                        and "name" in fields \
+                        and "description" in fields:
+                    for key, field in ((desc_key, "description"),
+                                       (name_key, "name")):
+                        start, end, _val = spans[key]
+                        text = (text[:start]
+                                + _flag_translation_escape(
+                                    fields[field])
+                                + text[end:])
+                    new_block = ["+" + part
+                                 for part in text.split("\n")]
+                    delta += len(new_block) - len(block)
+                    rewrote = True
+                    out.extend(new_block)
+                    i = j
+                    continue
+            out.extend(block)
+            i = j
+            continue
+        out.append(line)
+        i += 1
+    return out, delta, rewrote
+
+
 def _git_apply_both_ways(git, chromium_src, patch_path, env, deadline):
     """git apply with a both-ways idempotency check.
 
@@ -2030,6 +3393,19 @@ def _git_apply_both_ways(git, chromium_src, patch_path, env, deadline):
     are Lumo-unique (string ids, feature names), so a false
     positive would require that exact content to already exist
     in the pristine tree. The forward path is unchanged.
+
+    A third fallback covers the task 25 origin suffix pass,
+    which edits the GRD bodies of Labs names that Lumo patches
+    themselves added: the reverse checks are retried against a
+    suffix-carrying variant of the patch (see
+    _labs_suffixed_patch_variant).
+
+    A fourth fallback covers the batch H flag translation pass,
+    which rewrites the flag-entry literals that patches 0006,
+    0011 and 0012 added to thorium_flag_entries.h: the reverse
+    checks are retried against a translation-carrying variant
+    of the patch, alone and combined with the suffix variant
+    (see _flag_translated_patch_variant).
 
     A patch file with CRLF line endings can never apply to the LF
     tree (git apply matches context byte-for-byte), so it is
@@ -2070,6 +3446,52 @@ def _git_apply_both_ways(git, chromium_src, patch_path, env, deadline):
             log(f"Lumo branding: {rel} already applied "
                 "(zero-context reverse check); skipping.")
             return False
+        variant = _labs_suffixed_patch_variant(
+            patch_arg.read_bytes())
+        if variant is not None:
+            if temp_dir is None:
+                temp_dir = tempfile.TemporaryDirectory(
+                    prefix="lumo-patch-suffix-")
+            variant_path = Path(temp_dir.name) / (rel + ".variant")
+            variant_path.write_bytes(variant)
+            for extra in ([], ["-C0"]):
+                code = run(
+                    [git, "apply", "--check", "--reverse",
+                     *extra, str(variant_path)],
+                    chromium_src, env=env, timeout_at=deadline)
+                if code == 0:
+                    log(f"Lumo branding: {rel} already applied "
+                        "(the Labs origin suffix pass has since "
+                        "suffixed its Labs names); skipping.")
+                    return False
+        translated = _flag_translated_patch_variant(
+            patch_arg.read_bytes())
+        if translated is not None:
+            # The three patches this variant exists for also
+            # carry Labs names, so try the combined form (Labs
+            # suffixes on top of the flag translations) as well
+            # as the translated form alone.
+            combined = _labs_suffixed_patch_variant(translated)
+            candidates = [combined, translated] \
+                if combined is not None else [translated]
+            if temp_dir is None:
+                temp_dir = tempfile.TemporaryDirectory(
+                    prefix="lumo-patch-translated-")
+            for idx, cand in enumerate(candidates):
+                cand_path = Path(temp_dir.name) / (
+                    rel + f".translated{idx}")
+                cand_path.write_bytes(cand)
+                for extra in ([], ["-C0"]):
+                    code = run(
+                        [git, "apply", "--check", "--reverse",
+                         *extra, str(cand_path)],
+                        chromium_src, env=env, timeout_at=deadline)
+                    if code == 0:
+                        log(f"Lumo branding: {rel} already "
+                            "applied (the flag translation pass "
+                            "has since translated its flag "
+                            "entries); skipping.")
+                        return False
         code = run(
             [git, "apply", "--check", str(patch_arg)],
             chromium_src, env=env, timeout_at=deadline)
@@ -2086,6 +3508,165 @@ def _git_apply_both_ways(git, chromium_src, patch_path, env, deadline):
     finally:
         if temp_dir is not None:
             temp_dir.cleanup()
+
+
+# Startup password lock (task 21, patch 0019). The verification
+# data comes from the LUMO_LOCK_HASH GitHub Secret in the form
+# "<salt_hex>:<hash_hex>" (16-byte salt; hash = SHA-256 over the
+# salt bytes followed by the password's UTF-8 bytes) and reaches
+# the browser through a generated header that patch 0019 includes
+# via __has_include. The header is deliberately NOT part of patch
+# 0019: stage.py rewrites it on every branding run (the secret can
+# be rotated, and a missing secret must be able to turn the lock
+# back off), which a patch-owned file could not survive. Only the
+# salt and the hash ever reach the tree or the binary; the password
+# itself never leaves the owner's machine.
+LUMO_LOCK_CONFIG_REL_PATH = "chrome/browser/lumo/lumo_lock_config.h"
+LUMO_LOCK_HASH_PATTERN = re.compile(r"^([0-9a-f]{32}):([0-9a-f]{64})$")
+
+
+def write_lumo_lock_config(chromium_src, environ=None):
+    """Generate chrome/browser/lumo/lumo_lock_config.h from the
+    LUMO_LOCK_HASH environment variable (a GitHub Secret).
+
+    Mirrors the API key injection in write_args_gn: a set but
+    malformed value is a loud StageError, never a quietly wrong
+    build; the value is never printed to the log; the written file
+    is read back and verified byte-for-byte. An UNSET secret is not
+    an error: like the signing step's transition behavior, the
+    build proceeds with the lock disabled (an empty-hash header),
+    so a build without the secret — someone else's fork, a lost
+    secret — still produces a working browser instead of one locked
+    with an unknown password.
+    """
+    if environ is None:
+        environ = os.environ
+    raw = (environ.get("LUMO_LOCK_HASH") or "").strip()
+    header_path = chromium_src / LUMO_LOCK_CONFIG_REL_PATH
+    if raw:
+        match = LUMO_LOCK_HASH_PATTERN.match(raw)
+        if match is None:
+            raise StageError(
+                "LUMO_LOCK_HASH is set but malformed: expected "
+                "'<salt_hex>:<hash_hex>' with a 16-byte salt (32 "
+                "lowercase hex characters) and a SHA-256 hash (64 "
+                "lowercase hex characters); refusing to build a "
+                "lock with an unverified value (the value itself "
+                "is not shown)"
+            )
+        salt_hex, hash_hex = match.group(1), match.group(2)
+    else:
+        salt_hex, hash_hex = "", ""
+        log("Lumo startup lock: LUMO_LOCK_HASH is not set; "
+            "building with the startup password lock DISABLED.")
+    lines = [
+        "// Generated by scripts/ci/stage.py from the LUMO_LOCK_HASH",
+        "// secret at build time. Do not edit; regenerated on every",
+        "// branding run. Contains only the salt and the expected",
+        "// SHA-256 hash - never the password itself.",
+        "#ifndef CHROME_BROWSER_LUMO_LUMO_LOCK_CONFIG_H_",
+        "#define CHROME_BROWSER_LUMO_LUMO_LOCK_CONFIG_H_",
+        "",
+        "namespace lumo {",
+        "",
+        f'inline constexpr char kLockSaltHex[] = "{salt_hex}";',
+        f'inline constexpr char kLockHashHex[] = "{hash_hex}";',
+        "",
+        "}  // namespace lumo",
+        "",
+        "#endif  // CHROME_BROWSER_LUMO_LUMO_LOCK_CONFIG_H_",
+        "",
+    ]
+    text = "\n".join(lines)
+    header_path.parent.mkdir(parents=True, exist_ok=True)
+    header_path.write_text(text, encoding="utf-8")
+    written = header_path.read_text(encoding="utf-8")
+    if written != text:
+        raise StageError(
+            "lumo_lock_config.h verification failed: the written "
+            "file does not match the generated content; refusing "
+            "to build with an unverified lock configuration"
+        )
+    if raw:
+        log("Lumo startup lock: lock config header written from "
+            "LUMO_LOCK_HASH (value not shown).")
+
+
+# Lumo build number (task 6 extension, patch 0025). The product
+# version string (156.0.8078.80) is identical for every Lumo build,
+# so it cannot key the "show the welcome flow once after an
+# upgrade" decision. Instead the CI run number of the build
+# workflow is embedded through a generated header, in the same
+# style as the startup lock config above: build-windows.yml passes
+# github.run_number to build-stage.yml, which exports it as
+# LUMO_BUILD_NUMBER for the stage run. The header is rewritten on
+# every branding run and is deliberately NOT part of patch 0025.
+# A missing or non-numeric value is not an error: the build number
+# is 0, which disables the upgrade welcome (patch 0025 treats 0 as
+# "no build number embedded"), so local or foreign builds simply
+# never show it. Because the header is generated during setup, a
+# cross-run resume chain keeps the ORIGINAL run's number (the
+# setup phase does not rerun); run numbers grow monotonically, so
+# a shipped resume build still sorts after every earlier build.
+LUMO_BUILD_CONFIG_REL_PATH = "chrome/browser/lumo/lumo_build_config.h"
+
+
+def write_lumo_build_config(chromium_src, environ=None):
+    """Generate chrome/browser/lumo/lumo_build_config.h from the
+    LUMO_BUILD_NUMBER environment variable (the CI run number).
+
+    Mirrors write_lumo_lock_config's hardening: the written file
+    is read back and verified byte-for-byte. Unlike the lock hash
+    (a secret in a strict format), a malformed build number is
+    harmless — it just disables the upgrade welcome — so anything
+    that is not a plain non-negative integer in int range becomes
+    0 instead of failing the build. The value is not a secret and
+    is logged.
+    """
+    if environ is None:
+        environ = os.environ
+    raw = (environ.get("LUMO_BUILD_NUMBER") or "").strip()
+    number = 0
+    if re.fullmatch(r"[0-9]+", raw):
+        candidate = int(raw)
+        if candidate <= 2147483647:
+            number = candidate
+    header_path = chromium_src / LUMO_BUILD_CONFIG_REL_PATH
+    lines = [
+        "// Generated by scripts/ci/stage.py from the LUMO_BUILD_NUMBER",
+        "// environment variable (the CI run number of the build) at",
+        "// build time. Do not edit; regenerated on every branding run.",
+        "// 0 means no build number was embedded (a local or foreign",
+        "// build); the upgrade welcome flow is disabled then.",
+        "#ifndef CHROME_BROWSER_LUMO_LUMO_BUILD_CONFIG_H_",
+        "#define CHROME_BROWSER_LUMO_LUMO_BUILD_CONFIG_H_",
+        "",
+        "namespace lumo {",
+        "",
+        f"inline constexpr int kBuildNumber = {number};",
+        "",
+        "}  // namespace lumo",
+        "",
+        "#endif  // CHROME_BROWSER_LUMO_LUMO_BUILD_CONFIG_H_",
+        "",
+    ]
+    text = "\n".join(lines)
+    header_path.parent.mkdir(parents=True, exist_ok=True)
+    header_path.write_text(text, encoding="utf-8")
+    written = header_path.read_text(encoding="utf-8")
+    if written != text:
+        raise StageError(
+            "lumo_build_config.h verification failed: the written "
+            "file does not match the generated content; refusing "
+            "to build with an unverified build configuration"
+        )
+    if number:
+        log(f"Lumo build config: build number {number} embedded "
+            "(upgrade welcome enabled).")
+    else:
+        log("Lumo build config: LUMO_BUILD_NUMBER is not set or "
+            "not a plain number; embedding build number 0 "
+            "(upgrade welcome disabled).")
 
 
 def apply_lumo_branding(args, ctx, deadline):
@@ -2115,8 +3696,31 @@ def apply_lumo_branding(args, ctx, deadline):
     log(f"Lumo branding: copied the Lumo icon over "
         f"{len(LUMO_ICON_COPIES)} theme resource files.")
 
+    ext_asset_dir = repo_root.joinpath(
+        *("scripts", "ci", "lumo_extensions"))
+    for asset_name, dest_rel in LUMO_EXTENSION_CRX_COPIES:
+        source = ext_asset_dir / asset_name
+        dest = chromium_src / dest_rel
+        if not source.is_file():
+            raise StageError(
+                f"Lumo extension asset missing: {source}")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, dest)
+    log(f"Lumo branding: copied {len(LUMO_EXTENSION_CRX_COPIES)} "
+        f"preinstalled extension package(s) into the tree.")
+
     for desc, n in lumo_string_replacements(chromium_src):
         log(f"Lumo branding: {desc}: {n} replacement(s).")
+    for desc, n in lumo_systematic_brand_pass(chromium_src):
+        log(f"Lumo branding: {desc}: {n} replacement(s).")
+    for desc, n in lumo_flag_entries_brand_pass(chromium_src):
+        log(f"Lumo branding: {desc}: {n} replacement(s).")
+    for desc, n in lumo_flag_translation_pass(chromium_src):
+        log(f"Lumo branding: {desc}: {n} replacement(s).")
+    for desc, n in lumo_labs_origin_suffix_pass(chromium_src):
+        log(f"Lumo branding: {desc}: {n} replacement(s).")
+    write_lumo_lock_config(chromium_src)
+    write_lumo_build_config(chromium_src)
     log("Lumo branding complete.")
 
 
