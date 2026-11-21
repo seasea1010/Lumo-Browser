@@ -4006,6 +4006,14 @@ def phase_gn(args, ctx, deadline):
 # tree set up with the fixed patches). On a from-scratch build the
 # setup phase applies the fixed patches, so every fixup finds its
 # target already fixed and is a no-op.
+#
+# The same shape covers build #24's grit failure: patch 0029 adds
+# the lumo_tools first-id entry to tools/gritsettings/resource_ids.spec,
+# but a resume from #24's state-2 checkpoint keeps the setup-time
+# .spec without it, so _resume_fixup_grit_spec_entry() inserts the
+# entry after the location_internals anchor instead. The gen copy
+# grit reads is regenerated from the .spec by ninja, so the .spec
+# rewrite is the whole fix on the resume path too.
 # ---------------------------------------------------------------------------
 
 _PEOPLE_HANDLER_REL = "chrome/browser/ui/webui/settings/people_handler.cc"
@@ -4042,6 +4050,56 @@ _SYNC_SNAPSHOT_INCLUDE = (
 _SYNC_SNAPSHOT_INCLUDE_ANCHOR = (
     b'#include "components/sync/base/user_selectable_type.h"\n'
 )
+
+# The lumo_tools first-id entry patch 0029 adds to
+# tools/gritsettings/resource_ids.spec, and the location_internals
+# entry it sits directly after in the fixed tree (chrome/ WebUI
+# section, alphabetical order; includes [4270] with sizes [10]
+# reserves 4270-4279 between location_internals [4260] and
+# management [4280]). Build #24 died in build-3 because patch 0028
+# (chrome://tools, generate_grd) creates a new resources.grd that
+# grit refuses to build without a first id:
+# "Please update gen\\tools\\gritsettings\\default_resource_ids and
+# add a first id for .../lumo_tools/resources.grd (includes)."
+# The gen copy is regenerated from the .spec by ninja (the
+# //tools/gritsettings:default_resource_ids action takes the .spec
+# as input), so rewriting the .spec is enough; no gen file is
+# touched here.
+_LUMO_TOOLS_GRIT_SPEC_REL = "tools/gritsettings/resource_ids.spec"
+_LUMO_TOOLS_GRIT_SPEC_ENTRY = (
+    b"  \"<(SHARED_INTERMEDIATE_DIR)/chrome/browser/resources/lumo_tools/resources.grd\": {\n"
+    b"    \"META\": {\"sizes\": {\"includes\": [10]}},\n"
+    b"    \"includes\": [4270],\n"
+    b"  },\n"
+)
+_LUMO_TOOLS_GRIT_SPEC_ANCHOR = (
+    b"  \"<(SHARED_INTERMEDIATE_DIR)/chrome/browser/resources/location_internals/resources.grd\": {\n"
+    b"    \"META\": {\"sizes\": {\"includes\": [10],}},\n"
+    b"    \"includes\": [4260],\n"
+    b"  },\n"
+)
+
+
+def _resume_fixup_grit_spec_entry(data, rel_path):
+    """Insert the lumo_tools first-id entry patch 0029 adds."""
+    what = "lumo_tools first-id entry in resource_ids.spec"
+    if _LUMO_TOOLS_GRIT_SPEC_ENTRY in data:
+        log(f"Resume fixup: {rel_path}: {what}: already present, "
+            f"nothing to do.")
+        return data
+    if data.count(_LUMO_TOOLS_GRIT_SPEC_ANCHOR) != 1:
+        raise StageError(
+            f"Resume fixup: {rel_path}: cannot place the {what}: "
+            f"the anchor entry (location_internals) does not occur "
+            f"exactly once; this tree is not the tree the fixup was "
+            f"written for, refusing to compile it."
+        )
+    log(f"Resume fixup: {rel_path}: {what}: inserted after the "
+        f"location_internals entry.")
+    return data.replace(
+        _LUMO_TOOLS_GRIT_SPEC_ANCHOR,
+        _LUMO_TOOLS_GRIT_SPEC_ANCHOR + _LUMO_TOOLS_GRIT_SPEC_ENTRY,
+    )
 
 
 def _resume_fixup_replace(data, old, new, what, rel_path):
@@ -4124,6 +4182,20 @@ def apply_lumo_resume_fixups(ctx):
         if data != original:
             path.write_bytes(data)
             log(f"Resume fixup: rewrote {path}.")
+    spec_path = chromium_src / _LUMO_TOOLS_GRIT_SPEC_REL
+    if not spec_path.is_file():
+        raise StageError(
+            f"Resume fixup: expected resource_ids.spec is missing: "
+            f"{spec_path}; the checkpoint this stage resumed from "
+            f"is incomplete."
+        )
+    spec_data = spec_path.read_bytes()
+    spec_original = spec_data
+    spec_data = _resume_fixup_grit_spec_entry(
+        spec_data, _LUMO_TOOLS_GRIT_SPEC_REL)
+    if spec_data != spec_original:
+        spec_path.write_bytes(spec_data)
+        log(f"Resume fixup: rewrote {spec_path}.")
     log("Resume fixups complete.")
 
 
