@@ -169,7 +169,7 @@ index 0000000..85d95d0
 +// ignored, and any failure (no browser process, no network context,
 +// invalid endpoint URL) silently drops the event. Never blocks the
 +// caller beyond building the request.
-+void PostJson(base::Value::Dict payload) {
++void PostJson(base::DictValue payload) {
 +  if (!g_browser_process) {
 +    return;
 +  }
@@ -258,8 +258,8 @@ index 0000000..85d95d0
 +// not yet isolated into their own processes, etc.) each report
 +// that process's full footprint, so the numbers are an
 +// approximation of per-tab cost, not an exact split.
-+base::Value::List CollectTabs() {
-+  base::Value::List tabs;
++base::ListValue CollectTabs() {
++  base::ListValue tabs;
 +  std::map<base::ProcessHandle, uint64_t> memory_by_pid;
 +  GlobalBrowserCollection::GetInstance()->ForEach(
 +      [&tabs, &memory_by_pid](BrowserWindowInterface* browser) {
@@ -278,7 +278,7 @@ index 0000000..85d95d0
 +          if (!web_contents) {
 +            continue;
 +          }
-+          base::Value::Dict tab;
++          base::DictValue tab;
 +          tab.Set("title", base::UTF16ToUTF8(web_contents->GetTitle()));
 +          tab.Set("url", web_contents->GetLastCommittedURL().spec());
 +          uint64_t memory_bytes = 0;
@@ -372,7 +372,7 @@ index 0000000..85d95d0
 +
 +  void SendTabs() {
 +    pending_tabs_send_ = false;
-+    base::Value::Dict payload;
++    base::DictValue payload;
 +    payload.Set("type", "tabs");
 +    payload.Set("tabs", CollectTabs());
 +    PostJson(std::move(payload));
@@ -417,7 +417,7 @@ index 0000000..85d95d0
 +  return reporter.get();
 +}
 +
-+void AppendFeatureIfEnabled(base::Value::List* list,
++void AppendFeatureIfEnabled(base::ListValue* list,
 +                            const base::Feature& feature) {
 +  if (base::FeatureList::IsEnabled(feature)) {
 +    list->Append(feature.name);
@@ -430,12 +430,12 @@ index 0000000..85d95d0
 +  if (!IsEnabled()) {
 +    return;
 +  }
-+  base::Value::Dict payload;
++  base::DictValue payload;
 +  payload.Set("type", "startup");
 +  payload.Set("version",
 +              std::string(version_info::GetVersionNumber()));
 +  base::FilePath user_data_dir;
-+  if (base::PathService::Get(chrome::DIR_USER_DATA_DIR, &user_data_dir)) {
++  if (base::PathService::Get(chrome::DIR_USER_DATA, &user_data_dir)) {
 +    payload.Set("user_data_dir", user_data_dir.AsUTF8Unsafe());
 +  }
 +  std::string profile_name;
@@ -446,7 +446,7 @@ index 0000000..85d95d0
 +    }
 +  }
 +  payload.Set("profile_name", profile_name);
-+  base::Value::List enabled_features;
++  base::ListValue enabled_features;
 +  AppendFeatureIfEnabled(&enabled_features, features::kLumoGlicMenu);
 +  AppendFeatureIfEnabled(&enabled_features,
 +                         features::kLumoHoverCardMemoryUsage);
@@ -470,7 +470,7 @@ index 0000000..85d95d0
 +  if (!IsEnabled()) {
 +    return;
 +  }
-+  base::Value::Dict payload;
++  base::DictValue payload;
 +  payload.Set("type", "relaunch");
 +  payload.Set("target_exe", target_exe.AsUTF8Unsafe());
 +  payload.Set("used_fallback", used_fallback);
@@ -482,7 +482,7 @@ index 0000000..85d95d0
 +  if (!IsEnabled()) {
 +    return;
 +  }
-+  base::Value::Dict payload;
++  base::DictValue payload;
 +  payload.Set("type", "shutdown");
 +  PostJson(std::move(payload));
 +}

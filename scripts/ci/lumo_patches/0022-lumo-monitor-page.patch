@@ -652,7 +652,7 @@ index 0000000..6962a1c
 +#endif
 +}
 +
-+void AppendFeatureIfEnabled(base::Value::List* list,
++void AppendFeatureIfEnabled(base::ListValue* list,
 +                            const base::Feature& feature) {
 +  if (base::FeatureList::IsEnabled(feature)) {
 +    list->Append(feature.name);
@@ -713,7 +713,7 @@ index 0000000..6962a1c
 +  memory_ready_ = false;
 +
 +  base::FilePath user_data_dir;
-+  base::PathService::Get(chrome::DIR_USER_DATA_DIR, &user_data_dir);
++  base::PathService::Get(chrome::DIR_USER_DATA, &user_data_dir);
 +  base::ThreadPool::PostTaskAndReplyWithResult(
 +      FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
 +      base::BindOnce(&LumoMonitorHandler::ScanCrashReports, user_data_dir),
@@ -744,7 +744,7 @@ index 0000000..6962a1c
 +    return;
 +  }
 +
-+  base::Value::Dict info;
++  base::DictValue info;
 +
 +  info.Set("version", std::string(version_info::GetVersionNumber()));
 +  info.Set("profileName", profile_->GetProfileUserName());
@@ -789,7 +789,7 @@ index 0000000..6962a1c
 +               transport_state ==
 +                   syncer::SyncService::TransportState::ACTIVE);
 +
-+  base::Value::List enabled_features;
++  base::ListValue enabled_features;
 +  AppendFeatureIfEnabled(&enabled_features, features::kLumoGlicMenu);
 +  AppendFeatureIfEnabled(&enabled_features,
 +                         features::kLumoHoverCardMemoryUsage);
@@ -820,7 +820,7 @@ index 0000000..6962a1c
 +  bool lock_unlocked = false;
 +  if (lock_configured) {
 +    base::FilePath user_data_dir;
-+    base::PathService::Get(chrome::DIR_USER_DATA_DIR, &user_data_dir);
++    base::PathService::Get(chrome::DIR_USER_DATA, &user_data_dir);
 +    lock_unlocked = base::PathExists(
 +        user_data_dir.Append(FILE_PATH_LITERAL("lumo-unlock-token")));
 +  }

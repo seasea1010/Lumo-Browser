@@ -77,7 +77,7 @@ index 1cd273b..ce74ee5 100644
  #include "content/public/browser/navigation_controller.h"
  #include "content/public/browser/navigation_entry.h"
  #include "content/public/browser/render_frame_host.h"
-@@ -280,6 +290,117 @@ actions::ActionItem* FindAction(actions::ActionId action_id,
+@@ -280,6 +290,118 @@ actions::ActionItem* FindAction(actions::ActionId action_id,
    return actions::ActionManager::Get().FindAction(action_id, root_action_item);
  }
  
@@ -116,7 +116,8 @@ index 1cd273b..ce74ee5 100644
 +      base::span<const uint8_t> message) override {
 +    std::optional<base::Value> parsed = base::JSONReader::Read(
 +        std::string_view(reinterpret_cast<const char*>(message.data()),
-+                         message.size()));
++                         message.size()),
++        base::JSON_PARSE_RFC);
 +    if (!parsed || !parsed->is_dict()) {
 +      return;
 +    }
@@ -195,7 +196,7 @@ index 1cd273b..ce74ee5 100644
  #if BUILDFLAG(IS_CHROMEOS)
  bool IsLockedForOnTask(BrowserWindowInterface* browser) {
    if (features::IsUseUnifiedLockedStateControllerEnabled()) {
-@@ -1626,6 +1747,24 @@ void BrowserCommandController::HandleCommandWithDisposition(
+@@ -1626,6 +1748,24 @@ void BrowserCommandController::HandleCommandWithDisposition(
        break;
      }
  #endif  // BUILDFLAG(IS_WIN)
@@ -220,7 +221,7 @@ index 1cd273b..ce74ee5 100644
      case IDC_OPEN_GLIC: {
        auto* service =
            glic::GlicKeyedServiceFactory::GetGlicKeyedService(profile());
-@@ -1902,6 +2041,12 @@ void BrowserCommandController::InitCommandState() {
+@@ -1902,6 +2042,12 @@ void BrowserCommandController::InitCommandState() {
        IDC_LUMO_LAUNCH_THORIUM_PROFILE,
        base::FeatureList::IsEnabled(features::kLumoLaunchThoriumProfile));
  #endif
