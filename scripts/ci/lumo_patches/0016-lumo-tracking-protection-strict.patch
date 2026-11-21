@@ -43,7 +43,7 @@ index 81e83a8..18068fe 100644
 +          features::kLumoTrackingProtectionStrict)) {
 +    prefs->SetInteger(
 +        prefs::kCookieControlsMode,
-+        static_cast<int>(CookieControlsMode::kBlockThirdParty));
++        static_cast<int>(content_settings::CookieControlsMode::kBlockThirdParty));
 +    prefs->SetBoolean(prefs::kEnableDoNotTrack, true);
 +    prefs->SetBoolean(prefs::kEnableGPC, true);
 +    prefs->SetBoolean(prefs::kPrivacySandboxM1TopicsEnabled, false);
