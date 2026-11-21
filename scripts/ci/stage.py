@@ -4020,10 +4020,25 @@ def phase_gn(args, ctx, deadline):
 # the webui-eslint web-component-missing-deps rule requires, so
 # _resume_fixup_lumo_monitor_import() inserts it after the
 # autofill index import in a resumed tree.
+#
+# The same shape covers build #26's compile failure: patch 0016
+# (tracking protection strict mode) used CookieControlsMode
+# unqualified in profile_impl.cc, but in Chromium 156 the enum
+# lives in namespace content_settings (defined in
+# components/content_settings/core/browser/cookie_settings.h,
+# which profile_impl.cc already includes), so build-3 died with
+# "use of undeclared identifier 'CookieControlsMode'". The fixed
+# patch 0016 qualifies it as content_settings::CookieControlsMode,
+# and the plain replacement below carries the same bytes into a
+# resumed tree. The replacement anchors on the full
+# "static_cast<int>(CookieControlsMode..." form so the fixed
+# bytes (which contain the enum name as a substring) can never
+# be mistaken for the pre-fix form.
 # ---------------------------------------------------------------------------
 
 _PEOPLE_HANDLER_REL = "chrome/browser/ui/webui/settings/people_handler.cc"
 _BROWSER_VIEW_REL = "chrome/browser/ui/views/frame/browser_view.cc"
+_PROFILE_IMPL_REL = "chrome/browser/profiles/profile_impl.cc"
 
 # (file, old bytes, new bytes, what) — plain byte replacements.
 _LUMO_RESUME_FIXUP_REPLACEMENTS = (
@@ -4045,6 +4060,13 @@ _LUMO_RESUME_FIXUP_REPLACEMENTS = (
         b"lumo_dev_stage_label->SetFocusBehavior("
         b"views::View::FocusBehavior::NEVER);",
         "views::Label set_focusable -> SetFocusBehavior(NEVER)",
+    ),
+    (
+        _PROFILE_IMPL_REL,
+        b"static_cast<int>(CookieControlsMode::kBlockThirdParty)",
+        b"static_cast<int>(content_settings::CookieControlsMode::"
+        b"kBlockThirdParty)",
+        "CookieControlsMode -> content_settings::CookieControlsMode",
     ),
 )
 
@@ -4217,7 +4239,8 @@ def apply_lumo_resume_fixups(ctx):
     replacements = {}
     for rel_path, old, new, what in _LUMO_RESUME_FIXUP_REPLACEMENTS:
         replacements.setdefault(rel_path, []).append((old, new, what))
-    for rel_path in (_PEOPLE_HANDLER_REL, _BROWSER_VIEW_REL):
+    for rel_path in (_PEOPLE_HANDLER_REL, _BROWSER_VIEW_REL,
+                     _PROFILE_IMPL_REL):
         path = chromium_src / rel_path
         if not path.is_file():
             raise StageError(
