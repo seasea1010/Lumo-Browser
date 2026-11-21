@@ -4034,11 +4034,40 @@ def phase_gn(args, ctx, deadline):
 # "static_cast<int>(CookieControlsMode..." form so the fixed
 # bytes (which contain the enum name as a substring) can never
 # be mistaken for the pre-fix form.
+#
+# The same shape covers build #27's compile failure: patches 0017
+# (full-page screenshot) and 0018 (tab-group session save) call
+# base::JSONReader::Read with one argument, but in Chromium 156
+# the options parameter has no default (Read(std::string_view,
+# int, size_t)), so build-4 died with "too few arguments to
+# function 'base::JSONReader::Read'". The fixed patches pass
+# base::JSON_PARSE_RFC (0, strict RFC parsing, the old default
+# behaviour). The same build also proved patch 0022 (Lumo Monitor)
+# uncompilable: Chromium 156's base/values.h has no nested
+# base::Value::List / base::Value::Dict types any more — the
+# containers are top-level base::ListValue / base::DictValue — and
+# chrome::DIR_USER_DATA_DIR does not exist in chrome_paths.h
+# (the key is chrome::DIR_USER_DATA), so the handler died with
+# "no type named 'List'/'Dict' in base::Value" and "no member
+# named 'DIR_...' in chrome". Patch 0020 (debugger reporter) uses
+# the same three spellings and had not been reached yet (build-4
+# stopped at 45.2% with 10173 steps remaining), so it is fixed
+# the same way before it can fail. The plain replacements below
+# carry the same bytes into a resumed tree; each anchors on the
+# full pre-fix spelling, so the fixed bytes can never be mistaken
+# for the pre-fix form.
 # ---------------------------------------------------------------------------
 
 _PEOPLE_HANDLER_REL = "chrome/browser/ui/webui/settings/people_handler.cc"
 _BROWSER_VIEW_REL = "chrome/browser/ui/views/frame/browser_view.cc"
 _PROFILE_IMPL_REL = "chrome/browser/profiles/profile_impl.cc"
+_BROWSER_COMMAND_CONTROLLER_REL = (
+    "chrome/browser/ui/browser_command_controller.cc"
+)
+_LUMO_MONITOR_HANDLER_REL = (
+    "chrome/browser/ui/webui/settings/lumo_monitor_handler.cc"
+)
+_LUMO_DEBUGGER_REPORTER_REL = "chrome/browser/lumo/lumo_debugger_reporter.cc"
 
 # (file, old bytes, new bytes, what) — plain byte replacements.
 _LUMO_RESUME_FIXUP_REPLACEMENTS = (
@@ -4067,6 +4096,59 @@ _LUMO_RESUME_FIXUP_REPLACEMENTS = (
         b"static_cast<int>(content_settings::CookieControlsMode::"
         b"kBlockThirdParty)",
         "CookieControlsMode -> content_settings::CookieControlsMode",
+    ),
+    (
+        _BROWSER_COMMAND_CONTROLLER_REL,
+        b"    std::optional<base::Value> parsed = base::JSONReader::Read(\n"
+        b"        std::string_view(reinterpret_cast<const char*>(message.data()),\n"
+        b"                         message.size()));",
+        b"    std::optional<base::Value> parsed = base::JSONReader::Read(\n"
+        b"        std::string_view(reinterpret_cast<const char*>(message.data()),\n"
+        b"                         message.size()),\n"
+        b"        base::JSON_PARSE_RFC);",
+        "JSONReader::Read (screenshot) -> JSONReader::Read(..., JSON_PARSE_RFC)",
+    ),
+    (
+        _BROWSER_COMMAND_CONTROLLER_REL,
+        b"base::JSONReader::Read(*json);",
+        b"base::JSONReader::Read(*json, base::JSON_PARSE_RFC);",
+        "JSONReader::Read (tab groups) -> JSONReader::Read(..., JSON_PARSE_RFC)",
+    ),
+    (
+        _LUMO_MONITOR_HANDLER_REL,
+        b"base::Value::List",
+        b"base::ListValue",
+        "base::Value::List -> base::ListValue (Lumo Monitor)",
+    ),
+    (
+        _LUMO_MONITOR_HANDLER_REL,
+        b"base::Value::Dict",
+        b"base::DictValue",
+        "base::Value::Dict -> base::DictValue (Lumo Monitor)",
+    ),
+    (
+        _LUMO_MONITOR_HANDLER_REL,
+        b"chrome::DIR_USER_DATA_DIR",
+        b"chrome::DIR_USER_DATA",
+        "chrome::DIR_USER_DATA_DIR -> chrome::DIR_USER_DATA (Lumo Monitor)",
+    ),
+    (
+        _LUMO_DEBUGGER_REPORTER_REL,
+        b"base::Value::List",
+        b"base::ListValue",
+        "base::Value::List -> base::ListValue (debugger reporter)",
+    ),
+    (
+        _LUMO_DEBUGGER_REPORTER_REL,
+        b"base::Value::Dict",
+        b"base::DictValue",
+        "base::Value::Dict -> base::DictValue (debugger reporter)",
+    ),
+    (
+        _LUMO_DEBUGGER_REPORTER_REL,
+        b"chrome::DIR_USER_DATA_DIR",
+        b"chrome::DIR_USER_DATA",
+        "chrome::DIR_USER_DATA_DIR -> chrome::DIR_USER_DATA (debugger reporter)",
     ),
 )
 
@@ -4240,7 +4322,9 @@ def apply_lumo_resume_fixups(ctx):
     for rel_path, old, new, what in _LUMO_RESUME_FIXUP_REPLACEMENTS:
         replacements.setdefault(rel_path, []).append((old, new, what))
     for rel_path in (_PEOPLE_HANDLER_REL, _BROWSER_VIEW_REL,
-                     _PROFILE_IMPL_REL):
+                     _PROFILE_IMPL_REL, _BROWSER_COMMAND_CONTROLLER_REL,
+                     _LUMO_MONITOR_HANDLER_REL,
+                     _LUMO_DEBUGGER_REPORTER_REL):
         path = chromium_src / rel_path
         if not path.is_file():
             raise StageError(
