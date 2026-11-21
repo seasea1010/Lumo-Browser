@@ -4014,6 +4014,12 @@ def phase_gn(args, ctx, deadline):
 # entry after the location_internals anchor instead. The gen copy
 # grit reads is regenerated from the .spec by ninja, so the .spec
 # rewrite is the whole fix on the resume path too.
+#
+# The same shape covers build #25's lint failure: patch 0022 adds
+# the Lumo Monitor page but forgot the settings_main.ts import
+# the webui-eslint web-component-missing-deps rule requires, so
+# _resume_fixup_lumo_monitor_import() inserts it after the
+# autofill index import in a resumed tree.
 # ---------------------------------------------------------------------------
 
 _PEOPLE_HANDLER_REL = "chrome/browser/ui/webui/settings/people_handler.cc"
@@ -4099,6 +4105,52 @@ def _resume_fixup_grit_spec_entry(data, rel_path):
     return data.replace(
         _LUMO_TOOLS_GRIT_SPEC_ANCHOR,
         _LUMO_TOOLS_GRIT_SPEC_ANCHOR + _LUMO_TOOLS_GRIT_SPEC_ENTRY,
+    )
+
+
+# The settings_main.ts import patch 0022 adds for the Lumo Monitor
+# page (task 28). settings_main.html uses the
+# <settings-lumo-monitor-page> element, and the webui-eslint
+# web-component-missing-deps rule requires an explicit import of
+# the element in the class definition file (settings_main.ts) or
+# in lazy_load.ts. Patch 0022 originally exported the element from
+# settings.ts only, so build #25 died in build-3 on lint_ts:
+# "Missing explicit import statement for
+# 'settings-lumo-monitor-page' in the class definition file
+# 'settings_main.ts' or in 'lazy_load.ts'". The import sits after
+# the autofill index import, mirroring the about_page import just
+# above it (the About section is the same shape: an eager section
+# whose element settings_main.html uses directly).
+_LUMO_MONITOR_MAIN_REL = (
+    "chrome/browser/resources/settings/settings_main/settings_main.ts"
+)
+_LUMO_MONITOR_MAIN_IMPORT = (
+    b"import '../lumo_monitor_page/lumo_monitor_page.js';\n"
+)
+_LUMO_MONITOR_MAIN_ANCHOR = (
+    b"import '../autofill_page/autofill_page_index.js';\n"
+)
+
+
+def _resume_fixup_lumo_monitor_import(data, rel_path):
+    """Insert the Lumo Monitor import patch 0022 adds."""
+    what = "settings-lumo-monitor-page import in settings_main.ts"
+    if _LUMO_MONITOR_MAIN_IMPORT in data:
+        log(f"Resume fixup: {rel_path}: {what}: already present, "
+            f"nothing to do.")
+        return data
+    if data.count(_LUMO_MONITOR_MAIN_ANCHOR) != 1:
+        raise StageError(
+            f"Resume fixup: {rel_path}: cannot place the {what}: "
+            f"the anchor import (autofill_page_index) does not occur "
+            f"exactly once; this tree is not the tree the fixup was "
+            f"written for, refusing to compile it."
+        )
+    log(f"Resume fixup: {rel_path}: {what}: inserted after the "
+        f"autofill_page_index import.")
+    return data.replace(
+        _LUMO_MONITOR_MAIN_ANCHOR,
+        _LUMO_MONITOR_MAIN_ANCHOR + _LUMO_MONITOR_MAIN_IMPORT,
     )
 
 
@@ -4196,6 +4248,20 @@ def apply_lumo_resume_fixups(ctx):
     if spec_data != spec_original:
         spec_path.write_bytes(spec_data)
         log(f"Resume fixup: rewrote {spec_path}.")
+    main_path = chromium_src / _LUMO_MONITOR_MAIN_REL
+    if not main_path.is_file():
+        raise StageError(
+            f"Resume fixup: expected settings_main.ts is missing: "
+            f"{main_path}; the checkpoint this stage resumed from "
+            f"is incomplete."
+        )
+    main_data = main_path.read_bytes()
+    main_original = main_data
+    main_data = _resume_fixup_lumo_monitor_import(
+        main_data, _LUMO_MONITOR_MAIN_REL)
+    if main_data != main_original:
+        main_path.write_bytes(main_data)
+        log(f"Resume fixup: rewrote {main_path}.")
     log("Resume fixups complete.")
 
 
