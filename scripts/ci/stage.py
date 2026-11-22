@@ -97,6 +97,8 @@ import binascii
 import ctypes
 import hashlib
 import io
+import ast
+import hashlib
 import json
 import os
 import re
@@ -112,6 +114,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+import zipfile
 from pathlib import Path, PureWindowsPath
 
 # Helium's convention: exit code 42 means "build incomplete, resume later".
@@ -492,6 +495,38 @@ def git_clone(url, dest, recursive=False):
         cmd.append("--recursive")
     cmd.extend([url, str(dest)])
     run_checked(cmd, dest.parent)
+
+
+def _partial_clone(url, dest, commit=None, env=None):
+    """Blobless partial clone of `url` into `dest`; True on success.
+
+    --filter=blob:none downloads every commit and tree but no file
+    blobs; the checkout then lazily fetches exactly one tree's
+    blobs, so a pinned checkout costs roughly one tree instead of
+    the repo's whole history of blobs (Thorium's history is
+    several GiB of them). Unlike a --depth clone, the history is
+    complete, so tooling that walks it (depot_tools' bootstrap,
+    Thorium's setup scripts) keeps working — a missing blob is
+    fetched on demand. On any failure the partial checkout is
+    removed and False returned, so callers can fall back to the
+    plain full clone this replaced; the fallback keeps a server
+    or git version without filter support from becoming a new
+    failure mode.
+    """
+    git = find_executable("git")
+    try:
+        run_checked(
+            [git, "clone", "--filter=blob:none", "--no-checkout",
+             url, str(dest)],
+            dest.parent,
+        )
+        run_checked(
+            [git, "checkout", commit or "HEAD"], dest, env=env
+        )
+        return True
+    except StageError:
+        shutil.rmtree(dest, ignore_errors=True)
+        return False
 
 
 def tarball_tree_complete(build_root, chromium_src, tag):
@@ -993,8 +1028,12 @@ def ensure_depot_tools(depot_tools, env, deadline):
     'autoninja.py not found in depot_tools' — ninja never started.
     """
     if not depot_tools.is_dir():
-        log(f"\nCloning depot_tools into {depot_tools}")
-        git_clone(DEPOT_TOOLS_REPO, depot_tools)
+        log(f"\nCloning depot_tools into {depot_tools} "
+            "(blobless partial clone; see _partial_clone)")
+        if not _partial_clone(DEPOT_TOOLS_REPO, depot_tools, env=env):
+            log("Partial clone of depot_tools failed; falling "
+                "back to a full clone.")
+            git_clone(DEPOT_TOOLS_REPO, depot_tools)
     else:
         log(f"\nUsing existing depot_tools: {depot_tools}")
     # A fresh clone is not initialized: its .bat wrappers need the
@@ -1018,9 +1057,21 @@ def ensure_thorium(args, ctx, deadline):
     if thorium_root.is_dir():
         log(f"\nUsing existing Thorium checkout: {thorium_root}")
         return
-    log(f"\nCloning Thorium into {thorium_root}")
-    git_clone(THORIUM_REPO, thorium_root, recursive=True)
     git = find_executable("git")
+    log(f"\nCloning Thorium into {thorium_root} "
+        "(blobless partial clone; see _partial_clone)")
+    if _partial_clone(
+        THORIUM_REPO, thorium_root, commit=args.thorium_commit, env=env
+    ):
+        run_checked(
+            [git, "submodule", "update", "--init", "--recursive"],
+            thorium_root,
+            env=env,
+        )
+        return
+    log("Partial clone of Thorium failed; falling back to a "
+        "full clone.")
+    git_clone(THORIUM_REPO, thorium_root, recursive=True)
     run_checked(
         [git, "checkout", args.thorium_commit], thorium_root, env=env
     )
@@ -1695,11 +1746,21 @@ LUMO_ICON_COPIES = (
     # First-run (FRE) logos: Thorium ships its circular logo as
     # product_logo.svg, shown on the sign-in page; #13 left the
     # SVG form untouched and the #18 build's FRE still showed it.
-    # The animation variant (FRE refresh) gets the same static
-    # Lumo mark — a static logo in place of the animation is a
-    # deliberate simplification, not an oversight.
+    # The animation variant (FRE refresh) gets a static Lumo mark
+    # too — a static logo in place of the animation is a
+    # deliberate simplification, not an oversight — but NOT the
+    # same file: the FRE stylesheet renders the animation svg at
+    # twice the logo size and crops the central half, because
+    # upstream's file is 50% padding by design ("Because 50% of
+    # the svg file is the padding, we scale it by 2" in
+    # sign_in_promo_refresh.css). The plain Lumo mark has no
+    # padding, so it overflowed the logo box on all sides and
+    # overlapped the welcome heading in build #29's real-machine
+    # check. product_logo_animation.svg therefore carries the
+    # same mark centred in a doubled viewBox (the artwork
+    # occupies exactly the central 50%).
     ("product_logo.svg", "chrome/app/theme/chromium/product_logo.svg"),
-    ("product_logo.svg",
+    ("product_logo_animation.svg",
      "chrome/app/theme/chromium/product_logo_animation.svg"),
     # Version-page wordmarks (icon + "Lumo" text, 342x64; the
     # white variant is shown on dark backgrounds). Thorium's
@@ -1718,6 +1779,26 @@ LUMO_ICON_COPIES = (
     ("wordmark_white.png",
      "components/resources/default_200_percent/chromium/"
      "product_logo_white.png"),
+    # Payment-dialog wordmarks (IDR_PRODUCT_LOGO_NAME_22 /
+    # _WHITE): theme_resources.grd loads these from the theme
+    # dirs, not components/resources, so the copies above never
+    # reached them and the payment dialog kept the "chromium"
+    # wordmark. The upstream files are 97x22 at 100% and 194x44
+    # at 200%; the assets keep those canvas sizes (the 200%
+    # assets are named for their 44px height, like the
+    # product_logo_<size> assets above).
+    ("product_logo_name_22.png",
+     "chrome/app/theme/default_100_percent/chromium/"
+     "product_logo_name_22.png"),
+    ("product_logo_name_22_white.png",
+     "chrome/app/theme/default_100_percent/chromium/"
+     "product_logo_name_22_white.png"),
+    ("product_logo_name_44.png",
+     "chrome/app/theme/default_200_percent/chromium/"
+     "product_logo_name_22.png"),
+    ("product_logo_name_44_white.png",
+     "chrome/app/theme/default_200_percent/chromium/"
+     "product_logo_name_22_white.png"),
 )
 
 # Preinstalled extension packages (patch 0027): signed CRX files
@@ -3520,14 +3601,81 @@ def _git_apply_both_ways(git, chromium_src, patch_path, env, deadline):
 # be rotated, and a missing secret must be able to turn the lock
 # back off), which a patch-owned file could not survive. Only the
 # salt and the hash ever reach the tree or the binary; the password
-# itself never leaves the owner's machine.
+# itself never leaves the owner's machine. The optional second
+# password (LUMO_LOCK_HASH_2, build #30; either password unlocks)
+# gets its own generated header, lumo_lock_config_2.h, so a tree
+# set up before the second password existed carries only the
+# first header and still builds (patch 0019 reads the second
+# header through __has_include).
 LUMO_LOCK_CONFIG_REL_PATH = "chrome/browser/lumo/lumo_lock_config.h"
+LUMO_LOCK_CONFIG_2_REL_PATH = "chrome/browser/lumo/lumo_lock_config_2.h"
 LUMO_LOCK_HASH_PATTERN = re.compile(r"^([0-9a-f]{32}):([0-9a-f]{64})$")
+
+
+def _parse_lumo_lock_hash(raw, secret_name):
+    """Validate one "<salt_hex>:<hash_hex>" lock secret value.
+
+    Returns (salt_hex, hash_hex), or ("", "") when the secret is
+    unset. A set but malformed value is a loud StageError, never a
+    quietly wrong build; the value is never printed to the log.
+    """
+    if not raw:
+        return "", ""
+    match = LUMO_LOCK_HASH_PATTERN.match(raw)
+    if match is None:
+        raise StageError(
+            f"{secret_name} is set but malformed: expected "
+            "'<salt_hex>:<hash_hex>' with a 16-byte salt (32 "
+            "lowercase hex characters) and a SHA-256 hash (64 "
+            "lowercase hex characters); refusing to build a "
+            "lock with an unverified value (the value itself "
+            "is not shown)"
+        )
+    return match.group(1), match.group(2)
+
+
+def _write_lumo_lock_header(chromium_src, rel_path, guard,
+                            salt_const, hash_const, salt_hex,
+                            hash_hex, secret_name):
+    """Write one generated lock config header, then read it back
+    and verify it byte-for-byte."""
+    lines = [
+        f"// Generated by scripts/ci/stage.py from the {secret_name}",
+        "// secret at build time. Do not edit; regenerated on every",
+        "// branding run. Contains only the salt and the expected",
+        "// SHA-256 hash - never the password itself.",
+        f"#ifndef {guard}",
+        f"#define {guard}",
+        "",
+        "namespace lumo {",
+        "",
+        f'inline constexpr char {salt_const}[] = "{salt_hex}";',
+        f'inline constexpr char {hash_const}[] = "{hash_hex}";',
+        "",
+        "}  // namespace lumo",
+        "",
+        f"#endif  // {guard}",
+        "",
+    ]
+    text = "\n".join(lines)
+    header_path = chromium_src / rel_path
+    header_path.parent.mkdir(parents=True, exist_ok=True)
+    header_path.write_text(text, encoding="utf-8")
+    written = header_path.read_text(encoding="utf-8")
+    if written != text:
+        raise StageError(
+            f"{rel_path} verification failed: the written "
+            "file does not match the generated content; refusing "
+            "to build with an unverified lock configuration"
+        )
 
 
 def write_lumo_lock_config(chromium_src, environ=None):
     """Generate chrome/browser/lumo/lumo_lock_config.h from the
-    LUMO_LOCK_HASH environment variable (a GitHub Secret).
+    LUMO_LOCK_HASH environment variable (a GitHub Secret), and
+    chrome/browser/lumo/lumo_lock_config_2.h from the optional
+    LUMO_LOCK_HASH_2 secret (a second password; either password
+    unlocks, patch 0019).
 
     Mirrors the API key injection in write_args_gn: a set but
     malformed value is a loud StageError, never a quietly wrong
@@ -3538,58 +3686,45 @@ def write_lumo_lock_config(chromium_src, environ=None):
     so a build without the secret — someone else's fork, a lost
     secret — still produces a working browser instead of one locked
     with an unknown password.
+
+    The second password gets its OWN header, not new constants in
+    the first one: a tree set up before the second password
+    existed carries only the first header, and patch 0019 treats
+    a missing second header as "no second password" via
+    __has_include, so such a tree still builds and locks with
+    the first password alone.
     """
     if environ is None:
         environ = os.environ
     raw = (environ.get("LUMO_LOCK_HASH") or "").strip()
-    header_path = chromium_src / LUMO_LOCK_CONFIG_REL_PATH
-    if raw:
-        match = LUMO_LOCK_HASH_PATTERN.match(raw)
-        if match is None:
-            raise StageError(
-                "LUMO_LOCK_HASH is set but malformed: expected "
-                "'<salt_hex>:<hash_hex>' with a 16-byte salt (32 "
-                "lowercase hex characters) and a SHA-256 hash (64 "
-                "lowercase hex characters); refusing to build a "
-                "lock with an unverified value (the value itself "
-                "is not shown)"
-            )
-        salt_hex, hash_hex = match.group(1), match.group(2)
-    else:
-        salt_hex, hash_hex = "", ""
+    salt_hex, hash_hex = _parse_lumo_lock_hash(raw, "LUMO_LOCK_HASH")
+    if not raw:
         log("Lumo startup lock: LUMO_LOCK_HASH is not set; "
             "building with the startup password lock DISABLED.")
-    lines = [
-        "// Generated by scripts/ci/stage.py from the LUMO_LOCK_HASH",
-        "// secret at build time. Do not edit; regenerated on every",
-        "// branding run. Contains only the salt and the expected",
-        "// SHA-256 hash - never the password itself.",
-        "#ifndef CHROME_BROWSER_LUMO_LUMO_LOCK_CONFIG_H_",
-        "#define CHROME_BROWSER_LUMO_LUMO_LOCK_CONFIG_H_",
-        "",
-        "namespace lumo {",
-        "",
-        f'inline constexpr char kLockSaltHex[] = "{salt_hex}";',
-        f'inline constexpr char kLockHashHex[] = "{hash_hex}";',
-        "",
-        "}  // namespace lumo",
-        "",
-        "#endif  // CHROME_BROWSER_LUMO_LUMO_LOCK_CONFIG_H_",
-        "",
-    ]
-    text = "\n".join(lines)
-    header_path.parent.mkdir(parents=True, exist_ok=True)
-    header_path.write_text(text, encoding="utf-8")
-    written = header_path.read_text(encoding="utf-8")
-    if written != text:
-        raise StageError(
-            "lumo_lock_config.h verification failed: the written "
-            "file does not match the generated content; refusing "
-            "to build with an unverified lock configuration"
-        )
+    _write_lumo_lock_header(
+        chromium_src, LUMO_LOCK_CONFIG_REL_PATH,
+        "CHROME_BROWSER_LUMO_LUMO_LOCK_CONFIG_H_",
+        "kLockSaltHex", "kLockHashHex", salt_hex, hash_hex,
+        "LUMO_LOCK_HASH")
     if raw:
         log("Lumo startup lock: lock config header written from "
             "LUMO_LOCK_HASH (value not shown).")
+
+    raw_2 = (environ.get("LUMO_LOCK_HASH_2") or "").strip()
+    salt_2_hex, hash_2_hex = _parse_lumo_lock_hash(
+        raw_2, "LUMO_LOCK_HASH_2")
+    _write_lumo_lock_header(
+        chromium_src, LUMO_LOCK_CONFIG_2_REL_PATH,
+        "CHROME_BROWSER_LUMO_LUMO_LOCK_CONFIG_2_H_",
+        "kLockSaltHex2", "kLockHashHex2", salt_2_hex, hash_2_hex,
+        "LUMO_LOCK_HASH_2")
+    if raw_2:
+        log("Lumo startup lock: second lock config header written "
+            "from LUMO_LOCK_HASH_2 (value not shown).")
+        if not raw:
+            log("Lumo startup lock: WARNING: LUMO_LOCK_HASH_2 is "
+                "set but LUMO_LOCK_HASH is not; the second "
+                "password has no effect without the first.")
 
 
 # Lumo build number (task 6 extension, patch 0025). The product
@@ -3801,6 +3936,100 @@ def _thorium_setup_done(ctx, args):
     return None
 
 
+# ---------------------------------------------------------------------------
+# Setup fingerprint (build #30 audit fix)
+#
+# phase_setup bakes the repo's Lumo inputs into the tree: the patch
+# set, stage.py's own generated headers and string passes, the flag
+# translation table, and the branding/extension assets it copies.
+# A stage that resumes into the gn or build phase never re-runs
+# setup, so it compiles whatever its checkpoint's setup produced.
+# The resume fixups only cover the spots they were written for;
+# anything else a later commit changed would be missing from the
+# shipped browser with no error anywhere (a silently feature-
+# incomplete build). phase_setup therefore records a fingerprint
+# of all its inputs in the build root (which the checkpoint zips
+# carry from stage to stage), and the gn/build phases refuse to
+# consume a tree whose recorded fingerprint does not match the
+# current repo: the fix is a fresh build, not a quieter resume.
+# ---------------------------------------------------------------------------
+
+SETUP_FINGERPRINT_FILE_NAME = "lumo-setup-fingerprint.json"
+
+
+def lumo_setup_fingerprint(repo_root):
+    """Hash of everything phase_setup bakes into the tree."""
+    digest = hashlib.sha256()
+
+    def feed(label, data):
+        digest.update(label.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(data)
+        digest.update(b"\0")
+
+    ci_dir = repo_root / "scripts" / "ci"
+    stage_py = ci_dir / "stage.py"
+    if stage_py.is_file():
+        feed("stage.py", stage_py.read_bytes())
+    translations = ci_dir / "lumo_flag_translations.json"
+    if translations.is_file():
+        feed("lumo_flag_translations.json", translations.read_bytes())
+    for sub in ("lumo_patches", "lumo_branding", "lumo_extensions"):
+        folder = ci_dir / sub
+        if not folder.is_dir():
+            continue
+        for path in sorted(folder.rglob("*")):
+            if path.is_file():
+                feed(f"{sub}/{path.relative_to(folder).as_posix()}",
+                     path.read_bytes())
+    return digest.hexdigest()
+
+
+def _record_setup_fingerprint(ctx):
+    fingerprint = lumo_setup_fingerprint(ctx["repo_root"])
+    payload = {"fingerprint": fingerprint}
+    marker = ctx["build_root"] / SETUP_FINGERPRINT_FILE_NAME
+    marker.write_text(
+        json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    log(f"Setup fingerprint recorded: {fingerprint[:16]}...")
+
+
+def verify_setup_fingerprint(ctx):
+    """Refuse a gn/build phase whose tree was set up from other
+    inputs than the current repo's (see the section header)."""
+    marker = ctx["build_root"] / SETUP_FINGERPRINT_FILE_NAME
+    recorded = None
+    if marker.is_file():
+        try:
+            data = json.loads(marker.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            data = None
+        if isinstance(data, dict):
+            recorded = data.get("fingerprint")
+    if not recorded:
+        raise StageError(
+            "this checkpoint carries no setup fingerprint "
+            f"({SETUP_FINGERPRINT_FILE_NAME}): it predates resume "
+            "verification, or its setup phase never completed. "
+            "Refusing to resume from it; a fresh build (from "
+            "stage 1) is required."
+        )
+    current = lumo_setup_fingerprint(ctx["repo_root"])
+    if recorded != current:
+        raise StageError(
+            "setup fingerprint mismatch: the Lumo patch set, "
+            "stage.py, the flag translations, or the branding "
+            "assets changed after this tree was set up "
+            f"(checkpoint {str(recorded)[:16]}..., current "
+            f"{current[:16]}...). Resuming would compile the old "
+            "setup's sources and silently ship a browser missing "
+            "the newer changes; refusing to resume. A fresh build "
+            "(from stage 1) is required."
+        )
+    log("Setup fingerprint verified: the tree matches the current "
+        "Lumo inputs.")
+
+
 def phase_setup(args, ctx, deadline):
     """Thorium's setup.py: overlays + patch series + GRD rebase.
 
@@ -3852,6 +4081,7 @@ def phase_setup(args, ctx, deadline):
         )
         _record_thorium_setup_done(ctx, args)
         apply_lumo_branding(args, ctx, deadline)
+        _record_setup_fingerprint(ctx)
         log("\nSetup phase complete.")
         return
     thorium_root = ctx["thorium_root"]
@@ -3878,6 +4108,7 @@ def phase_setup(args, ctx, deadline):
     )
     _record_thorium_setup_done(ctx, args)
     apply_lumo_branding(args, ctx, deadline)
+    _record_setup_fingerprint(ctx)
     log("\nSetup phase complete.")
 
 
@@ -3964,8 +4195,52 @@ def write_args_gn(args, ctx):
     return args_gn
 
 
+def restore_generated_secret_files(args, ctx):
+    """Re-create the Secret-bearing generated files on resume.
+
+    checkpoint() deliberately keeps args.gn and the startup lock
+    config headers out of the checkpoint zip (they carry GitHub
+    Secrets into the tree; see _checkpoint_exclusion_switches), so
+    a stage resuming from such a checkpoint finds them missing.
+    Both generators are pure functions of the stage environment
+    (the workflow passes the same Secrets to every stage) and are
+    idempotent, so re-running them here restores exactly the bytes
+    the original stage produced:
+
+    * args.gn, only when missing (phase_gn rewrites it anyway;
+      this covers a resume straight into the build phase, and
+      write_args_gn re-verifies the injected lines byte-for-byte);
+    * lumo_lock_config.h / lumo_lock_config_2.h, when either is
+      missing. Without this the build would still succeed and
+      silently ship a browser with the startup lock DISABLED:
+      patch 0019 reads the headers through __has_include and
+      treats a missing header as "no password configured".
+    """
+    chromium_src = ctx["chromium_src"]
+    out_dir = chromium_src / OUT_DIR_NAME
+    if not (out_dir / "args.gn").is_file():
+        log("\nResume: args.gn is not in the checkpoint (it is "
+            "kept out on purpose; it carries the API keys). "
+            "Regenerating it from this stage's environment.")
+        write_args_gn(args, ctx)
+    lock_header = chromium_src / LUMO_LOCK_CONFIG_REL_PATH
+    lock_header_2 = chromium_src / LUMO_LOCK_CONFIG_2_REL_PATH
+    if not lock_header.is_file() or not lock_header_2.is_file():
+        log("\nResume: the startup lock config header(s) are not "
+            "in the checkpoint (kept out on purpose; they carry "
+            "the lock hash). Regenerating them from this stage's "
+            "environment.")
+        write_lumo_lock_config(chromium_src)
+
+
 def phase_gn(args, ctx, deadline):
     """Generate the Ninja build files with `gn gen`."""
+    # A resumed tree must have been set up from the current repo's
+    # inputs, and its Secret-bearing generated files (kept out of
+    # the checkpoint zip) must be restored before anything reads
+    # them. Both are no-ops on a from-scratch run of this stage.
+    verify_setup_fingerprint(ctx)
+    restore_generated_secret_files(args, ctx)
     write_args_gn(args, ctx)
     chromium_src = ctx["chromium_src"]
     out_dir = chromium_src / OUT_DIR_NAME
@@ -4074,6 +4349,56 @@ def phase_gn(args, ctx, deadline):
 # pair, which the fixed form no longer contains contiguously,
 # and the lambda replacement anchors on the full two-line
 # signature, so neither can be mistaken for the fixed form.
+#
+# The same shape covers build #30's settings-menu fix: patch
+# 0022 pointed the Lumo Monitor menu item at the cr-icon
+# "settings:dashboard", but the dashboard glyph only exists in
+# the settings20 iconset (chrome/browser/resources/settings/
+# icons.html.ts defines it in both settings20 variants and in
+# neither settings variant), so the item rendered with a blank
+# icon in build #29's real-machine check — every other menu item
+# resolves, including the one settings20 icon already in use
+# ("settings20:button-magic"). The fixed patch 0022 uses
+# "settings20:dashboard", and the plain replacement below
+# carries the same bytes into a resumed tree.
+#
+# The same shape covers build #30's real-machine fixes from
+# build #29's check, all in the plain replacements below:
+# patch 0010's welcome screens get a flex gap (the padded
+# product logo, heading and button touched) and a visually
+# distinct credits screen (its own class in the refresh HTML);
+# the animation logo file itself is rewritten to the padded
+# variant stage.py now copies (the FRE stylesheet crops the
+# central half of the animation svg, which is 50% padding by
+# upstream design; the unpadded Lumo mark overflowed the logo
+# box onto the heading); patch 0030 makes Thorium's display
+# branding rewrite internal URLs to lumo:// instead of
+# thorium:// (the input-side alias of patch 0023 already
+# accepted lumo://, but displays kept saying thorium://);
+# patch 0022's Monitor page renames the owner's-API-key label
+# to "Google API key" with embedded/not-embedded values, and
+# its signed-in check moves from ConsentLevel::kSync to
+# kSignin (under the account-storage model a signed-in
+# profile holds its account at kSignin, so the Monitor
+# reported "not signed in" for a signed-in profile); patch
+# 0019's startup lock learns the optional second password
+# (either password unlocks; the unlock token is derived from
+# whichever entry matched). The lock's second config header
+# needs no fixup: it is generated during setup, and a resumed
+# tree without it simply builds with one password, exactly
+# like a tree set up before the second password existed.
+#
+# Patch 0025's picker-hosted upgrade welcome (build #30) is
+# deliberately NOT carried by a fixup: it rewires six files
+# (profile picker params/view, the first-run flow controller,
+# the startup browser creator) and removes the startup-tab
+# insertion, which is far beyond a byte spot-fix. A build
+# resuming into the build phase must therefore come from a
+# checkpoint whose setup already ran with the new patch 0025
+# (a fresh #30 build, or a later #30 checkpoint) — resuming a
+# pre-#30 checkpoint into #30's build phase would compile the
+# old tab-based welcome, not fail, so this is a silent
+# behaviour difference to be aware of, not an error.
 # ---------------------------------------------------------------------------
 
 _PEOPLE_HANDLER_REL = "chrome/browser/ui/webui/settings/people_handler.cc"
@@ -4086,6 +4411,29 @@ _LUMO_MONITOR_HANDLER_REL = (
     "chrome/browser/ui/webui/settings/lumo_monitor_handler.cc"
 )
 _LUMO_DEBUGGER_REPORTER_REL = "chrome/browser/lumo/lumo_debugger_reporter.cc"
+_SETTINGS_MENU_REL = (
+    "chrome/browser/resources/settings/settings_menu/settings_menu.html"
+)
+_SETTINGS_STRINGS_REL = "chrome/app/settings_strings.grdp"
+_LUMO_MONITOR_PAGE_REL = (
+    "chrome/browser/resources/settings/lumo_monitor_page/"
+    "lumo_monitor_page.ts"
+)
+_SIGN_IN_PROMO_REFRESH_CSS_REL = (
+    "chrome/browser/resources/intro/sign_in_promo_refresh.css"
+)
+_SIGN_IN_PROMO_REFRESH_HTML_REL = (
+    "chrome/browser/resources/intro/sign_in_promo_refresh.html.ts"
+)
+_INTRO_APP_CSS_REL = "chrome/browser/resources/intro/intro_app.css"
+_PRODUCT_LOGO_ANIMATION_REL = (
+    "chrome/app/theme/chromium/product_logo_animation.svg"
+)
+_THORIUM_URL_UTILS_REL = "chrome/browser/thorium_url_utils.cc"
+_THORIUM_EASTER_EGGS_REL = (
+    "chrome/browser/ui/webui/thorium_easter_eggs.h"
+)
+_CHROME_BROWSER_MAIN_WIN_REL = "chrome/browser/chrome_browser_main_win.cc"
 
 # (file, old bytes, new bytes, what) — plain byte replacements.
 _LUMO_RESUME_FIXUP_REPLACEMENTS = (
@@ -4183,7 +4531,540 @@ _LUMO_RESUME_FIXUP_REPLACEMENTS = (
         "DownloadToString callback body std::unique_ptr<std::string> -> "
         "std::optional<std::string> (debugger reporter)",
     ),
+    (
+        _LUMO_DEBUGGER_REPORTER_REL,
+        b"bool IsEnabled() {\n"
+        b"  const base::CommandLine* command_line =\n"
+        b"      base::CommandLine::ForCurrentProcess();\n"
+        b"  return command_line->HasSwitch(kEndpointSwitch) &&\n"
+        b"         !command_line->GetSwitchValueASCII(kEndpointSwitch).empty();\n"
+        b"}\n"
+        b"\n"
+        b"namespace {",
+        b"namespace {\n"
+        b"\n"
+        b"// The port the Lumo debugger app listens on, and the only port a\n"
+        b"// valid endpoint may name (the app binds 127.0.0.1:47741).\n"
+        b"constexpr int kDebuggerPort = 47741;\n"
+        b"\n"
+        b"// Parses the --lumo-debugger-endpoint value and returns it only\n"
+        b"// when it points at the debugger app on this machine: the http\n"
+        b"// scheme, a loopback host (127.0.0.1, localhost, or ::1), and\n"
+        b"// kDebuggerPort. Anything else (a remote host, another port,\n"
+        b"// https, a malformed URL) yields nullopt, so a stray or hostile\n"
+        b"// switch value can never make the browser POST session events\n"
+        b"// anywhere but the owner's own debugger app.\n"
+        b"std::optional<GURL> GetValidatedEndpoint() {\n"
+        b"  const base::CommandLine* command_line =\n"
+        b"      base::CommandLine::ForCurrentProcess();\n"
+        b"  if (!command_line->HasSwitch(kEndpointSwitch)) {\n"
+        b"    return std::nullopt;\n"
+        b"  }\n"
+        b"  const GURL url(command_line->GetSwitchValueASCII(kEndpointSwitch));\n"
+        b"  if (!url.is_valid() || !url.SchemeIs(\"http\")) {\n"
+        b"    return std::nullopt;\n"
+        b"  }\n"
+        b"  const std::string host(url.host());\n"
+        b"  if (host != \"127.0.0.1\" && host != \"localhost\" && host != \"::1\") {\n"
+        b"    return std::nullopt;\n"
+        b"  }\n"
+        b"  if (url.EffectiveIntPort() != kDebuggerPort) {\n"
+        b"    return std::nullopt;\n"
+        b"  }\n"
+        b"  return url;\n"
+        b"}\n"
+        b"\n"
+        b"}  // namespace\n"
+        b"\n"
+        b"bool IsEnabled() {\n"
+        b"  return GetValidatedEndpoint().has_value();\n"
+        b"}\n"
+        b"\n"
+        b"namespace {",
+        "endpoint validation: GetValidatedEndpoint + IsEnabled via it "
+        "(debugger reporter, patch 0020)",
+    ),
+    (
+        _LUMO_DEBUGGER_REPORTER_REL,
+        b"  request->url = GURL(base::CommandLine::ForCurrentProcess()\n"
+        b"                          ->GetSwitchValueASCII(kEndpointSwitch));\n"
+        b"  if (!request->url.is_valid()) {\n"
+        b"    return;\n"
+        b"  }\n",
+        b"  std::optional<GURL> endpoint = GetValidatedEndpoint();\n"
+        b"  if (!endpoint) {\n"
+        b"    return;\n"
+        b"  }\n"
+        b"  request->url = *endpoint;\n",
+        "PostJson posts to the validated endpoint only "
+        "(debugger reporter, patch 0020)",
+    ),
+    (
+        _SETTINGS_MENU_REL,
+        b'<cr-icon icon="settings:dashboard"></cr-icon>',
+        b'<cr-icon icon="settings20:dashboard"></cr-icon>',
+        "settings menu icon settings:dashboard -> settings20:dashboard "
+        "(Lumo Monitor)",
+    ),
+    (
+        _SETTINGS_STRINGS_REL,
+        b"    <message name=\"IDS_SETTINGS_LUMO_MONITOR_API_KEY_LABEL\" desc=\"Label for the owner's API key presence on the Lumo Monitor settings page (Lumo patch 0022)\">\n"
+        b"      \xe8\x87\xaa\xe5\x89\x8d API \xe3\x82\xad\xe3\x83\xbc\n",
+        b"    <message name=\"IDS_SETTINGS_LUMO_MONITOR_API_KEY_LABEL\" desc=\"Label for the embedded Google API key on the Lumo Monitor settings page (Lumo patch 0022)\">\n"
+        b"      Google API \xe3\x82\xad\xe3\x83\xbc\n",
+        "Monitor API key label: owner's API key -> Google API key",
+    ),
+    (
+        _LUMO_MONITOR_PAGE_REL,
+        b"    if (this.info_.apiKeyConfigured && this.info_.oauthClientConfigured) {\n"
+        b"      return 'API \xe3\x82\xad\xe3\x83\xbc\xe3\x81\xa8 OAuth \xe3\x82\xaf\xe3\x83\xa9\xe3\x82\xa4\xe3\x82\xa2\xe3\x83\xb3\xe3\x83\x88\xe3\x81\x8c\xe7\xb5\x84\xe3\x81\xbf\xe8\xbe\xbc\xe3\x81\xbe\xe3\x82\x8c\xe3\x81\xa6\xe3\x81\x84\xe3\x81\xbe\xe3\x81\x99';\n"
+        b"    }\n"
+        b"    if (!this.info_.apiKeyConfigured) {\n"
+        b"      return 'API \xe3\x82\xad\xe3\x83\xbc\xe3\x81\x8c\xe7\xb5\x84\xe3\x81\xbf\xe8\xbe\xbc\xe3\x81\xbe\xe3\x82\x8c\xe3\x81\xa6\xe3\x81\x84\xe3\x81\xbe\xe3\x81\x9b\xe3\x82\x93';\n"
+        b"    }\n"
+        b"    return 'OAuth \xe3\x82\xaf\xe3\x83\xa9\xe3\x82\xa4\xe3\x82\xa2\xe3\x83\xb3\xe3\x83\x88\xe3\x81\x8c\xe7\xb5\x84\xe3\x81\xbf\xe8\xbe\xbc\xe3\x81\xbe\xe3\x82\x8c\xe3\x81\xa6\xe3\x81\x84\xe3\x81\xbe\xe3\x81\x9b\xe3\x82\x93';\n",
+        b"    if (this.info_.apiKeyConfigured && this.info_.oauthClientConfigured) {\n"
+        b"      return '\xe7\xb5\x84\xe3\x81\xbf\xe8\xbe\xbc\xe3\x81\xbf\xe6\xb8\x88\xe3\x81\xbf\xef\xbc\x88\xe3\x82\xb5\xe3\x82\xa4\xe3\x83\xb3\xe3\x82\xa4\xe3\x83\xb3\xe3\x81\xa8\xe5\x90\x8c\xe6\x9c\x9f\xe3\x81\x8c\xe4\xbd\xbf\xe3\x81\x88\xe3\x81\xbe\xe3\x81\x99\xef\xbc\x89';\n"
+        b"    }\n"
+        b"    return '\xe6\x9c\xaa\xe7\xb5\x84\xe3\x81\xbf\xe8\xbe\xbc\xe3\x81\xbf';\n",
+        "Monitor API key text -> embedded / not embedded",
+    ),
+    (
+        _LUMO_MONITOR_HANDLER_REL,
+        b"  info.Set(\"syncSignedIn\",\n"
+        b"           identity_manager &&\n"
+        b"               identity_manager->HasPrimaryAccount(\n"
+        b"                   signin::ConsentLevel::kSync));",
+        b"  // Signed-in means a primary account at the sign-in consent\n"
+        b"  // level: under the account-storage model the account is held\n"
+        b"  // at kSignin, and requiring kSync here reported a signed-in\n"
+        b"  // profile as \"not signed in\" (build #29 real-machine check).\n"
+        b"  info.Set(\"syncSignedIn\",\n"
+        b"           identity_manager &&\n"
+        b"               identity_manager->HasPrimaryAccount(\n"
+        b"                   signin::ConsentLevel::kSignin));",
+        "Monitor syncSignedIn: ConsentLevel::kSync -> kSignin",
+    ),
+    (
+        _SIGN_IN_PROMO_REFRESH_CSS_REL,
+        b"/* Lumo: welcome-flow screens (Lumo patch 0010). */\n"
+        b".lumo-welcome {\n"
+        b"  align-items: center;\n"
+        b"  display: flex;\n"
+        b"  flex-direction: column;\n"
+        b"  text-align: center;\n"
+        b"}\n"
+        b"\n"
+        b".lumo-subtitle {\n"
+        b"  color: var(--cr-secondary-text-color);\n"
+        b"  font-size: 14px;\n"
+        b"  line-height: 20px;\n"
+        b"  max-width: 520px;\n"
+        b"}\n"
+        b"\n"
+        b".lumo-credits {\n"
+        b"  color: var(--cr-secondary-text-color);\n"
+        b"  font-size: 13px;\n"
+        b"  line-height: 20px;\n"
+        b"  max-width: 520px;\n"
+        b"}\n",
+        b"/* Lumo: welcome-flow screens (Lumo patch 0010). The gap keeps\n"
+        b"   the (padded) product logo, the heading and the button from\n"
+        b"   touching; the credits screen gets wider spacing and an\n"
+        b"   underlined heading so it does not read as a second copy of\n"
+        b"   the welcome screen when the flow passes through it. */\n"
+        b".lumo-welcome {\n"
+        b"  align-items: center;\n"
+        b"  display: flex;\n"
+        b"  flex-direction: column;\n"
+        b"  gap: 1.5rem;\n"
+        b"  text-align: center;\n"
+        b"}\n"
+        b"\n"
+        b".lumo-subtitle {\n"
+        b"  color: var(--cr-secondary-text-color);\n"
+        b"  font-size: 14px;\n"
+        b"  line-height: 20px;\n"
+        b"  max-width: 520px;\n"
+        b"}\n"
+        b"\n"
+        b".lumo-credits {\n"
+        b"  color: var(--cr-secondary-text-color);\n"
+        b"  font-size: 13px;\n"
+        b"  line-height: 20px;\n"
+        b"  max-width: 520px;\n"
+        b"}\n"
+        b"\n"
+        b".lumo-credits p {\n"
+        b"  margin: 8px 0;\n"
+        b"}\n"
+        b"\n"
+        b".lumo-credits-screen {\n"
+        b"  gap: 2rem;\n"
+        b"}\n"
+        b"\n"
+        b".lumo-credits-screen .title {\n"
+        b"  border-bottom: 2px solid var(--cr-fallback-color-primary);\n"
+        b"  padding-bottom: 12px;\n"
+        b"}\n",
+        "welcome/credits screens: gap + credits differentiation "
+        "(intro refresh CSS)",
+    ),
+    (
+        _SIGN_IN_PROMO_REFRESH_HTML_REL,
+        b"<div class=\"lumo-welcome\">\n"
+        b"  <h1 class=\"title fade-in\">$i18n{lumoCreditsHeading}</h1>",
+        b"<div class=\"lumo-welcome lumo-credits-screen\">\n"
+        b"  <h1 class=\"title fade-in\">$i18n{lumoCreditsHeading}</h1>",
+        "credits screen class (intro refresh HTML)",
+    ),
+    (
+        _INTRO_APP_CSS_REL,
+        b".lumo-view {\n"
+        b"  align-items: center;\n"
+        b"  display: flex;\n"
+        b"  flex-direction: column;\n"
+        b"  height: 100%;",
+        b".lumo-view {\n"
+        b"  align-items: center;\n"
+        b"  display: flex;\n"
+        b"  flex-direction: column;\n"
+        b"  gap: 1.5rem;\n"
+        b"  height: 100%;",
+        "welcome screen gap (intro app CSS)",
+    ),
+    (
+        _PRODUCT_LOGO_ANIMATION_REL,
+        b"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 256 256\"><rect x=\"4\" y=\"4\" width=\"248\" height=\"248\" rx=\"52\" fill=\"#191d49\"/><path d=\"M72 48h38v124h78v36H72z\" fill=\"#00a8de\"/></svg>\n",
+        b"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 512 512\"><g transform=\"translate(128 128)\"><rect x=\"4\" y=\"4\" width=\"248\" height=\"248\" rx=\"52\" fill=\"#191d49\"/><path d=\"M72 48h38v124h78v36H72z\" fill=\"#00a8de\"/></g></svg>\n",
+        "product_logo_animation.svg -> padded (50% padding) variant",
+    ),
+    (
+        _THORIUM_URL_UTILS_REL,
+        b"replacements.SetSchemeStr(content::kThoriumUIScheme);",
+        b"replacements.SetSchemeStr(content::kLumoUIScheme);",
+        "display URL scheme: thorium -> lumo (GetInternalURLForDisplay)",
+    ),
+    (
+        _THORIUM_URL_UTILS_REL,
+        b"  constexpr std::u16string_view kThoriumScheme = u\"thorium:\";\n"
+        b"  if (!url.SchemeIs(content::kChromeUIScheme) &&\n"
+        b"      !url.SchemeIs(content::kThoriumUIScheme)) {",
+        b"  constexpr std::u16string_view kThoriumScheme = u\"thorium:\";\n"
+        b"  constexpr std::u16string_view kLumoScheme = u\"lumo:\";\n"
+        b"  if (!url.SchemeIs(content::kChromeUIScheme) &&\n"
+        b"      !url.SchemeIs(content::kThoriumUIScheme) &&\n"
+        b"      !url.SchemeIs(content::kLumoUIScheme)) {",
+        "display URL text: accept lumo scheme (GetInternalURLTextForDisplay)",
+    ),
+    (
+        _THORIUM_URL_UTILS_REL,
+        b"    source_scheme = kThoriumScheme;\n"
+        b"  } else {\n"
+        b"    return std::u16string(formatted_url);",
+        b"    source_scheme = kThoriumScheme;\n"
+        b"  } else if (base::StartsWith(formatted_url, kLumoScheme,\n"
+        b"                              base::CompareCase::INSENSITIVE_ASCII)) {\n"
+        b"    source_scheme = kLumoScheme;\n"
+        b"  } else {\n"
+        b"    return std::u16string(formatted_url);",
+        "display URL text: lumo prefix (GetInternalURLTextForDisplay)",
+    ),
+    (
+        _THORIUM_URL_UTILS_REL,
+        b"IsInternalURLSchemeBrandingEnabled() ? u\"thorium\" : u\"chrome\";",
+        b"IsInternalURLSchemeBrandingEnabled() ? u\"lumo\" : u\"chrome\";",
+        "display URL text scheme: thorium -> lumo",
+    ),
+    (
+        _THORIUM_EASTER_EGGS_REL,
+        b"<title>Thorium Easter Eggs</title>",
+        b"<title>Lumo Easter Eggs</title>",
+        "eggs page title: Thorium -> Lumo (patch 0040)",
+    ),
+    (
+        _THORIUM_EASTER_EGGS_REL,
+        b"Thorium Easter Eggs WebUI Page",
+        b"Lumo Easter Eggs WebUI Page",
+        "eggs page heading: Thorium -> Lumo (patch 0040)",
+    ),
+    (
+        _THORIUM_EASTER_EGGS_REL,
+        b"<title>Thorium Robot</title>",
+        b"<title>Lumo Robot</title>",
+        "robot page title: Thorium -> Lumo (patch 0040)",
+    ),
+    (
+        _THORIUM_EASTER_EGGS_REL,
+        b'alt="Thorium Robot"',
+        b'alt="Lumo Robot"',
+        "robot image alt: Thorium -> Lumo (patch 0040)",
+    ),
+    (
+        _THORIUM_EASTER_EGGS_REL,
+        b"<title>Thorium Authors</title>",
+        b"<title>Lumo Authors</title>",
+        "authors page title: Thorium -> Lumo (patch 0040)",
+    ),
+    (
+        _THORIUM_EASTER_EGGS_REL,
+        b"<h1>Thorium Authors</h1>",
+        b"<h1>Lumo Authors</h1>",
+        "authors page heading: Thorium -> Lumo (patch 0040)",
+    ),
+
+    (
+        _CHROME_BROWSER_MAIN_WIN_REL,
+        b"#if __has_include(\"chrome/browser/lumo/lumo_lock_config.h\")\n"
+        b"#include \"chrome/browser/lumo/lumo_lock_config.h\"\n"
+        b"#define LUMO_STARTUP_LOCK_CONFIGURED 1\n"
+        b"#endif  // __has_include(\"chrome/browser/lumo/lumo_lock_config.h\")\n"
+        b"\n"
+        b"namespace {\n",
+        b"#if __has_include(\"chrome/browser/lumo/lumo_lock_config.h\")\n"
+        b"#include \"chrome/browser/lumo/lumo_lock_config.h\"\n"
+        b"#define LUMO_STARTUP_LOCK_CONFIGURED 1\n"
+        b"#endif  // __has_include(\"chrome/browser/lumo/lumo_lock_config.h\")\n"
+        b"\n"
+        b"// Lumo (patch 0019): the optional second password (build #30)\n"
+        b"// lives in its own generated header, so a tree set up before it\n"
+        b"// existed simply builds without a second password.\n"
+        b"#if __has_include(\"chrome/browser/lumo/lumo_lock_config_2.h\")\n"
+        b"#include \"chrome/browser/lumo/lumo_lock_config_2.h\"\n"
+        b"#define LUMO_STARTUP_LOCK_CONFIGURED_2 1\n"
+        b"#endif  // __has_include(\"chrome/browser/lumo/lumo_lock_config_2.h\")\n"
+        b"\n"
+        b"namespace {\n",
+        "lumo_lock_config_2.h include (startup lock)",
+    ),
+    (
+        _CHROME_BROWSER_MAIN_WIN_REL,
+        b"#if defined(LUMO_STARTUP_LOCK_CONFIGURED)\n"
+        b"constexpr std::string_view kLumoLockSaltHex = lumo::kLockSaltHex;\n"
+        b"constexpr std::string_view kLumoLockHashHex = lumo::kLockHashHex;\n"
+        b"#else\n"
+        b"constexpr std::string_view kLumoLockSaltHex;\n"
+        b"constexpr std::string_view kLumoLockHashHex;\n"
+        b"#endif\n"
+        b"\n"
+        b"constexpr wchar_t kLumoUnlockTokenFileName[] = "
+        b"L\"lumo-unlock-token\";\n",
+        b"#if defined(LUMO_STARTUP_LOCK_CONFIGURED)\n"
+        b"constexpr std::string_view kLumoLockSaltHex = lumo::kLockSaltHex;\n"
+        b"constexpr std::string_view kLumoLockHashHex = lumo::kLockHashHex;\n"
+        b"#else\n"
+        b"constexpr std::string_view kLumoLockSaltHex;\n"
+        b"constexpr std::string_view kLumoLockHashHex;\n"
+        b"#endif\n"
+        b"\n"
+        b"#if defined(LUMO_STARTUP_LOCK_CONFIGURED_2)\n"
+        b"constexpr std::string_view kLumoLockSaltHex2 = lumo::kLockSaltHex2;\n"
+        b"constexpr std::string_view kLumoLockHashHex2 = lumo::kLockHashHex2;\n"
+        b"#else\n"
+        b"constexpr std::string_view kLumoLockSaltHex2;\n"
+        b"constexpr std::string_view kLumoLockHashHex2;\n"
+        b"#endif\n"
+        b"\n"
+        b"constexpr wchar_t kLumoUnlockTokenFileName[] = "
+        b"L\"lumo-unlock-token\";\n",
+        "second lock password constants (startup lock)",
+    ),
+    (
+        _CHROME_BROWSER_MAIN_WIN_REL,
+        b"// compiled into the binary; the password itself never is.\n",
+        b"// compiled into the binary; the password itself never is. A\n"
+        b"// second, optional password (the LUMO_LOCK_HASH_2 secret) is\n"
+        b"// configured the same way in lumo_lock_config_2.h; either\n"
+        b"// password unlocks.\n",
+        "second lock password comment (startup lock)",
+    ),
+    (
+        _CHROME_BROWSER_MAIN_WIN_REL,
+        b"struct LumoLockDialogState {\n"
+        b"  std::vector<uint8_t> salt;\n"
+        b"  std::vector<uint8_t> expected_hash;\n"
+        b"  int attempts_left = kLumoLockMaxAttempts;\n"
+        b"  bool unlocked = false;\n"
+        b"};\n",
+        b"struct LumoLockDialogState {\n"
+        b"  std::vector<LumoLockEntry> entries;\n"
+        b"  int matched_entry = -1;\n"
+        b"  int attempts_left = kLumoLockMaxAttempts;\n"
+        b"  bool unlocked = false;\n"
+        b"};\n",
+        "LumoLockDialogState entries (startup lock)",
+    ),
+    (
+        _CHROME_BROWSER_MAIN_WIN_REL,
+        b"          if (LumoPasswordMatches(base::WideToUTF8(password), state->salt,\n"
+        b"                                  state->expected_hash)) {\n"
+        b"            state->unlocked = true;\n"
+        b"            EndDialog(dialog, IDOK);\n"
+        b"          } else if (--state->attempts_left <= 0) {\n",
+        b"          const std::string password_utf8 =\n"
+        b"              base::WideToUTF8(password);\n"
+        b"          int matched_entry = -1;\n"
+        b"          for (size_t i = 0; i < state->entries.size(); ++i) {\n"
+        b"            if (LumoPasswordMatches(password_utf8,\n"
+        b"                                    state->entries[i].salt,\n"
+        b"                                    state->entries[i].expected_hash)) {\n"
+        b"              matched_entry = static_cast<int>(i);\n"
+        b"              break;\n"
+        b"            }\n"
+        b"          }\n"
+        b"          if (matched_entry >= 0) {\n"
+        b"            state->matched_entry = matched_entry;\n"
+        b"            state->unlocked = true;\n"
+        b"            EndDialog(dialog, IDOK);\n"
+        b"          } else if (--state->attempts_left <= 0) {\n",
+        "lock dialog tries every entry (startup lock)",
+    ),
+    (
+        _CHROME_BROWSER_MAIN_WIN_REL,
+        b"bool RunStartupPasswordLock(const base::FilePath& user_data_dir) {\n"
+        b"  if (kLumoLockSaltHex.empty() || kLumoLockHashHex.empty()) {\n"
+        b"    return true;  // The lock is not configured for this build.\n"
+        b"  }\n"
+        b"  std::vector<uint8_t> salt;\n"
+        b"  std::vector<uint8_t> expected_hash;\n"
+        b"  if (!base::HexStringToBytes(kLumoLockSaltHex, &salt) ||\n"
+        b"      !base::HexStringToBytes(kLumoLockHashHex, &expected_hash) ||\n"
+        b"      salt.size() != 16 || expected_hash.size() != crypto::kSHA256Length) {\n"
+        b"    // stage.py validates the injected value before writing the\n"
+        b"    // header, so this can only be a hand-corrupted header. Do not\n"
+        b"    // brick the browser over it; the lock stays off and this is\n"
+        b"    // logged.\n"
+        b"    LOG(ERROR) << \"Lumo startup lock: malformed injected hash; \"\n"
+        b"                  \"lock disabled.\";\n"
+        b"    return true;\n"
+        b"  }\n"
+        b"\n"
+        b"  const base::FilePath token_path =\n"
+        b"      user_data_dir.Append(kLumoUnlockTokenFileName);\n"
+        b"  std::string stored_token;\n"
+        b"  if (base::ReadFileToString(token_path, &stored_token) &&\n"
+        b"      stored_token == LumoUnlockToken(salt, expected_hash)) {\n"
+        b"    return true;  // Already unlocked on a previous launch.\n"
+        b"  }\n"
+        b"\n"
+        b"  LumoLockDialogState state;\n"
+        b"  state.salt = salt;\n"
+        b"  state.expected_hash = expected_hash;\n"
+        b"  if (!ShowLumoLockDialog(&state)) {\n"
+        b"    return false;\n"
+        b"  }\n"
+        b"\n"
+        b"  // Best effort: remember the unlock for the next launch. If the\n"
+        b"  // write fails the password is simply asked again next time.\n"
+        b"  base::CreateDirectory(user_data_dir);\n"
+        b"  if (!base::WriteFile(token_path, LumoUnlockToken(salt, expected_hash))) {\n"
+        b"    LOG(WARNING) << \"Lumo startup lock: could not persist the \"\n"
+        b"                    \"unlock token.\";\n"
+        b"  }\n"
+        b"  return true;\n"
+        b"}\n",
+        b"bool RunStartupPasswordLock(const base::FilePath& user_data_dir) {\n"
+        b"  if (kLumoLockSaltHex.empty() || kLumoLockHashHex.empty()) {\n"
+        b"    return true;  // The lock is not configured for this build.\n"
+        b"  }\n"
+        b"  std::vector<LumoLockEntry> entries;\n"
+        b"  LumoLockEntry primary;\n"
+        b"  if (!ParseLumoLockEntry(kLumoLockSaltHex, kLumoLockHashHex,\n"
+        b"                          &primary)) {\n"
+        b"    // stage.py validates the injected value before writing the\n"
+        b"    // header, so this can only be a hand-corrupted header. Do not\n"
+        b"    // brick the browser over it; the lock stays off and this is\n"
+        b"    // logged.\n"
+        b"    LOG(ERROR) << \"Lumo startup lock: malformed injected hash; \"\n"
+        b"                  \"lock disabled.\";\n"
+        b"    return true;\n"
+        b"  }\n"
+        b"  entries.push_back(std::move(primary));\n"
+        b"  // The optional second password (LUMO_LOCK_HASH_2): either\n"
+        b"  // password unlocks. A malformed second entry is ignored rather\n"
+        b"  // than disabling the lock the first password provides.\n"
+        b"  if (!kLumoLockSaltHex2.empty() || !kLumoLockHashHex2.empty()) {\n"
+        b"    LumoLockEntry secondary;\n"
+        b"    if (ParseLumoLockEntry(kLumoLockSaltHex2, kLumoLockHashHex2,\n"
+        b"                           &secondary)) {\n"
+        b"      entries.push_back(std::move(secondary));\n"
+        b"    } else {\n"
+        b"      LOG(ERROR) << \"Lumo startup lock: malformed second injected \"\n"
+        b"                    \"hash; second password ignored.\";\n"
+        b"    }\n"
+        b"  }\n"
+        b"\n"
+        b"  const base::FilePath token_path =\n"
+        b"      user_data_dir.Append(kLumoUnlockTokenFileName);\n"
+        b"  std::string stored_token;\n"
+        b"  if (base::ReadFileToString(token_path, &stored_token)) {\n"
+        b"    for (const LumoLockEntry& entry : entries) {\n"
+        b"      if (stored_token ==\n"
+        b"          LumoUnlockToken(entry.salt, entry.expected_hash)) {\n"
+        b"        return true;  // Already unlocked on a previous launch.\n"
+        b"      }\n"
+        b"    }\n"
+        b"  }\n"
+        b"\n"
+        b"  LumoLockDialogState state;\n"
+        b"  state.entries = entries;\n"
+        b"  if (!ShowLumoLockDialog(&state)) {\n"
+        b"    return false;\n"
+        b"  }\n"
+        b"\n"
+        b"  // Best effort: remember the unlock for the next launch. The\n"
+        b"  // token is derived from the entry that actually matched, so\n"
+        b"  // unlocking with either password persists. If the write fails\n"
+        b"  // the password is simply asked again next time.\n"
+        b"  const LumoLockEntry& matched =\n"
+        b"      entries[static_cast<size_t>(state.matched_entry)];\n"
+        b"  base::CreateDirectory(user_data_dir);\n"
+        b"  if (!base::WriteFile(\n"
+        b"          token_path,\n"
+        b"          LumoUnlockToken(matched.salt, matched.expected_hash))) {\n"
+        b"    LOG(WARNING) << \"Lumo startup lock: could not persist the \"\n"
+        b"                    \"unlock token.\";\n"
+        b"  }\n"
+        b"  return true;\n"
+        b"}\n",
+        "RunStartupPasswordLock multi-entry (startup lock)",
+    ),
 )
+
+# The LumoLockEntry struct and ParseLumoLockEntry helper the
+# fixed patch 0019 adds to chrome_browser_main_win.cc, and the
+# comment line they are inserted directly before. This one is an
+# insertion, not a replacement: the anchor line also ends the
+# inserted text, so the plain three-way replacement would find
+# its "old" form inside the fixed tree and insert twice. The
+# dedicated _resume_fixup_lock_entry_struct() below checks for
+# the struct first, like the SyncCycleSnapshot include fixup.
+_LUMO_LOCK_ENTRY_ANCHOR = (
+    b"// The token persisted in the user data directory after a "
+    b"successful\n"
+)
+_LUMO_LOCK_ENTRY_STRUCT = (
+    b"// One configured password: the salt and the expected hash from\n"
+    b"// one of the generated lock config headers.\n"
+    b"struct LumoLockEntry {\n"
+    b"  std::vector<uint8_t> salt;\n"
+    b"  std::vector<uint8_t> expected_hash;\n"
+    b"};\n"
+    b"\n"
+    b"// Parses one configured (salt, hash) hex pair into `entry`.\n"
+    b"// Returns false when either half is empty or malformed.\n"
+    b"bool ParseLumoLockEntry(std::string_view salt_hex,\n"
+    b"                        std::string_view hash_hex,\n"
+    b"                        LumoLockEntry* entry) {\n"
+    b"  return !salt_hex.empty() && !hash_hex.empty() &&\n"
+    b"         base::HexStringToBytes(salt_hex, &entry->salt) &&\n"
+    b"         base::HexStringToBytes(hash_hex, &entry->expected_hash) &&\n"
+    b"         entry->salt.size() == 16 &&\n"
+    b"         entry->expected_hash.size() == crypto::kSHA256Length;\n"
+    b"}\n"
+    b"\n"
+)
+
 
 # The SyncCycleSnapshot include the fixed patch 0009 adds, and the
 # include line it sits directly after in the fixed tree.
@@ -4332,6 +5213,28 @@ def _resume_fixup_sync_snapshot_include(data, rel_path):
     )
 
 
+def _resume_fixup_lock_entry_struct(data, rel_path):
+    """Insert the LumoLockEntry struct patch 0019 adds."""
+    what = "LumoLockEntry + ParseLumoLockEntry (startup lock)"
+    if b"struct LumoLockEntry {" in data:
+        log(f"Resume fixup: {rel_path}: {what}: already fixed, "
+            f"nothing to do.")
+        return data
+    if data.count(_LUMO_LOCK_ENTRY_ANCHOR) != 1:
+        raise StageError(
+            f"Resume fixup: {rel_path}: cannot place the {what}: "
+            f"the anchor comment (the unlock token comment) does "
+            f"not occur exactly once; this tree is not the tree "
+            f"the fixup was written for, refusing to compile it."
+        )
+    log(f"Resume fixup: {rel_path}: {what}: inserted before the "
+        f"unlock token comment.")
+    return data.replace(
+        _LUMO_LOCK_ENTRY_ANCHOR,
+        _LUMO_LOCK_ENTRY_STRUCT + _LUMO_LOCK_ENTRY_ANCHOR,
+    )
+
+
 def apply_lumo_resume_fixups(ctx):
     """Bring a resumed build-phase tree up to the fixed patches.
 
@@ -4357,7 +5260,13 @@ def apply_lumo_resume_fixups(ctx):
     for rel_path in (_PEOPLE_HANDLER_REL, _BROWSER_VIEW_REL,
                      _PROFILE_IMPL_REL, _BROWSER_COMMAND_CONTROLLER_REL,
                      _LUMO_MONITOR_HANDLER_REL,
-                     _LUMO_DEBUGGER_REPORTER_REL):
+                     _LUMO_DEBUGGER_REPORTER_REL, _SETTINGS_MENU_REL,
+                     _SETTINGS_STRINGS_REL, _LUMO_MONITOR_PAGE_REL,
+                     _SIGN_IN_PROMO_REFRESH_CSS_REL,
+                     _SIGN_IN_PROMO_REFRESH_HTML_REL, _INTRO_APP_CSS_REL,
+                     _PRODUCT_LOGO_ANIMATION_REL, _THORIUM_URL_UTILS_REL,
+                     _THORIUM_EASTER_EGGS_REL,
+                     _CHROME_BROWSER_MAIN_WIN_REL):
         path = chromium_src / rel_path
         if not path.is_file():
             raise StageError(
@@ -4371,6 +5280,8 @@ def apply_lumo_resume_fixups(ctx):
             data = _resume_fixup_replace(data, old, new, what, rel_path)
         if rel_path == _PEOPLE_HANDLER_REL:
             data = _resume_fixup_sync_snapshot_include(data, rel_path)
+        if rel_path == _CHROME_BROWSER_MAIN_WIN_REL:
+            data = _resume_fixup_lock_entry_struct(data, rel_path)
         if data != original:
             path.write_bytes(data)
             log(f"Resume fixup: rewrote {path}.")
@@ -4405,12 +5316,606 @@ def apply_lumo_resume_fixups(ctx):
     log("Resume fixups complete.")
 
 
+# ---------------------------------------------------------------------------
+# Preflight fail-fast checks (build #30 optimization)
+#
+# Builds #24-#28 all died the same way: hours into a compile, on a
+# small Lumo-patch mistake that a cheap check would have caught in
+# minutes. Build #24: patch 0028's generated resources.grd had no
+# first id in resource_ids.spec, so grit died in build-3. Build #25:
+# patch 0022's settings page element was used by settings_main but
+# never imported there — an ESLint error at ~32% of build-3. Builds
+# #26/#27/#28: Chromium 156 API drift in Lumo-touched C++
+# (CookieControlsMode's namespace, JSONReader::Read's options
+# argument, base::Value::List/Dict, DownloadToString's
+# std::optional body). phase_build therefore runs run_preflight()
+# ONCE per Lumo patch set, before the full autoninja build:
+#
+#   1. Grit consistency (pure Python, seconds): resource_ids.spec
+#      parses, and every generated .grd a Lumo patch creates has a
+#      first-id entry whose id no other entry claims (the #24
+#      failure). A global duplicate check is NOT possible: upstream
+#      legitimately shares ids between mutually exclusive variants
+#      (internal/public and prod/mock .grd pairs), so the check is
+#      scoped to the Lumo entries.
+#   2. WebUI element imports (pure Python, seconds): a custom
+#      element defined by a Lumo-touched settings/intro TS file and
+#      used in some template (.html.ts, or a Polymer-style .html
+#      bound to its class file via a './X.html.js' getTemplate
+#      import — the settings main page's shape) must be imported by
+#      the template's class file or by the project's lazy_load.ts.
+#      This is the web-component-missing-deps ESLint rule that
+#      killed build #25, restricted to Lumo's own elements; the
+#      real rule still runs in step 3.
+#   3. Targeted ninja build (minutes): the settings/intro
+#      build_webui targets (which run the real ESLint + TypeScript
+#      checks via their :lint deps), the lumo_tools grit target
+#      (the real grit run from #24), and the object files for every
+#      .cc file a Lumo patch touches, so API drift fails here
+#      instead of hours into the full build. All of these outputs
+#      are inputs to the full build, so the work is reused, not
+#      wasted.
+#
+# A failure raises StageError (exit 1, no checkpoint): the chain
+# stops in minutes instead of after hours of compile. A budget
+# expiry still raises BudgetExpired (exit 42 + checkpoint); the
+# marker is only written after a full pass, so the next stage
+# re-runs the preflight (ninja keeps the finished actions, so a
+# re-run is fast). The marker records a fingerprint of the Lumo
+# patch files and of stage.py itself: when a fix lands as a new
+# commit and a later run resumes an older checkpoint, the
+# fingerprint changes and the new patch set is preflighted against
+# the resumed tree — the exact shape of the #19-#28 resume fixes.
+# ---------------------------------------------------------------------------
+
+PREFLIGHT_MARKER_NAME = "lumo-preflight-state.json"
+
+# Ninja label targets step 3 builds when gn generated them. The
+# settings/intro targets are build_webui("build") groups (their
+# :lint deps run eslint_ts); the lumo_tools target is the grit()
+# from patch 0028, whose source .grd is generated by its
+# generate_grd sibling — building it runs the grit step that died
+# in build #24.
+PREFLIGHT_WEBUI_TARGETS = (
+    "chrome/browser/resources/settings:build",
+    "chrome/browser/resources/intro:build",
+    "chrome/browser/resources/lumo_tools:resources",
+)
+
+# Generated .grd files (paths as they appear at the end of a
+# resource_ids.spec key) that Lumo patches create and that
+# therefore need a first-id entry (build #24).
+PREFLIGHT_GRIT_GEN_GRDS = (
+    "chrome/browser/resources/lumo_tools/resources.grd",
+)
+
+# WebUI projects whose TS files steps 2-3 watch.
+PREFLIGHT_WEBUI_PROJECTS = (
+    "chrome/browser/resources/settings",
+    "chrome/browser/resources/intro",
+)
+
+# The C++ files behind builds #26-#28's failures. The step-3
+# source list is derived mechanically from the patch files, and
+# preflight refuses to run if derivation ever loses one of these:
+# they are the proven cost of skipping this check.
+PREFLIGHT_MUST_INCLUDE_CXX = (
+    "chrome/browser/profiles/profile_impl.cc",
+    "chrome/browser/ui/browser_command_controller.cc",
+    "chrome/browser/ui/webui/settings/lumo_monitor_handler.cc",
+    "chrome/browser/lumo/lumo_debugger_reporter.cc",
+    "chrome/browser/ui/webui/settings/people_handler.cc",
+)
+
+
+def _lumo_patch_targets(repo_root):
+    """All target paths (modified + created) of the Lumo patches."""
+    patch_dir = repo_root / "scripts" / "ci" / "lumo_patches"
+    targets = set()
+    for patch_path in sorted(patch_dir.glob("*.patch")):
+        modified, created = _series_patch_targets(
+            patch_path.read_text(encoding="utf-8", errors="replace")
+        )
+        targets.update(modified)
+        targets.update(created)
+    return targets
+
+
+def preflight_cxx_sources(repo_root):
+    """Sorted .cc files the Lumo patches touch (step 3's inputs).
+
+    Raises StageError when a historically fatal file is missing
+    from the derived list: the list is only trustworthy while it
+    provably covers the files that already cost whole builds.
+    """
+    sources = sorted(
+        path for path in _lumo_patch_targets(repo_root)
+        if path.endswith(".cc")
+    )
+    missing = [
+        path for path in PREFLIGHT_MUST_INCLUDE_CXX
+        if path not in sources
+    ]
+    if missing:
+        raise StageError(
+            "preflight: the patch-derived C++ source list lost "
+            f"{', '.join(missing)}; the patches were renamed or "
+            "restructured and the preflight list in stage.py must "
+            "be revisited before this build can be trusted."
+        )
+    return sources
+
+
+def _lumo_patch_created_files(repo_root):
+    """Sorted paths the Lumo patches create (--- /dev/null)."""
+    patch_dir = repo_root / "scripts" / "ci" / "lumo_patches"
+    created = set()
+    for patch_path in sorted(patch_dir.glob("*.patch")):
+        _modified, created_here = _series_patch_targets(
+            patch_path.read_text(encoding="utf-8", errors="replace")
+        )
+        created.update(created_here)
+    return sorted(created)
+
+
+def check_patch_created_sources_exist(chromium_src, repo_root):
+    """Step 0: a patch-created .cc/.h must exist in the tree.
+
+    Returns a list of problems (empty when all are present). The
+    later steps cannot catch a missing patch-created file: a .cc
+    with no object target is reported by the ninja scan, but a
+    missing .h has no target at all, and a .cc the gn output does
+    not know about (because the patch that also registers it in a
+    BUILD.gn was only partially applied) looks exactly like a file
+    this configuration legitimately does not build. A missing
+    created file means the setup phase's patch application and
+    the tree disagree, which is a hard stop, not a warning.
+    """
+    problems = []
+    for rel in _lumo_patch_created_files(repo_root):
+        if rel.endswith((".cc", ".h")) and not (
+                chromium_src / rel).is_file():
+            problems.append(
+                f"a Lumo patch creates {rel}, but it is missing "
+                f"from the tree; the setup phase did not apply "
+                f"the current patch set to this tree."
+            )
+    return problems
+
+
+def _preflight_fingerprint(repo_root):
+    """Hash of everything that decides what preflight must check."""
+    digest = hashlib.sha256()
+    stage_py = repo_root / "scripts" / "ci" / "stage.py"
+    if stage_py.is_file():
+        digest.update(stage_py.read_bytes())
+    patch_dir = repo_root / "scripts" / "ci" / "lumo_patches"
+    for patch_path in sorted(patch_dir.glob("*.patch")):
+        digest.update(patch_path.name.encode("utf-8"))
+        digest.update(patch_path.read_bytes())
+    return digest.hexdigest()
+
+
+def _preflight_marker_matches(build_root, fingerprint):
+    marker = build_root / PREFLIGHT_MARKER_NAME
+    if not marker.is_file():
+        return False
+    try:
+        data = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return False
+    return data.get("fingerprint") == fingerprint
+
+
+def check_grit_resource_ids(chromium_src):
+    """Step 1: resource_ids.spec must cover the Lumo .grd files.
+
+    Returns a list of problems (empty when the spec is fine).
+    """
+    spec_path = chromium_src / "tools" / "gritsettings" / "resource_ids.spec"
+    if not spec_path.is_file():
+        return [f"resource_ids.spec is missing: {spec_path}"]
+    try:
+        spec = ast.literal_eval(
+            spec_path.read_text(encoding="utf-8", errors="replace")
+        )
+    except (SyntaxError, ValueError) as error:
+        return [f"resource_ids.spec does not parse: {error}"]
+    if not isinstance(spec, dict):
+        return ["resource_ids.spec is not a dict literal"]
+    problems = []
+    # First id -> owning spec keys, for the Lumo-scoped checks.
+    owners = {}
+    for key, value in spec.items():
+        if not isinstance(value, dict):
+            continue
+        for first_id in value.get("includes", []):
+            owners.setdefault(first_id, []).append(key)
+    for rel_grd in PREFLIGHT_GRIT_GEN_GRDS:
+        keys = [
+            key for key in spec
+            if isinstance(key, str)
+            and (key == rel_grd or key.endswith("/" + rel_grd))
+        ]
+        if not keys:
+            problems.append(
+                f"resource_ids.spec has no entry for the generated "
+                f"{rel_grd}; grit will refuse to build it (this is "
+                f"the build #24 failure). Add a first-id entry, "
+                f"the way patch 0029 does for lumo_tools."
+            )
+            continue
+        for key in keys:
+            value = spec[key]
+            includes = (
+                value.get("includes", [])
+                if isinstance(value, dict) else []
+            )
+            if not includes:
+                problems.append(
+                    f"resource_ids.spec entry {key} has no "
+                    f"'includes' first id for {rel_grd}."
+                )
+            for first_id in includes:
+                others = [
+                    other for other in owners.get(first_id, [])
+                    if other != key
+                ]
+                if others:
+                    problems.append(
+                        f"resource_ids.spec: first id {first_id} "
+                        f"for {rel_grd} is also claimed by "
+                        f"{', '.join(others)}; grit resource ids "
+                        f"would collide."
+                    )
+    return problems
+
+
+_DEFINE_LITERAL_RE = re.compile(
+    r"customElements\.define\(\s*['\"]([a-z][a-z0-9._-]*-[a-z0-9._-]*)['\"]"
+)
+_DEFINE_IS_RE = re.compile(r"customElements\.define\(\s*[\w.]+\.is\s*,")
+_GET_IS_RE = re.compile(
+    r"get is\(\)[^{]*\{[^}]*?return\s*['\"]([a-z][a-z0-9._-]*-[a-z0-9._-]*)['\"]",
+    re.DOTALL,
+)
+_STATIC_IS_RE = re.compile(
+    r"static\s+(?:override\s+)?is\s*=\s*['\"]([a-z][a-z0-9._-]*-[a-z0-9._-]*)['\"]"
+)
+_CUSTOM_ELEMENT_RE = re.compile(
+    r"@customElement\(\s*['\"]([a-z][a-z0-9._-]*-[a-z0-9._-]*)['\"]"
+)
+_IMPORT_RE = re.compile(r"^\s*import\s+(?:[^'\"]*?\s+from\s+)?['\"]([^'\"]+)['\"]")
+
+
+def _defined_custom_elements(ts_text):
+    """Custom-element tag names a TS file defines (literal forms).
+
+    Handles the three registration styles used in Chromium WebUI:
+    customElements.define('tag', ...), customElements.define(
+    Class.is, ...) with the tag in the class's is getter (the
+    Polymer style settings uses), and @customElement('tag').
+    Non-literal registrations are ignored: an element we cannot
+    name cannot be watched, and the real ESLint run in step 3
+    remains the backstop for those.
+    """
+    tags = set(_DEFINE_LITERAL_RE.findall(ts_text))
+    tags.update(_CUSTOM_ELEMENT_RE.findall(ts_text))
+    if _DEFINE_IS_RE.search(ts_text):
+        tags.update(_GET_IS_RE.findall(ts_text))
+        tags.update(_STATIC_IS_RE.findall(ts_text))
+    return tags
+
+
+def _ts_imported_files(ts_path, ts_text, src_root):
+    """Source-relative .ts paths a TS file imports (relative only)."""
+    imported = set()
+    base_dir = ts_path.parent
+    for line in ts_text.splitlines():
+        match = _IMPORT_RE.match(line)
+        if not match:
+            continue
+        specifier = match.group(1)
+        if not specifier.startswith("."):
+            continue
+        joined = (base_dir / specifier).as_posix()
+        # Normalize ../ and ./ segments without touching the disk.
+        parts = []
+        for part in joined.split("/"):
+            if part in ("", "."):
+                continue
+            if part == "..":
+                if parts:
+                    parts.pop()
+                continue
+            parts.append(part)
+        normalized = "/".join(parts)
+        if normalized.endswith(".js"):
+            normalized = normalized[:-3] + ".ts"
+        elif not normalized.endswith(".ts"):
+            normalized += ".ts"
+        imported.add(normalized)
+    return imported
+
+
+def check_webui_element_imports(chromium_src, repo_root):
+    """Step 2: Lumo-defined elements must be imported where used.
+
+    Returns a list of problems (empty when every use is imported).
+    Only elements defined by Lumo-touched TS files are watched:
+    this is the build #25 failure shape, and restricting the watch
+    keeps upstream's own (already lint-clean) elements out of it.
+    """
+    targets = _lumo_patch_targets(repo_root)
+    watched = {}  # tag -> defining source-relative .ts path
+    for rel in sorted(targets):
+        if not rel.endswith(".ts"):
+            continue
+        if not any(
+            rel.startswith(project + "/")
+            for project in PREFLIGHT_WEBUI_PROJECTS
+        ):
+            continue
+        path = chromium_src / rel
+        if not path.is_file():
+            log(f"Preflight: Lumo-touched TS file not in tree, "
+                f"skipping: {rel}")
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for tag in _defined_custom_elements(text):
+            watched.setdefault(tag, rel)
+    if not watched:
+        return []
+    problems = []
+    for project in PREFLIGHT_WEBUI_PROJECTS:
+        project_dir = chromium_src / project
+        if not project_dir.is_dir():
+            continue
+        lazy_imports = set()
+        lazy_load = project_dir / "lazy_load.ts"
+        if lazy_load.is_file():
+            lazy_imports = _ts_imported_files(
+                Path(project) / "lazy_load.ts",
+                lazy_load.read_text(encoding="utf-8", errors="replace"),
+                chromium_src,
+            )
+        for template in sorted(
+            list(project_dir.rglob("*.html.ts"))
+            + list(project_dir.rglob("*.html"))
+        ):
+            text = template.read_text(
+                encoding="utf-8", errors="replace"
+            )
+            used = [
+                tag for tag in watched
+                if re.search(r"<" + re.escape(tag) + r"[\s>/]", text)
+            ]
+            if not used:
+                continue
+            if template.name.endswith(".html.ts"):
+                class_ts = template.with_name(
+                    template.name[: -len(".html.ts")] + ".ts"
+                )
+            else:
+                # Polymer-style external template: X.html belongs
+                # to X.ts only when X.ts imports './X.html.js'
+                # (the getTemplate import). This is the settings
+                # main page's shape — and the build #25 failure:
+                # settings_main.html uses the Lumo Monitor element,
+                # so settings_main.ts must import it.
+                class_ts = template.with_suffix(".ts")
+                if not class_ts.is_file():
+                    continue
+                class_text = class_ts.read_text(
+                    encoding="utf-8", errors="replace"
+                )
+                if f"./{template.name}.js" not in class_text:
+                    continue
+            if not class_ts.is_file():
+                continue
+            rel_class = class_ts.relative_to(chromium_src).as_posix()
+            imported = _ts_imported_files(
+                Path(rel_class),
+                class_ts.read_text(encoding="utf-8", errors="replace"),
+                chromium_src,
+            ) | lazy_imports
+            for tag in used:
+                defining = watched[tag]
+                if defining == rel_class:
+                    continue
+                if defining not in imported:
+                    problems.append(
+                        f"<{tag}> is used in {template.relative_to(chromium_src).as_posix()} "
+                        f"but {defining} is not imported by "
+                        f"{rel_class} or by {project}/lazy_load.ts "
+                        f"(web-component-missing-deps; this is the "
+                        f"build #25 failure)."
+                    )
+    return problems
+
+
+def _ninja_unescape(token):
+    return token.replace("$:", ":").replace("$ ", " ")
+
+
+def scan_ninja_outputs(out_dir):
+    """Index a gn output dir's build statements.
+
+    Returns (outputs, obj_by_basename): every build output path
+    (forward slashes), and for .obj outputs a basename -> [paths]
+    index. Parsing the .ninja files directly keeps preflight
+    independent of which ninja frontend (ninja vs siso) the build
+    uses and of its -t tool support.
+    """
+    outputs = set()
+    obj_by_basename = {}
+    for ninja_file in out_dir.rglob("*.ninja"):
+        try:
+            lines = ninja_file.read_bytes().splitlines()
+        except OSError:
+            continue
+        for raw in lines:
+            if not raw.startswith(b"build "):
+                continue
+            line = raw.decode("utf-8", errors="replace")
+            rest = line[len("build "):]
+            sep = rest.find(": ")
+            if sep < 0:
+                continue
+            for token in rest[:sep].split(" "):
+                if not token:
+                    continue
+                output = _ninja_unescape(token).replace("\\", "/")
+                outputs.add(output)
+                if output.endswith(".obj"):
+                    basename = output.rsplit("/", 1)[-1]
+                    obj_by_basename.setdefault(basename, []).append(
+                        output
+                    )
+    return outputs, obj_by_basename
+
+
+def preflight_ninja_targets(out_dir, cxx_sources):
+    """Step 3's ninja targets: (targets, missing_must_include).
+
+    WebUI label targets are included when gn generated them; a
+    missing label target only logs (the pure-Python checks above
+    still ran). Object targets are matched by basename: a source
+    with several same-named objects builds them all (a few extra
+    compiles at worst). A must-include source with NO object is a
+    hard problem: those files are compiled in this configuration
+    by definition, so their absence means the scan or the tree is
+    not what preflight thinks it is.
+    """
+    outputs, obj_by_basename = scan_ninja_outputs(out_dir)
+    if not outputs:
+        raise StageError(
+            f"preflight: no build outputs found under {out_dir}; "
+            "the gn output looks incomplete, refusing to trust "
+            "the targeted compile."
+        )
+    targets = []
+    for label in PREFLIGHT_WEBUI_TARGETS:
+        if label in outputs:
+            targets.append(label)
+        else:
+            log(f"Preflight: ninja target not generated, skipping: "
+                f"{label}")
+    missing = []
+    for rel in cxx_sources:
+        basename = rel.rsplit("/", 1)[-1]
+        obj_name = basename[: -len(".cc")] + ".obj"
+        matches = obj_by_basename.get(obj_name, [])
+        if not matches:
+            if rel in PREFLIGHT_MUST_INCLUDE_CXX:
+                missing.append(rel)
+            else:
+                log(f"Preflight: no object target for {rel}, "
+                    f"skipping it (not compiled in this "
+                    f"configuration?).")
+            continue
+        targets.extend(matches)
+    return sorted(set(targets)), missing
+
+
+def run_preflight(args, ctx, deadline):
+    """Run the fail-fast checks once per Lumo patch set.
+
+    Called by phase_build after the resume fixups, before the full
+    build. See the section header for the design.
+    """
+    build_root = ctx["build_root"]
+    repo_root = ctx["repo_root"]
+    chromium_src = ctx["chromium_src"]
+    out_dir = chromium_src / OUT_DIR_NAME
+    fingerprint = _preflight_fingerprint(repo_root)
+    if _preflight_marker_matches(build_root, fingerprint):
+        log("\nPreflight already passed for this Lumo patch set; "
+            "skipping.")
+        return
+    log("\nPreflight: fail-fast checks for the Lumo patch set "
+        "(patch-created files, grit ids, WebUI element imports, "
+        "targeted compile of Lumo-touched files). A failure here "
+        "stops the build in minutes instead of hours.")
+    problems = check_patch_created_sources_exist(chromium_src,
+                                                 repo_root)
+    problems += check_grit_resource_ids(chromium_src)
+    problems += check_webui_element_imports(chromium_src, repo_root)
+    if problems:
+        for problem in problems:
+            log(f"Preflight problem: {problem}")
+        raise StageError(
+            f"preflight failed with {len(problems)} problem(s) "
+            "before the compile started; fix the Lumo patch and "
+            "re-run. (Failing here is the point: builds #24 and "
+            "#25 lost hours to exactly these checks.)"
+        )
+    log("Preflight: grit ids and WebUI element imports are clean.")
+    cxx_sources = preflight_cxx_sources(repo_root)
+    targets, missing = preflight_ninja_targets(out_dir, cxx_sources)
+    if missing:
+        raise StageError(
+            "preflight: no object target found for "
+            f"{', '.join(missing)}; these files must compile in "
+            "this configuration, so the gn output or the scan is "
+            "wrong and the targeted compile cannot be trusted."
+        )
+    autoninja = ctx["depot_tools"] / "autoninja.py"
+    if not autoninja.is_file():
+        raise StageError(
+            f"autoninja.py not found in depot_tools: {autoninja}"
+        )
+    jobs = ninja_jobs()
+    log(f"Preflight: targeted compile of {len(targets)} targets "
+        f"(WebUI build/lint + grit + {len(cxx_sources)} Lumo-touched "
+        f"C++ sources) with autoninja -j {jobs}.")
+    env = dict(ctx["env"])
+    env["NINJA_SUMMARIZE_BUILD"] = "1"
+    env["NINJA_STATUS"] = "[%r processes, %f/%t @ %o/s | %e sec. ] "
+    code = run(
+        [
+            sys.executable,
+            str(autoninja),
+            "-C",
+            str(out_dir),
+            "-j",
+            str(jobs),
+            *targets,
+        ],
+        chromium_src,
+        env=env,
+        timeout_at=deadline,
+        graceful=True,
+    )
+    if code != 0:
+        raise StageError(
+            f"preflight targeted compile failed with exit code "
+            f"{code}; a Lumo-touched file does not build. Fix it "
+            f"and re-run — this failure just saved the hours the "
+            f"full build would have spent reaching the same error "
+            f"(builds #26-#28)."
+        )
+    marker = {
+        "fingerprint": fingerprint,
+        "targets": len(targets),
+        "cxx_sources": len(cxx_sources),
+    }
+    (build_root / PREFLIGHT_MARKER_NAME).write_text(
+        json.dumps(marker, indent=2) + "\n", encoding="utf-8"
+    )
+    log("Preflight passed; marker written. Starting the full build.")
+
+
 def phase_build(args, ctx, deadline):
     """Run autoninja on Thorium's Windows targets.
 
     Phases mirror Thorium build.py's default Windows policy:
     thorium_all, then thorium_installer.
     """
+    # A resumed tree must have been set up from the current repo's
+    # inputs; refuse before touching it when it was not (the fix
+    # for a stale checkpoint is a fresh build, not a fixup).
+    verify_setup_fingerprint(ctx)
     # A resumed tree still carries the sources its setup phase
     # produced; bring them up to the fixed patches before building
     # (no-op on a from-scratch tree). See apply_lumo_resume_fixups.
@@ -4429,6 +5934,16 @@ def phase_build(args, ctx, deadline):
             "this stage resumed from is incomplete; the gn phase "
             "would have to run again to regenerate it."
         )
+    # The checkpoint zip deliberately omits the Secret-bearing
+    # generated files (args.gn, the lock config headers); restore
+    # them from this stage's environment before the preflight's
+    # targeted compile reads them. No-op when they are present.
+    restore_generated_secret_files(args, ctx)
+    # Fail fast on the Lumo patch set's known failure shapes
+    # (grit ids, WebUI imports, API drift in Lumo-touched C++)
+    # before spending hours on the full compile. Once per patch
+    # set; see run_preflight.
+    run_preflight(args, ctx, deadline)
     autoninja = ctx["depot_tools"] / "autoninja.py"
     if not autoninja.is_file():
         raise StageError(f"autoninja.py not found in depot_tools: {autoninja}")
@@ -4471,6 +5986,67 @@ def phase_build(args, ctx, deadline):
         f"({exe.stat().st_size / (1024 ** 2):.1f} MiB).")
 
 
+def _checkpoint_exclusion_switches(build_root):
+    """7z switches keeping Secret-bearing generated files out of
+    the checkpoint zip (build #30 audit fix).
+
+    Three generated files carry GitHub Secrets into the tree:
+    out/thorium/args.gn (the Google API keys, write_args_gn) and
+    chrome/browser/lumo/lumo_lock_config.h / lumo_lock_config_2.h
+    (the startup lock's salt and expected SHA-256 hash,
+    write_lumo_lock_config). The checkpoint zip is uploaded as a
+    build-state Artifact to a public repository (3-day retention),
+    so none of them may ride along. restore_generated_secret_
+    files() re-creates them from the resuming stage's environment
+    before anything reads them, and _checkpoint_secret_entries()
+    verifies after zipping that the exclusion actually held. (The
+    final lumo-windows-x64.zip was never affected: build-final
+    packages the compiled binaries, not these config files.)
+
+    args.gn gets both a path-anchored pattern and the recursive
+    name pattern: the pinned Chromium tree contains no other
+    args.gn (verified against the 156 tree), so the name pattern
+    can only ever match the generated one, and the path pattern
+    covers the exact location if name matching ever changes.
+    """
+    sep = "\\" if os.name == "nt" else "/"
+    args_gn_path = sep.join(
+        [build_root.name, "src", *OUT_DIR_NAME.split("/"), "args.gn"]
+    )
+    return [
+        f"-x!{args_gn_path}",
+        "-xr!args.gn",
+        "-xr!lumo_lock_config.h",
+        "-xr!lumo_lock_config_2.h",
+    ]
+
+
+def _checkpoint_secret_entries(zip_path):
+    """Entry names inside the checkpoint zip that must not be
+    there, or None when the archive's directory cannot be read.
+
+    Reads the central directory with Python's zipfile (checkpoint
+    writes a plain zip via 7z -tzip). An unreadable directory
+    returns None: the workflow's own `7z t` gates the archive
+    before extraction, so verification here is a safety net on
+    top of the exclusion switches, not the only gate.
+    """
+    try:
+        with zipfile.ZipFile(zip_path) as archive:
+            names = archive.namelist()
+    except (OSError, zipfile.BadZipFile):
+        return None
+    bad = []
+    for name in names:
+        normalized = name.replace("\\", "/")
+        leaf = normalized.rsplit("/", 1)[-1]
+        if leaf in ("lumo_lock_config.h", "lumo_lock_config_2.h"):
+            bad.append(name)
+        elif normalized.endswith("/" + OUT_DIR_NAME + "/args.gn"):
+            bad.append(name)
+    return bad
+
+
 def checkpoint(args, ctx):
     """Zip the whole build root for the next stage (Helium-style).
 
@@ -4493,11 +6069,31 @@ def checkpoint(args, ctx):
       how long the zip took -- zipping a ~20 GiB tree sits on the
       critical path of the job-timeout reserve (see
       MAX_SECONDS_AFTER_JOB_START), so its cost stays visible;
+    * compresses at -mx=1 (build #30 optimization). At run #27's
+      scale the -mx=3 zip took 8.0 minutes for 7.1 GiB. A local
+      benchmark on a ~0.9 GiB corpus of the same makeup (Chromium
+      sources + compiled objects, ~64k files) produced a
+      byte-identical archive size for -mx=1 and -mx=3 (235 MiB)
+      with -mx=1 ~6% faster even on this p7zip build, whose level
+      mapping is coarser than the Windows 7-Zip's; on the runner
+      the faster Deflate setting can only help the create time,
+      and the size is bounded by the same fast-Deflate family.
+      The 7z (LZMA2) format was measured and rejected: 31% smaller
+      but 2.2x slower to create, and creation time — not transfer
+      size — is what eats the job reserve. If a future run's log
+      shows the -mx=1 zip growing past ~9 GiB, revisit this;
     * accepts exit 0 and 1 (warning: some files missing from the
       zip, which ninja can regenerate/rebuild on resume -- the bulk
       of the compiled objects is preserved);
     * retries once after 60s on a fatal exit (>= 2), giving
       lingering ninja/siso/clang processes time to release files.
+    * excludes the Secret-bearing generated files (args.gn and
+      the startup lock config headers) via
+      _checkpoint_exclusion_switches, and verifies afterwards
+      that none of them is inside the zip: the checkpoint is
+      uploaded as an Artifact to a public repository, and the
+      generators are re-run from the environment on resume (see
+      restore_generated_secret_files).
     """
     global _LOG_FILE
     build_root = ctx["build_root"]
@@ -4511,7 +6107,7 @@ def checkpoint(args, ctx):
         log(f"Removing quarantined conflicting checkouts: {bad_scm}")
         shutil.rmtree(bad_scm, ignore_errors=True)
     seven_zip = find_executable("7z")
-    log(f"\nCheckpointing build root to {zip_path} (7z, -mx=3, "
+    log(f"\nCheckpointing build root to {zip_path} (7z, -mx=1, "
         f"multithreaded; this can take a while for a tens-of-GB tree)...")
     # Exclude any _bad_scm quarantine dirs (a gclient-era leftover;
     # conflicting checkouts can be gigabytes) and the tarball
@@ -4540,12 +6136,13 @@ def checkpoint(args, ctx):
                     "-tzip",
                     str(zip_path),
                     build_root.name,
-                    "-mx=3",
+                    "-mx=1",
                     "-mtc=on",
                     "-mmt=on",
                     "-ssw",
                     "-xr!_bad_scm",
                     f"-xr!{TARBALL_DIR_NAME}",
+                    *_checkpoint_exclusion_switches(build_root),
                 ],
                 build_root.parent,
                 env=ctx["env"],
@@ -4575,6 +6172,28 @@ def checkpoint(args, ctx):
             _LOG_FILE = None
     if not zip_path.is_file() or zip_path.stat().st_size == 0:
         raise StageError(f"checkpoint zip missing or empty: {zip_path}")
+    # The exclusion switches above are the mechanism; this is the
+    # proof. If a Secret-bearing generated file is inside anyway,
+    # the zip must never reach the upload step: delete it and fail
+    # the stage (a failed stage uploads nothing).
+    secret_entries = _checkpoint_secret_entries(zip_path)
+    if secret_entries is None:
+        log("WARNING: could not read the checkpoint zip's "
+            "directory to verify the secret exclusion; continuing "
+            "(the next stage's 7z integrity check still gates "
+            "the archive).")
+    elif secret_entries:
+        zip_path.unlink()
+        raise StageError(
+            "checkpoint zip contains Secret-bearing generated "
+            f"file(s): {', '.join(secret_entries)}; the exclusion "
+            "switches did not hold, and uploading this artifact "
+            "would publish build Secrets. The zip was deleted; "
+            "refusing to finish the checkpoint."
+        )
+    else:
+        log("Checkpoint verified: no Secret-bearing generated "
+            "files (args.gn, lumo_lock_config*.h) are inside.")
     size_gb = zip_path.stat().st_size / (1024 ** 3)
     zip_minutes = (time.time() - zip_started) / 60
     log(f"Checkpoint written: {zip_path} ({size_gb:.1f} GiB, "

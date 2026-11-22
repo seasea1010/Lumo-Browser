@@ -15784,6 +15784,14 @@
    "en": "Dark Mode Time Schedule",
    "ja": "ダークモードの時間帯スケジュール"
   },
+  "chrome/browser/thorium_flag_entries.h|lumo-double-click-close-tab:description": {
+   "en": "Closes a tab when you double-click it, in addition to middle-click. Implemented by Lumo patch 0035.",
+   "ja": "中クリックに加えて、タブをダブルクリックしても閉じられるようにします。Lumo のパッチ 0035 で実装されています。"
+  },
+  "chrome/browser/thorium_flag_entries.h|lumo-double-click-close-tab:name": {
+   "en": "Double-Click to Close Tab",
+   "ja": "ダブルクリックでタブを閉じる"
+  },
   "chrome/browser/thorium_flag_entries.h|lumo-full-page-screenshot:description": {
    "en": "Captures a screenshot of the whole page, beyond the visible viewport, from the app menu and saves it as a PNG file in the downloads folder. Implemented by Lumo patch 0017.",
    "ja": "表示中の範囲を超えたページ全体のスクリーンショットをアプリメニューから撮影し、ダウンロードフォルダに PNG ファイルとして保存します。Lumo のパッチ 0017 で実装されています。"
