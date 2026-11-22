@@ -99,7 +99,7 @@ new file mode 100644
 index 0000000..85d95d0
 --- /dev/null
 +++ b/chrome/browser/lumo/lumo_debugger_reporter.cc
-@@ -0,0 +1,388 @@
+@@ -0,0 +1,389 @@
 +// Copyright 2026 seasea1010
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -108,6 +108,7 @@ index 0000000..85d95d0
 +
 +#include <map>
 +#include <memory>
++#include <optional>
 +#include <set>
 +#include <string>
 +#include <utility>
@@ -239,7 +240,7 @@ index 0000000..85d95d0
 +      factory,
 +      base::BindOnce(
 +          [](std::unique_ptr<network::SimpleURLLoader> owned_loader,
-+             std::unique_ptr<std::string> body) {
++             std::optional<std::string> body) {
 +            // The response body (or a null body on failure) is
 +            // ignored; |owned_loader| is destroyed here, once the
 +            // request has completed.
