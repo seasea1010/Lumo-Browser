@@ -4056,6 +4056,24 @@ def phase_gn(args, ctx, deadline):
 # carry the same bytes into a resumed tree; each anchors on the
 # full pre-fix spelling, so the fixed bytes can never be mistaken
 # for the pre-fix form.
+#
+# The same shape covers build #28's compile failure: patch 0020's
+# lumo_debugger_reporter.cc passes a fire-and-forget lambda to
+# network::SimpleURLLoader::DownloadToString whose body
+# parameter is std::unique_ptr<std::string>, but in Chromium 156
+# BodyAsStringCallback is OnceCallback<void(std::optional<
+# std::string>)> — body delivery switched from a nullable
+# unique_ptr to std::optional — so build-5 died with "no viable
+# conversion from 'OnceCallback<UnboundRunType>' to
+# 'OnceCallback<void (std::optional<std::string>)>'". The fixed
+# patch takes std::optional<std::string> (the body itself is
+# ignored; the callback only destroys the self-owned loader)
+# and includes <optional> explicitly. The two plain replacements
+# below carry the same bytes into a resumed tree: the include
+# replacement anchors on the adjacent <memory>/<set> include
+# pair, which the fixed form no longer contains contiguously,
+# and the lambda replacement anchors on the full two-line
+# signature, so neither can be mistaken for the fixed form.
 # ---------------------------------------------------------------------------
 
 _PEOPLE_HANDLER_REL = "chrome/browser/ui/webui/settings/people_handler.cc"
@@ -4149,6 +4167,21 @@ _LUMO_RESUME_FIXUP_REPLACEMENTS = (
         b"chrome::DIR_USER_DATA_DIR",
         b"chrome::DIR_USER_DATA",
         "chrome::DIR_USER_DATA_DIR -> chrome::DIR_USER_DATA (debugger reporter)",
+    ),
+    (
+        _LUMO_DEBUGGER_REPORTER_REL,
+        b"#include <memory>\n#include <set>\n",
+        b"#include <memory>\n#include <optional>\n#include <set>\n",
+        "#include <optional> (debugger reporter)",
+    ),
+    (
+        _LUMO_DEBUGGER_REPORTER_REL,
+        b"          [](std::unique_ptr<network::SimpleURLLoader> owned_loader,\n"
+        b"             std::unique_ptr<std::string> body) {",
+        b"          [](std::unique_ptr<network::SimpleURLLoader> owned_loader,\n"
+        b"             std::optional<std::string> body) {",
+        "DownloadToString callback body std::unique_ptr<std::string> -> "
+        "std::optional<std::string> (debugger reporter)",
     ),
 )
 
