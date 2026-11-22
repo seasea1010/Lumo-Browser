@@ -5173,7 +5173,19 @@ def _resume_fixup_lumo_monitor_import(data, rel_path):
 
 
 def _resume_fixup_replace(data, old, new, what, rel_path):
-    """One three-way byte replacement (see apply_lumo_resume_fixups)."""
+    """One three-way byte replacement (see apply_lumo_resume_fixups).
+
+    Falls back to CRLF variants of both forms: build #30 failed
+    here on lumo_monitor_page.ts with neither LF form present
+    although the patch, this script and every other fixup target
+    verified byte-identical to the ones that pass locally, so a
+    line-ending transformation of that one file somewhere on the
+    Windows runner is the remaining explanation. Accepting the
+    CRLF form keeps the check honest (the replacement content is
+    still matched exactly; only the line endings differ), and the
+    failure path dumps the bytes around the anchor so a recurrence
+    is self-diagnosing instead of a guessing game.
+    """
     if old in data:
         count = data.count(old)
         log(f"Resume fixup: {rel_path}: {what}: replaced "
@@ -5183,10 +5195,29 @@ def _resume_fixup_replace(data, old, new, what, rel_path):
         log(f"Resume fixup: {rel_path}: {what}: already fixed, "
             f"nothing to do.")
         return data
+    old_crlf = old.replace(b"\n", b"\r\n")
+    new_crlf = new.replace(b"\n", b"\r\n")
+    if old_crlf != old and old_crlf in data:
+        count = data.count(old_crlf)
+        log(f"Resume fixup: {rel_path}: {what}: replaced "
+            f"{count} occurrence(s) (CRLF form).")
+        return data.replace(old_crlf, new_crlf)
+    if new_crlf != new and new_crlf in data:
+        log(f"Resume fixup: {rel_path}: {what}: already fixed "
+            "(CRLF form), nothing to do.")
+        return data
+    anchor = new.split(b"\n", 1)[0][:48]
+    idx = data.find(anchor) if anchor else -1
+    if idx >= 0:
+        excerpt = repr(data[max(0, idx - 40):idx + 200])
+    else:
+        excerpt = (f"anchor {anchor!r} not found; file is "
+                   f"{len(data)} bytes, head: {data[:200]!r}")
     raise StageError(
         f"Resume fixup: {rel_path}: neither the pre-fix nor the "
-        f"fixed form of '{what}' is present; this tree is not the "
-        f"tree the fixup was written for, refusing to compile it."
+        f"fixed form of '{what}' is present (LF or CRLF); this "
+        "tree is not the tree the fixup was written for, refusing "
+        f"to compile it. Excerpt: {excerpt}"
     )
 
 
