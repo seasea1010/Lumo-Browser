@@ -5151,24 +5151,39 @@ _LUMO_MONITOR_MAIN_ANCHOR = (
 
 
 def _resume_fixup_lumo_monitor_import(data, rel_path):
-    """Insert the Lumo Monitor import patch 0022 adds."""
+    """Insert the Lumo Monitor import patch 0022 adds.
+
+    Line-ending tolerant like _resume_fixup_replace: build #31
+    proved the runner's .ts files carry CRLF endings (the
+    lumo_monitor_page.ts fixup only matched its CRLF form, and
+    this function's LF anchor did not occur at all in the CRLF
+    settings_main.ts), so both forms are checked and the insert
+    preserves the file's own endings.
+    """
     what = "settings-lumo-monitor-page import in settings_main.ts"
-    if _LUMO_MONITOR_MAIN_IMPORT in data:
+    import_crlf = _LUMO_MONITOR_MAIN_IMPORT.replace(b"\n", b"\r\n")
+    if _LUMO_MONITOR_MAIN_IMPORT in data or import_crlf in data:
         log(f"Resume fixup: {rel_path}: {what}: already present, "
             f"nothing to do.")
         return data
-    if data.count(_LUMO_MONITOR_MAIN_ANCHOR) != 1:
-        raise StageError(
-            f"Resume fixup: {rel_path}: cannot place the {what}: "
-            f"the anchor import (autofill_page_index) does not occur "
-            f"exactly once; this tree is not the tree the fixup was "
-            f"written for, refusing to compile it."
-        )
-    log(f"Resume fixup: {rel_path}: {what}: inserted after the "
-        f"autofill_page_index import.")
-    return data.replace(
-        _LUMO_MONITOR_MAIN_ANCHOR,
-        _LUMO_MONITOR_MAIN_ANCHOR + _LUMO_MONITOR_MAIN_IMPORT,
+    anchor_crlf = _LUMO_MONITOR_MAIN_ANCHOR.replace(b"\n", b"\r\n")
+    for anchor, imp in ((_LUMO_MONITOR_MAIN_ANCHOR,
+                         _LUMO_MONITOR_MAIN_IMPORT),
+                        (anchor_crlf, import_crlf)):
+        if data.count(anchor) == 1:
+            log(f"Resume fixup: {rel_path}: {what}: inserted after "
+                f"the autofill_page_index import.")
+            return data.replace(anchor, anchor + imp)
+    idx = data.find(b"autofill_page_index")
+    excerpt = (repr(data[max(0, idx - 60):idx + 160]) if idx >= 0
+               else f"file is {len(data)} bytes, "
+                    f"head: {data[:200]!r}")
+    raise StageError(
+        f"Resume fixup: {rel_path}: cannot place the {what}: "
+        f"the anchor import (autofill_page_index) does not occur "
+        f"exactly once (LF or CRLF); this tree is not the tree "
+        f"the fixup was written for, refusing to compile it. "
+        f"Excerpt: {excerpt}"
     )
 
 
