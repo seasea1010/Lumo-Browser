@@ -198,6 +198,7 @@ jobs:
           GOOGLE_DEFAULT_CLIENT_ID: ${{ secrets.GOOGLE_DEFAULT_CLIENT_ID }}
           GOOGLE_DEFAULT_CLIENT_SECRET: ${{ secrets.GOOGLE_DEFAULT_CLIENT_SECRET }}
           LUMO_LOCK_HASH: ${{ secrets.LUMO_LOCK_HASH }}
+          LUMO_LOCK_HASH_2: ${{ secrets.LUMO_LOCK_HASH_2 }}
           LUMO_BUILD_NUMBER: ${{ inputs.build-number }}
         run: |
           set +e
