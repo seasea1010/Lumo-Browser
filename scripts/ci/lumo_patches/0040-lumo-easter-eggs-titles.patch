@@ -1,0 +1,57 @@
+diff --git a/chrome/browser/ui/webui/thorium_easter_eggs.h b/chrome/browser/ui/webui/thorium_easter_eggs.h
+--- a/chrome/browser/ui/webui/thorium_easter_eggs.h
++++ b/chrome/browser/ui/webui/thorium_easter_eggs.h
+@@ -43,7 +43,7 @@
+   std::string source = R"(
+     <html>
+     <head>
+-      <title>Thorium Easter Eggs</title>
++      <title>Lumo Easter Eggs</title>
+       <meta name="color-scheme" content="light dark">
+       <meta name="viewport" content="width=device-width, initial-scale=1">
+       <link rel="shortcut icon" type="image/x-icon" href="chrome://theme/current-channel-logo@2x">
+@@ -54,7 +54,7 @@
+     </style>
+     </head>
+     <body>
+-      <h2><u>Thorium Easter Eggs WebUI Page</u></h3>
++      <h2><u>Lumo Easter Eggs WebUI Page</u></h3>
+       <hr>
+       <p>
+         <img src="chrome://theme/IDR_PRODUCT_THORIUM_ELEMENT">
+@@ -113,7 +113,7 @@
+   std::string source = R"(
+       <html>
+       <head>
+-        <title>Thorium Robot</title>
++        <title>Lumo Robot</title>
+         <meta name="color-scheme" content="light dark">
+         <meta name="viewport" content="width=device-width, initial-scale=1">
+         <link rel="shortcut icon" type="image/x-icon" href="chrome://theme/current-channel-logo@2x">
+@@ -124,7 +124,7 @@
+         </style>
+       </head>
+       <body>
+-        <img alt="Thorium Robot" src="chrome://theme/IDR_PRODUCT_ROBOT">
++        <img alt="Lumo Robot" src="chrome://theme/IDR_PRODUCT_ROBOT">
+       </body>
+       </html>
+     )";
+@@ -186,7 +186,7 @@
+   std::string source = R"(
+       <html>
+       <head>
+-        <title>Thorium Authors</title>
++        <title>Lumo Authors</title>
+         <meta charset="utf-8">
+         <meta name="color-scheme" content="light dark">
+         <meta name="viewport" content="width=device-width, initial-scale=1">
+@@ -211,7 +211,7 @@
+       </head>
+       <body>
+         <main>
+-          <h1>Thorium Authors</h1>
++          <h1>Lumo Authors</h1>
+           <pre>)" + authors + R"(</pre>
+         </main>
+       </body>

@@ -99,7 +99,7 @@ new file mode 100644
 index 0000000..85d95d0
 --- /dev/null
 +++ b/chrome/browser/lumo/lumo_debugger_reporter.cc
-@@ -0,0 +1,389 @@
+@@ -0,0 +1,421 @@
 +// Copyright 2026 seasea1010
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -155,11 +155,43 @@ index 0000000..85d95d0
 +
 +namespace lumo::debugger {
 +
-+bool IsEnabled() {
++namespace {
++
++// The port the Lumo debugger app listens on, and the only port a
++// valid endpoint may name (the app binds 127.0.0.1:47741).
++constexpr int kDebuggerPort = 47741;
++
++// Parses the --lumo-debugger-endpoint value and returns it only
++// when it points at the debugger app on this machine: the http
++// scheme, a loopback host (127.0.0.1, localhost, or ::1), and
++// kDebuggerPort. Anything else (a remote host, another port,
++// https, a malformed URL) yields nullopt, so a stray or hostile
++// switch value can never make the browser POST session events
++// anywhere but the owner's own debugger app.
++std::optional<GURL> GetValidatedEndpoint() {
 +  const base::CommandLine* command_line =
 +      base::CommandLine::ForCurrentProcess();
-+  return command_line->HasSwitch(kEndpointSwitch) &&
-+         !command_line->GetSwitchValueASCII(kEndpointSwitch).empty();
++  if (!command_line->HasSwitch(kEndpointSwitch)) {
++    return std::nullopt;
++  }
++  const GURL url(command_line->GetSwitchValueASCII(kEndpointSwitch));
++  if (!url.is_valid() || !url.SchemeIs("http")) {
++    return std::nullopt;
++  }
++  const std::string host(url.host());
++  if (host != "127.0.0.1" && host != "localhost" && host != "::1") {
++    return std::nullopt;
++  }
++  if (url.EffectiveIntPort() != kDebuggerPort) {
++    return std::nullopt;
++  }
++  return url;
++}
++
++}  // namespace
++
++bool IsEnabled() {
++  return GetValidatedEndpoint().has_value();
 +}
 +
 +namespace {
@@ -188,11 +220,11 @@ index 0000000..85d95d0
 +    return;
 +  }
 +  auto request = std::make_unique<network::ResourceRequest>();
-+  request->url = GURL(base::CommandLine::ForCurrentProcess()
-+                          ->GetSwitchValueASCII(kEndpointSwitch));
-+  if (!request->url.is_valid()) {
++  std::optional<GURL> endpoint = GetValidatedEndpoint();
++  if (!endpoint) {
 +    return;
 +  }
++  request->url = *endpoint;
 +  request->method = "POST";
 +  request->load_flags = net::LOAD_BYPASS_CACHE | net::LOAD_DISABLE_CACHE;
 +  request->credentials_mode = network::mojom::CredentialsMode::kOmit;
@@ -494,7 +526,7 @@ new file mode 100644
 index 0000000..93ce49e
 --- /dev/null
 +++ b/chrome/browser/lumo/lumo_debugger_reporter.h
-@@ -0,0 +1,48 @@
+@@ -0,0 +1,51 @@
 +// Copyright 2026 seasea1010
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -515,8 +547,11 @@ index 0000000..93ce49e
 +// nothing at all.
 +inline constexpr char kEndpointSwitch[] = "lumo-debugger-endpoint";
 +
-+// True when the current process was launched with a non-empty
-+// --lumo-debugger-endpoint value.
++// True when the current process was launched with a
++// --lumo-debugger-endpoint value that validates as the debugger
++// app's own loopback endpoint (http scheme, host 127.0.0.1,
++// localhost, or ::1, port 47741). Any other value, including
++// a remote URL, leaves the reporter disabled.
 +bool IsEnabled();
 +
 +// Sends the "startup" event (version, user data directory, profile

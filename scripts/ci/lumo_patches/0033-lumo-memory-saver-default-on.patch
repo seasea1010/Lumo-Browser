@@ -1,0 +1,17 @@
+diff --git a/components/performance_manager/user_tuning/prefs.cc b/components/performance_manager/user_tuning/prefs.cc
+index 495a742..1e43478 100644
+--- a/components/performance_manager/user_tuning/prefs.cc
++++ b/components/performance_manager/user_tuning/prefs.cc
+@@ -31,8 +31,11 @@ void RegisterLocalStatePrefs(PrefRegistrySimple* registry) {
+   registry->RegisterIntegerPref(
+       kMemorySaverModeTimeBeforeDiscardInMinutes,
+       kDefaultMemorySaverModeTimeBeforeDiscardInMinutes);
++  // Lumo (patch 0033): Memory Saver is on by default, with the
++  // balanced (medium) aggressiveness registered below (feature list
++  // #55). Battery Saver already defaults to kEnabledBelowThreshold.
+   registry->RegisterIntegerPref(
+-      kMemorySaverModeState, static_cast<int>(MemorySaverModeState::kDisabled));
++      kMemorySaverModeState, static_cast<int>(MemorySaverModeState::kEnabled));
+   registry->RegisterIntegerPref(
+       kMemorySaverModeAggressiveness,
+       static_cast<int>(MemorySaverModeAggressiveness::kMedium));

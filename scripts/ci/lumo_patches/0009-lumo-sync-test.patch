@@ -1,57 +1,64 @@
-diff --git a/chrome/browser/resources/settings/people_page/sync_page.html.ts b/chrome/browser/resources/settings/people_page/sync_page.html.ts
-index bab5906..8fcdb82 100644
---- a/chrome/browser/resources/settings/people_page/sync_page.html.ts
-+++ b/chrome/browser/resources/settings/people_page/sync_page.html.ts
-@@ -76,6 +76,33 @@ export function getHtml(this: SettingsSyncPageElement) {
-       </div>
-       <div id="${PageStatus.CONFIGURE}"
-           ?hidden="${!this.isStatus_(PageStatus.CONFIGURE)}">
-+        <!-- Lumo: Sync self-test (Lumo patch 0009). -->
-+        <div id="lumo-sync-test" class="list-frame">
-+          <div class="list-item">
-+            <div class="start cr-padded-text">
-+              <div>Sync の動作をテスト</div>
-+              <div class="secondary">
-+                自前 API キーで Sync が動いているかを6項目で確認します。
-+                テスト用ブックマークを作成して同期を確認し、削除します。
-+              </div>
-+            </div>
-+            <cr-button id="lumoSyncTestButton" class="action-button"
-+                ?disabled="${this.lumoSyncTestRunning_}"
-+                @click="${this.onLumoSyncTestClick_}">
-+              ${this.lumoSyncTestRunning_ ? 'テスト中…' :
-+                                            'Sync の動作をテスト'}
-+            </cr-button>
-+          </div>
-+          ${this.lumoSyncTestRows_.map(row => html`
+diff --git a/chrome/browser/resources/settings/people_page/people_page.html.ts b/chrome/browser/resources/settings/people_page/people_page.html.ts
+index b330308..d737cfd 100644
+--- a/chrome/browser/resources/settings/people_page/people_page.html.ts
++++ b/chrome/browser/resources/settings/people_page/people_page.html.ts
+@@ -105,6 +105,40 @@ export function getHtml(this: SettingsPeoplePageElement) {
+             ?hidden="${!this.shouldHideSyncSetupLinkRow_()}">
+         </cr-link-row>
+ 
++        <!-- Lumo: Sync self-test (Lumo patch 0009). It lives on
++             this page, not on the sync setup subpage: that subpage
++             is only reachable in the legacy SYNCING state, so a
++             profile in the account-storage (SIGNED_IN) state never
++             saw the button. Shown whenever a primary account is
++             present. -->
++        ${this.shouldShowLumoSyncTest_() ? html`
++          <div id="lumo-sync-test" class="list-frame">
 +            <div class="list-item">
 +              <div class="start cr-padded-text">
-+                <div>${row.ok ? '✓' : '✗'} ${row.label}</div>
-+                <div class="secondary">${row.detail}</div>
++                <div>Sync の動作をテスト</div>
++                <div class="secondary">
++                  自前 API キーで Sync が動いているかを6項目で確認します。
++                  テスト用ブックマークを作成して同期を確認し、削除します。
++                </div>
 +              </div>
++              <cr-button id="lumoSyncTestButton" class="action-button"
++                  ?disabled="${this.lumoSyncTestRunning_}"
++                  @click="${this.onLumoSyncTestClick_}">
++                ${this.lumoSyncTestRunning_ ? 'テスト中…' :
++                                              'Sync の動作をテスト'}
++              </cr-button>
 +            </div>
-+          `)}
-+        </div>
++            ${this.lumoSyncTestRows_.map(row => html`
++              <div class="list-item">
++                <div class="start cr-padded-text">
++                  <div>${row.ok ? '✓' : '✗'} ${row.label}</div>
++                  <div class="secondary">${row.detail}</div>
++                </div>
++              </div>
++            `)}
++          </div>
++        ` : ''}
 +
-         <div id="other-sync-items" class="list-frame">
-           <cr-link-row id="sync-advanced-row"
-               label="$i18n{syncAdvancedPageTitle}"
-diff --git a/chrome/browser/resources/settings/people_page/sync_page.ts b/chrome/browser/resources/settings/people_page/sync_page.ts
-index de2ff9f..a80d2a2 100644
---- a/chrome/browser/resources/settings/people_page/sync_page.ts
-+++ b/chrome/browser/resources/settings/people_page/sync_page.ts
-@@ -31,7 +31,7 @@ import {assert, assertNotReached} from '//resources/js/assert.js';
- import {focusWithoutInk} from '//resources/js/focus_without_ink.js';
- import {CrLitElement} from '//resources/lit/v3_0/lit.rollup.js';
- import type {PropertyValues} from '//resources/lit/v3_0/lit.rollup.js';
--import type {SyncBrowserProxy, SyncPrefs, SyncStatus} from '/shared/settings/people_page/sync_browser_proxy.js';
-+import type {LumoSyncTestResult, SyncBrowserProxy, SyncPrefs, SyncStatus} from '/shared/settings/people_page/sync_browser_proxy.js';
- import {shouldShowSyncTogglesForStatusAction, PageStatus, SignedInState, StatusAction, SyncBrowserProxyImpl} from '/shared/settings/people_page/sync_browser_proxy.js';
- import {I18nMixinLit} from 'chrome://resources/cr_elements/i18n_mixin_lit.js';
- import {OpenWindowProxyImpl} from 'chrome://resources/js/open_window_proxy.js';
-@@ -62,6 +62,13 @@ import {getHtml} from './sync_page.html.js';
-  * 'settings-sync-page' is the settings page containing sync settings.
-  */
+ <if expr="not is_chromeos">
+         ${this.signinAllowed_ ? html`
+           <cr-link-row id="manage-google-account"
+diff --git a/chrome/browser/resources/settings/people_page/people_page.ts b/chrome/browser/resources/settings/people_page/people_page.ts
+index 0dcc177..b93bb27 100644
+--- a/chrome/browser/resources/settings/people_page/people_page.ts
++++ b/chrome/browser/resources/settings/people_page/people_page.ts
+@@ -22,7 +22,7 @@ import '../settings_page/settings_section.js';
+ 
+ import type {ProfileInfo} from '/shared/settings/people_page/profile_info_browser_proxy.js';
+ import {ProfileInfoBrowserProxyImpl} from '/shared/settings/people_page/profile_info_browser_proxy.js';
+-import type {StoredAccount, SyncBrowserProxy, SyncStatus} from '/shared/settings/people_page/sync_browser_proxy.js';
++import type {LumoSyncTestResult, StoredAccount, SyncBrowserProxy, SyncStatus} from '/shared/settings/people_page/sync_browser_proxy.js';
+ import {SignedInState, StatusAction, SyncBrowserProxyImpl} from '/shared/settings/people_page/sync_browser_proxy.js';
+ // <if expr="is_chromeos">
+ import {convertImageSequenceToPng} from 'chrome://resources/ash/common/cr_picture/png.js';
+@@ -50,6 +50,13 @@ import {AccountManagerBrowserProxyImpl} from './account_manager_browser_proxy.js
+ import {getCss} from './people_page.css.js';
+ import {getHtml} from './people_page.html.js';
  
 +/** Lumo: one row of the Sync self-test result list (patch 0009). */
 +interface LumoSyncTestRow {
@@ -60,35 +67,50 @@ index de2ff9f..a80d2a2 100644
 +  detail: string;
 +}
 +
- const SettingsSyncPageElementBase =
-     SettingsViewMixinLit(WebUiListenerMixinLit(I18nMixinLit(CrLitElement)));
+ export interface SettingsPeoplePageElement {
+   $: {
+     // <if expr="not is_chromeos">
+@@ -134,6 +141,10 @@ export class SettingsPeoplePageElement extends SettingsPeoplePageElementBase {
  
-@@ -130,6 +137,10 @@ export class SettingsSyncPageElement extends SettingsSyncPageElementBase {
-       isEeaChoiceCountry_: {type: Boolean},
+       replaceSyncPromosWithSignInPromos_: {type: Boolean},
  
-       personalizationCollapseExpanded_: {type: Boolean},
-+
 +      // Lumo: Sync self-test state (Lumo patch 0009).
 +      lumoSyncTestRunning_: {type: Boolean},
 +      lumoSyncTestRows_: {type: Array},
-     };
-   }
- 
-@@ -150,6 +161,10 @@ export class SettingsSyncPageElement extends SettingsSyncPageElementBase {
-       loadTimeData.getBoolean('isEeaChoiceCountry');
-   protected accessor personalizationCollapseExpanded_: boolean = false;
- 
++
+       // <if expr="not is_chromeos">
+       shouldShowGoogleAccount_: {type: Boolean},
+       showImportDataDialog_: {type: Boolean},
+@@ -154,6 +165,9 @@ export class SettingsPeoplePageElement extends SettingsPeoplePageElementBase {
+   protected accessor profileName_: string = '';
+   protected accessor replaceSyncPromosWithSignInPromos_: boolean =
+       loadTimeData.getBoolean('replaceSyncPromosWithSignInPromos');
 +  // Lumo: Sync self-test state (Lumo patch 0009).
 +  protected accessor lumoSyncTestRunning_: boolean = false;
 +  protected accessor lumoSyncTestRows_: LumoSyncTestRow[] = [];
-+
-   // <if expr="not is_chromeos">
-   protected accessor showSetupCancelDialog_: boolean = false;
-   // </if>
-@@ -283,6 +298,67 @@ export class SettingsSyncPageElement extends SettingsSyncPageElementBase {
-     }
+   protected accessor primaryAccountName_: string = '';
+   protected accessor primaryAccountEmail_: string = '';
+   protected accessor primaryAccountIconUrl_: string = '';
+@@ -418,6 +432,83 @@ export class SettingsPeoplePageElement extends SettingsPeoplePageElementBase {
+          this.syncStatus.signedInState !== SignedInState.SYNCING);
    }
  
++  /**
++   * Lumo: whether the Sync self-test (patch 0009) is shown. The
++   * test used to live on the sync setup subpage, which is only
++   * reachable in the legacy SYNCING state; a profile in the
++   * account-storage (SIGNED_IN) state never got there. On this
++   * page the test is shown whenever a primary account is
++   * present, in either state.
++   */
++  protected shouldShowLumoSyncTest_() {
++    return !!this.syncStatus &&
++        (this.syncStatus.signedInState === SignedInState.SIGNED_IN ||
++         this.syncStatus.signedInState === SignedInState.SYNCING ||
++         this.syncStatus.signedInState ===
++             SignedInState.SIGNED_IN_PAUSED);
++  }
++
 +  /**
 +   * Lumo: runs the Sync self-test in the browser and renders the
 +   * six checks as a result list (Lumo patch 0009).
@@ -150,9 +172,9 @@ index de2ff9f..a80d2a2 100644
 +    ];
 +  }
 +
-   private onSyncStatusChanged_(syncStatus: SyncStatus) {
-     this.syncStatus_ = syncStatus;
- 
+   protected getAccountRowSubtitle_(): string {
+     if (this.syncStatus && this.syncStatus.statusText) {
+       if (this.syncStatus.statusAction === StatusAction.ENTER_PASSPHRASE) {
 diff --git a/chrome/browser/resources/settings_shared/people_page/sync_browser_proxy.ts b/chrome/browser/resources/settings_shared/people_page/sync_browser_proxy.ts
 index 3ee5452..a977624 100644
 --- a/chrome/browser/resources/settings_shared/people_page/sync_browser_proxy.ts
@@ -208,7 +230,7 @@ index 3ee5452..a977624 100644
      return sendWithPromise<StoredAccount[]>('SyncSetupGetStoredAccounts');
    }
 diff --git a/chrome/browser/ui/webui/settings/people_handler.cc b/chrome/browser/ui/webui/settings/people_handler.cc
-index 1169a40..829b132 100644
+index 1169a40..806ca1b 100644
 --- a/chrome/browser/ui/webui/settings/people_handler.cc
 +++ b/chrome/browser/ui/webui/settings/people_handler.cc
 @@ -2,6 +2,7 @@
@@ -255,7 +277,7 @@ index 1169a40..829b132 100644
        "SyncSetupGetSyncStatus",
        base::BindRepeating(&PeopleHandler::HandleGetSyncStatus,
                            base::Unretained(this)));
-+  // Lumo: Sync self-test for the sync settings page (patch 0009).
++  // Lumo: Sync self-test for the people settings page (patch 0009).
 +  web_ui()->RegisterMessageCallback(
 +      "LumoSyncTest",
 +      base::BindRepeating(&PeopleHandler::HandleLumoSyncTest,
@@ -278,7 +300,7 @@ index 1169a40..829b132 100644
    profile_pref_registrar_.reset();
    identity_manager_observation_.Reset();
    sync_service_observation_.Reset();
-@@ -1020,6 +1038,213 @@ void PeopleHandler::HandleGetSyncStatus(const base::ListValue& args) {
+@@ -1020,6 +1038,224 @@ void PeopleHandler::HandleGetSyncStatus(const base::ListValue& args) {
    ResolveJavascriptCallback(callback_id, GetSyncStatusDictionary());
  }
  
@@ -329,10 +351,15 @@ index 1169a40..829b132 100644
 +      IdentityManagerFactory::GetForProfile(profile_);
 +  bookmarks::BookmarkModel* model =
 +      BookmarkModelFactory::GetForBrowserContext(profile_);
++  // The round trip only needs a signed-in account and a running
++  // engine: in the account-storage model the primary account
++  // carries sign-in consent only (no Sync consent), and the
++  // engine syncs the account's data types in transport mode
++  // without the legacy Sync feature being "active". Requiring
++  // either made the test unusable for such profiles.
 +  const bool round_trip_possible =
 +      service && identity_manager &&
-+      identity_manager->HasPrimaryAccount(signin::ConsentLevel::kSync) &&
-+      service->IsSyncFeatureActive() &&
++      identity_manager->HasPrimaryAccount(signin::ConsentLevel::kSignin) &&
 +      service->GetTransportState() ==
 +          syncer::SyncService::TransportState::ACTIVE &&
 +      service->GetUserSettings()->GetSelectedTypes().Has(
@@ -395,10 +422,13 @@ index 1169a40..829b132 100644
 +  signin::IdentityManager* identity_manager =
 +      IdentityManagerFactory::GetForProfile(profile_);
 +
-+  // (2) Sign-in state (with Sync consent).
++  // (2) Sign-in state. Sign-in consent is enough: under the
++  // account-storage model the primary account is held at the
++  // sign-in level, and requiring Sync consent reported a
++  // signed-in profile as signed out.
 +  const bool signed_in =
 +      identity_manager &&
-+      identity_manager->HasPrimaryAccount(signin::ConsentLevel::kSync);
++      identity_manager->HasPrimaryAccount(signin::ConsentLevel::kSignin);
 +  result.Set("signedIn", signed_in);
 +
 +  syncer::SyncService* service = GetSyncService();
@@ -409,8 +439,11 @@ index 1169a40..829b132 100644
 +              : syncer::SyncService::TransportState::DISABLED;
 +  result.Set("transportState",
 +             LumoTransportStateToString(transport_state));
++  // An ACTIVE transport state means the engine is up and
++  // syncing, both for legacy Sync and for a signed-in account in
++  // transport mode (where IsSyncFeatureActive() stays false).
 +  result.Set("syncActive",
-+             service && service->IsSyncFeatureActive() &&
++             service &&
 +                 transport_state ==
 +                     syncer::SyncService::TransportState::ACTIVE);
 +
@@ -425,7 +458,7 @@ index 1169a40..829b132 100644
 +      signed_in &&
 +      identity_manager->HasAccountWithRefreshTokenInPersistentErrorState(
 +          identity_manager->GetPrimaryAccountId(
-+              signin::ConsentLevel::kSync));
++              signin::ConsentLevel::kSignin));
 +  result.Set("serverConnected",
 +             transport_state ==
 +                     syncer::SyncService::TransportState::ACTIVE &&
@@ -492,7 +525,7 @@ index 1169a40..829b132 100644
  void PeopleHandler::HandleSyncPrefsDispatch(const base::ListValue& args) {
    AllowJavascript();
    PushSyncPrefs();
-@@ -1151,6 +1376,19 @@ void PeopleHandler::OnPrimaryAccountChanged(
+@@ -1151,6 +1387,19 @@ void PeopleHandler::OnPrimaryAccountChanged(
  }
  
  void PeopleHandler::OnStateChanged(syncer::SyncService* sync_service) {
@@ -513,7 +546,7 @@ index 1169a40..829b132 100644
    UpdateStoredAccounts();
    // TODO(crbug.com/40140566): Re-evaluate marking sync as configuring here,
 diff --git a/chrome/browser/ui/webui/settings/people_handler.h b/chrome/browser/ui/webui/settings/people_handler.h
-index baac6f2..924ccc9 100644
+index baac6f2..1aaa0e2 100644
 --- a/chrome/browser/ui/webui/settings/people_handler.h
 +++ b/chrome/browser/ui/webui/settings/people_handler.h
 @@ -23,6 +23,7 @@
@@ -529,7 +562,7 @@ index baac6f2..924ccc9 100644
    void HandleGetSyncStatus(const base::ListValue& args);
  
 +  // Lumo: the Sync self-test behind the "Sync の動作をテスト"
-+  // button on the sync settings page (Lumo patch 0009). Checks:
++  // button on the people settings page (Lumo patch 0009). Checks:
 +  // (1) the browser's own Google API key / OAuth client are baked
 +  // in (presence only, values are never reported), (2) sign-in
 +  // state, (3) Sync engine state, (4) Sync server reachability,

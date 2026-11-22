@@ -33,8 +33,8 @@ index 0ef216a..6eb8af7 100644
 +    <message name="IDS_SETTINGS_LUMO_MONITOR_FEATURES_LABEL" desc="Label for the enabled Lumo experiments on the Lumo Monitor settings page (Lumo patch 0022)">
 +      有効な Lumo 実験
 +    </message>
-+    <message name="IDS_SETTINGS_LUMO_MONITOR_API_KEY_LABEL" desc="Label for the owner's API key presence on the Lumo Monitor settings page (Lumo patch 0022)">
-+      自前 API キー
++    <message name="IDS_SETTINGS_LUMO_MONITOR_API_KEY_LABEL" desc="Label for the embedded Google API key on the Lumo Monitor settings page (Lumo patch 0022)">
++      Google API キー
 +    </message>
 +    <message name="IDS_SETTINGS_LUMO_MONITOR_LOCK_LABEL" desc="Label for the startup password lock state on the Lumo Monitor settings page (Lumo patch 0022)">
 +      起動時パスワードロック
@@ -266,7 +266,7 @@ new file mode 100644
 index 0000000..8c94363
 --- /dev/null
 +++ b/chrome/browser/resources/settings/lumo_monitor_page/lumo_monitor_page.ts
-@@ -0,0 +1,151 @@
+@@ -0,0 +1,148 @@
 +// Copyright 2026 seasea1010
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -374,12 +374,9 @@ index 0000000..8c94363
 +      return '';
 +    }
 +    if (this.info_.apiKeyConfigured && this.info_.oauthClientConfigured) {
-+      return 'API キーと OAuth クライアントが組み込まれています';
++      return '組み込み済み（サインインと同期が使えます）';
 +    }
-+    if (!this.info_.apiKeyConfigured) {
-+      return 'API キーが組み込まれていません';
-+    }
-+    return 'OAuth クライアントが組み込まれていません';
++    return '未組み込み';
 +  }
 +
 +  protected lockText_(): string {
@@ -501,7 +498,7 @@ index 0d30190..70ab115 100644
          </a>
 +        <a role="menuitem" id="lumo-monitor-menu" href="/lumoMonitor"
 +            class="cr-nav-menu-item">
-+          <cr-icon icon="settings:dashboard"></cr-icon>
++          <cr-icon icon="settings20:dashboard"></cr-icon>
 +          <span class="menu-label">$i18n{lumoMonitorPageTitle}</span>
 +          <cr-ripple></cr-ripple>
 +        </a>
@@ -532,7 +529,7 @@ new file mode 100644
 index 0000000..6962a1c
 --- /dev/null
 +++ b/chrome/browser/ui/webui/settings/lumo_monitor_handler.cc
-@@ -0,0 +1,304 @@
+@@ -0,0 +1,308 @@
 +// Copyright 2026 seasea1010
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -772,10 +769,14 @@ index 0000000..6962a1c
 +
 +  signin::IdentityManager* identity_manager =
 +      IdentityManagerFactory::GetForProfile(profile_);
++  // Signed-in means a primary account at the sign-in consent
++  // level: under the account-storage model the account is held
++  // at kSignin, and requiring kSync here reported a signed-in
++  // profile as "not signed in" (build #29 real-machine check).
 +  info.Set("syncSignedIn",
 +           identity_manager &&
 +               identity_manager->HasPrimaryAccount(
-+                   signin::ConsentLevel::kSync));
++                   signin::ConsentLevel::kSignin));
 +  syncer::SyncService* sync_service =
 +      SyncServiceFactory::IsSyncAllowed(profile_)
 +          ? SyncServiceFactory::GetForProfile(profile_)

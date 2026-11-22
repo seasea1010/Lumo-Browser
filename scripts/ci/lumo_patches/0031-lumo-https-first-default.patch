@@ -1,0 +1,18 @@
+diff --git a/chrome/common/chrome_features.cc b/chrome/common/chrome_features.cc
+index 6018c5e..f86e407 100644
+--- a/chrome/common/chrome_features.cc
++++ b/chrome/common/chrome_features.cc
+@@ -1228,9 +1228,11 @@ const base::FeatureParam<bool>
+ BASE_FEATURE(kHttpsFirstBalancedMode, base::FEATURE_ENABLED_BY_DEFAULT);
+ 
+ // Automatically enables HTTPS-First Mode in a balanced configuration when
+-// possible.
++// possible. Lumo (patch 0031): enabled by default, so HTTPS-First Mode
++// (balanced) is on out of the box (feature list #7). Profiles that have
++// explicitly changed the setting are unaffected.
+ BASE_FEATURE(kHttpsFirstBalancedModeAutoEnable,
+-             base::FEATURE_DISABLED_BY_DEFAULT);
++             base::FEATURE_ENABLED_BY_DEFAULT);
+ 
+ // Kill switch for crbug.com/40892208.
+ BASE_FEATURE(kHttpsFirstModeForAdvancedProtectionUsers,

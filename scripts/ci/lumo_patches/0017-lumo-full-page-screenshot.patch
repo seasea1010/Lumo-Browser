@@ -13,10 +13,10 @@ index b8e2810..52d3f34 100644
  // Spell-check
  #define IDC_SPELLCHECK_SUGGESTION_0     41000
 diff --git a/chrome/app/generated_resources.grd b/chrome/app/generated_resources.grd
-index b34ba25..cae4dad 100644
+index b34ba25..5d938e0 100644
 --- a/chrome/app/generated_resources.grd
 +++ b/chrome/app/generated_resources.grd
-@@ -19160,6 +19160,9 @@ Please help our engineers fix this problem. Tell us what happened right before y
+@@ -19160,9 +19160,24 @@ Please help our engineers fix this problem. Tell us what happened right before y
      <message name="IDS_LUMO_LAUNCH_THORIUM_PROFILE" desc="App menu item that launches Lumo with the original Thorium user profile data directory.">
        もともとのThoriumのユーザープロファイルデータの保存場所から起動
      </message>
@@ -26,11 +26,41 @@ index b34ba25..cae4dad 100644
      <message name="IDS_CHROMELABS_LUMO_LAUNCH_THORIUM_PROFILE_NAME" desc="Name of the Lumo Labs experiment that shows the Thorium-profile launch menu item.">
        Thorium プロファイルで起動するメニュー項目を表示
      </message>
++    <message name="IDS_LUMO_SCREENSHOT_SAVED_TITLE" desc="Title of the notification shown when a Lumo full-page screenshot has been saved.">
++      Screenshot saved
++    </message>
++    <message name="IDS_LUMO_SCREENSHOT_SAVED_MESSAGE" desc="Body of the notification shown when a Lumo full-page screenshot has been saved; names the saved file and tells the user a click opens it.">
++      Saved to <ph name="FILE_PATH">$1<ex>C:\Users\user\Downloads\lumo-screenshot-20261122-170000.png</ex></ph>. Click to open it.
++    </message>
++    <message name="IDS_LUMO_SCREENSHOT_FAILED_TITLE" desc="Title of the notification shown when a Lumo full-page screenshot could not be saved.">
++      Couldn't save the screenshot
++    </message>
++    <message name="IDS_LUMO_SCREENSHOT_FAILED_MESSAGE" desc="Body of the notification shown when a Lumo full-page screenshot could not be saved.">
++      The screenshot could not be written to the downloads folder.
++    </message>
+     <message name="IDS_CHROMELABS_LUMO_LAUNCH_THORIUM_PROFILE_DESCRIPTION" desc="Description of the Lumo Labs experiment that shows the Thorium-profile launch menu item.">
+       アプリメニューに「もともとのThoriumのユーザープロファイルデータの保存場所から起動」を追加します。誤って押してしまうのを防ぐため、既定では表示されません。
+     </message>
+diff --git a/chrome/app/resources/generated_resources_ja.xtb b/chrome/app/resources/generated_resources_ja.xtb
+index 7dd02d5..7dab4c7 100644
+--- a/chrome/app/resources/generated_resources_ja.xtb
++++ b/chrome/app/resources/generated_resources_ja.xtb
+@@ -1,6 +1,10 @@
+ <?xml version="1.0" ?>
+ <!DOCTYPE translationbundle>
+ <translationbundle lang="ja">
++<translation id="1916538118663102058">スクリーンショットを保存できませんでした</translation>
++<translation id="2453315111787864938">ダウンロードフォルダに書き込めませんでした</translation>
++<translation id="3622628352940016305">スクリーンショットを保存しました</translation>
++<translation id="5507083431702953216"><ph name="FILE_PATH" /> に保存しました。クリックで開きます</translation>
+ <translation id="1001033507375626788">このネットワークが共有されました</translation>
+ <translation id="1001360573085135660">クリックして権限を切り替えます。</translation>
+ <translation id="1002085272681738789">タブが再びアクティブになりました</translation>
 diff --git a/chrome/browser/ui/browser_command_controller.cc b/chrome/browser/ui/browser_command_controller.cc
-index 1cd273b..ce74ee5 100644
+index 1cd273b..bd31ef7 100644
 --- a/chrome/browser/ui/browser_command_controller.cc
 +++ b/chrome/browser/ui/browser_command_controller.cc
-@@ -9,22 +9,29 @@
+@@ -9,22 +9,30 @@
  #include <algorithm>
  #include <string>
  
@@ -49,6 +79,7 @@ index 1cd273b..ce74ee5 100644
  #include "base/i18n/rtl.h"
 +#include "base/json/json_reader.h"
 +#include "base/json/json_writer.h"
++#include "base/memory/weak_ptr.h"
  #include "base/metrics/histogram_functions.h"
  #include "base/metrics/user_metrics.h"
  #include "base/notimplemented.h"
@@ -60,7 +91,7 @@ index 1cd273b..ce74ee5 100644
  #include "build/branding_buildflags.h"
  #include "build/build_config.h"
  #include "chrome/app/chrome_command_ids.h"
-@@ -34,6 +41,7 @@
+@@ -34,6 +42,7 @@
  #include "chrome/browser/browsing_data/browsing_data_important_sites_util.h"
  #include "chrome/browser/defaults.h"
  #include "chrome/browser/devtools/devtools_window.h"
@@ -68,33 +99,146 @@ index 1cd273b..ce74ee5 100644
  #include "chrome/browser/enterprise/isolated_mode/isolated_mode_settings_service_factory.h"
  #include "chrome/browser/feedback/public/feedback_source.h"
  #include "chrome/browser/feedback/show_feedback_page.h"
-@@ -138,6 +146,8 @@
+@@ -44,6 +53,9 @@
+ #include "chrome/browser/glic/public/glic_keyed_service_factory.h"
+ #include "chrome/browser/glic/public/service/glic_instance_coordinator.h"
+ #include "chrome/browser/lifetime/application_lifetime.h"
++#include "chrome/browser/notifications/notification_display_service.h"
++#include "chrome/browser/notifications/notification_display_service_factory.h"
++#include "chrome/browser/notifications/notification_handler.h"
+ #include "chrome/browser/prefs/incognito_mode_prefs.h"
+ #include "chrome/browser/profiles/profile.h"
+ #include "chrome/browser/profiles/profile_window.h"
+@@ -138,6 +150,9 @@
  #include "components/tabs/public/tab_interface.h"
  #include "components/translate/core/browser/translate_manager.h"
  #include "components/zoom/zoom_controller.h"
++#include "components/vector_icons/vector_icons.h"
 +#include "content/public/browser/devtools_agent_host.h"
 +#include "content/public/browser/devtools_agent_host_client.h"
  #include "content/public/browser/navigation_controller.h"
  #include "content/public/browser/navigation_entry.h"
  #include "content/public/browser/render_frame_host.h"
-@@ -280,6 +290,118 @@ actions::ActionItem* FindAction(actions::ActionId action_id,
+@@ -153,9 +168,16 @@
+ #include "ui/accessibility/accessibility_features.h"
+ #include "ui/actions/actions.h"
+ #include "ui/base/l10n/l10n_util.h"
++#include "ui/base/models/image_model.h"
+ #include "ui/base/ui_base_features.h"
+ #include "ui/base/window_open_disposition.h"
++#include "ui/color/color_id.h"
+ #include "ui/events/keycodes/keyboard_codes.h"
++#include "ui/message_center/public/cpp/message_center_constants.h"
++#include "ui/message_center/public/cpp/notification.h"
++#include "ui/message_center/public/cpp/notification_delegate.h"
++#include "ui/message_center/public/cpp/notifier_id.h"
++#include "url/gurl.h"
+ 
+ #if !BUILDFLAG(IS_ANDROID)
+ #include "chrome/browser/devtools/devtools_policy_dialog.h"
+@@ -280,6 +302,225 @@ actions::ActionItem* FindAction(actions::ActionId action_id,
    return actions::ActionManager::Get().FindAction(action_id, root_action_item);
  }
  
++// Lumo (patch 0017): notification id and notifier id for the
++// full-page screenshot result notifications.
++constexpr char kLumoScreenshotNotificationId[] =
++    "lumo_full_page_screenshot";
++constexpr char kLumoScreenshotNotifierId[] = "lumo_full_page_screenshot";
++
++// Lumo (patch 0017): delegate for the "screenshot saved"
++// notification. Clicking the notification body opens the saved
++// PNG with the desktop's default handler. The profile is held
++// as a raw pointer, like other one-shot notification delegates
++// in the browser (for example ExtensionRequestNotification):
++// the notification is torn down together with the profile's
++// notification display service, so a click can only arrive
++// while the profile is alive.
++class LumoScreenshotNotificationDelegate
++    : public message_center::NotificationDelegate {
++ public:
++  LumoScreenshotNotificationDelegate(Profile* profile,
++                                     base::FilePath file_path)
++      : profile_(profile), file_path_(std::move(file_path)) {}
++
++  // message_center::NotificationDelegate:
++  void Click(const std::optional<int>& button_index,
++             const std::optional<std::u16string>& reply) override {
++    if (button_index) {
++      return;  // The notification has no action buttons.
++    }
++    platform_util::OpenItem(profile_, file_path_,
++                            platform_util::OPEN_FILE,
++                            platform_util::OpenOperationCallback());
++  }
++
++ private:
++  ~LumoScreenshotNotificationDelegate() override = default;
++
++  Profile* const profile_;
++  const base::FilePath file_path_;
++};
++
++// Lumo (patch 0017): shows the result of a full-page screenshot
++// capture as a transient notification. On success the body names
++// the saved file and a click opens it; on failure the body says
++// the file could not be written to the downloads folder.
++void ShowLumoScreenshotNotification(Profile* profile,
++                                    const base::FilePath& file_path,
++                                    bool saved) {
++  if (!profile) {
++    return;
++  }
++  NotificationDisplayService* display_service =
++      NotificationDisplayServiceFactory::GetForProfile(profile);
++  if (!display_service) {
++    return;
++  }
++  std::u16string title;
++  std::u16string body;
++  scoped_refptr<message_center::NotificationDelegate> delegate;
++  if (saved) {
++    title = l10n_util::GetStringUTF16(IDS_LUMO_SCREENSHOT_SAVED_TITLE);
++    body = l10n_util::GetStringFUTF16(IDS_LUMO_SCREENSHOT_SAVED_MESSAGE,
++                                      file_path.AsUTF16Unsafe());
++    delegate = base::MakeRefCounted<LumoScreenshotNotificationDelegate>(
++        profile, file_path);
++  } else {
++    title = l10n_util::GetStringUTF16(IDS_LUMO_SCREENSHOT_FAILED_TITLE);
++    body = l10n_util::GetStringUTF16(IDS_LUMO_SCREENSHOT_FAILED_MESSAGE);
++  }
++  message_center::Notification notification(
++      message_center::NOTIFICATION_TYPE_SIMPLE,
++      kLumoScreenshotNotificationId, title, body,
++      ui::ImageModel::FromVectorIcon(vector_icons::kPhotoIcon,
++                                     ui::kColorIcon,
++                                     message_center::kSmallImageSize),
++      /*display_source=*/std::u16string(), GURL(),
++      message_center::NotifierId(message_center::NotifierType::APPLICATION,
++                                 kLumoScreenshotNotifierId),
++      message_center::RichNotificationData(), delegate);
++  display_service->Display(NotificationHandler::Type::TRANSIENT,
++                           notification, /*metadata=*/nullptr);
++}
++
 +// Lumo (patch 0017): one-shot DevTools protocol client that
 +// captures a full-page screenshot of a tab through
 +// Page.captureScreenshot with captureBeyondViewport, then writes
-+// the PNG into the profile's downloads folder. The client owns
-+// itself: it attaches, drives the two protocol calls, and
-+// deletes itself when the capture finishes, fails, or the agent
-+// host goes away.
++// the PNG into the profile's downloads folder and reports the
++// result with a notification (see ShowLumoScreenshotNotification
++// above). The client owns itself: it attaches, drives the two
++// protocol calls, and deletes itself when the capture finishes,
++// fails, or the agent host goes away.
 +class LumoFullPageScreenshotClient
 +    : public content::DevToolsAgentHostClient {
 + public:
 +  LumoFullPageScreenshotClient(
 +      scoped_refptr<content::DevToolsAgentHost> host,
++      Profile* profile,
 +      base::FilePath download_dir)
-+      : host_(std::move(host)), download_dir_(std::move(download_dir)) {}
++      : host_(std::move(host)),
++        profile_(profile),
++        download_dir_(std::move(download_dir)) {}
 +  ~LumoFullPageScreenshotClient() override = default;
 +
 +  // Attaches and starts the capture. Takes ownership of `this`
@@ -103,6 +247,7 @@ index 1cd273b..ce74ee5 100644
 +  // and returns false.
 +  bool Start() {
 +    if (!host_->AttachClient(this)) {
++      ShowResultNotification(false);
 +      delete this;
 +      return false;
 +    }
@@ -136,15 +281,20 @@ index 1cd273b..ce74ee5 100644
 +      const std::string* data =
 +          result ? result->FindString("data") : nullptr;
 +      if (data) {
++        // SavePng finishes the client once the write completes
++        // (or right away if the data cannot be decoded).
 +        SavePng(*data);
++      } else {
++        ShowResultNotification(false);
++        Finish();
 +      }
-+      Finish();
 +    }
 +  }
 +
 +  void AgentHostClosed(content::DevToolsAgentHost* agent_host) override {
 +    // The host is gone, so there is nothing to detach from;
-+    // just clean up.
++    // just clean up. A write that is still in flight has its
++    // reply dropped through the weak pointer below.
 +    host_ = nullptr;
 +    delete this;
 +  }
@@ -165,23 +315,36 @@ index 1cd273b..ce74ee5 100644
 +    std::optional<std::vector<uint8_t>> png =
 +        base::Base64Decode(base64_data);
 +    if (!png) {
++      ShowResultNotification(false);
++      Finish();
 +      return;
 +    }
 +    base::Time::Exploded exploded;
 +    base::Time::Now().LocalExplode(&exploded);
-+    const base::FilePath path = download_dir_.AppendASCII(
++    saved_path_ = download_dir_.AppendASCII(
 +        base::StringPrintf(
 +            "lumo-screenshot-%04d%02d%02d-%02d%02d%02d.png",
 +            exploded.year, exploded.month, exploded.day_of_month,
 +            exploded.hour, exploded.minute, exploded.second));
 +    const std::string png_string(png->begin(), png->end());
-+    base::ThreadPool::PostTask(
++    base::ThreadPool::PostTaskAndReplyWithResult(
 +        FROM_HERE, {base::MayBlock()},
 +        base::BindOnce(
 +            [](const base::FilePath& file_path, std::string data) {
-+              base::WriteFile(file_path, data);
++              return base::WriteFile(file_path, data);
 +            },
-+            path, png_string));
++            saved_path_, png_string),
++        base::BindOnce(&LumoFullPageScreenshotClient::OnWriteFinished,
++                       weak_factory_.GetWeakPtr()));
++  }
++
++  void OnWriteFinished(bool saved) {
++    ShowResultNotification(saved);
++    Finish();
++  }
++
++  void ShowResultNotification(bool saved) {
++    ShowLumoScreenshotNotification(profile_, saved_path_, saved);
 +  }
 +
 +  void Finish() {
@@ -190,13 +353,16 @@ index 1cd273b..ce74ee5 100644
 +  }
 +
 +  scoped_refptr<content::DevToolsAgentHost> host_;
++  Profile* const profile_;
 +  base::FilePath download_dir_;
++  base::FilePath saved_path_;
++  base::WeakPtrFactory<LumoFullPageScreenshotClient> weak_factory_{this};
 +};
 +
  #if BUILDFLAG(IS_CHROMEOS)
  bool IsLockedForOnTask(BrowserWindowInterface* browser) {
    if (features::IsUseUnifiedLockedStateControllerEnabled()) {
-@@ -1626,6 +1748,24 @@ void BrowserCommandController::HandleCommandWithDisposition(
+@@ -1626,6 +1867,24 @@ void BrowserCommandController::HandleCommandWithDisposition(
        break;
      }
  #endif  // BUILDFLAG(IS_WIN)
@@ -213,7 +379,7 @@ index 1cd273b..ce74ee5 100644
 +        (new LumoFullPageScreenshotClient(
 +             content::DevToolsAgentHost::GetOrCreateForTab(
 +                 web_contents),
-+             download_dir))
++             profile(), download_dir))
 +            ->Start();
 +      }
 +      break;
@@ -221,7 +387,7 @@ index 1cd273b..ce74ee5 100644
      case IDC_OPEN_GLIC: {
        auto* service =
            glic::GlicKeyedServiceFactory::GetGlicKeyedService(profile());
-@@ -1902,6 +2042,12 @@ void BrowserCommandController::InitCommandState() {
+@@ -1902,6 +2161,12 @@ void BrowserCommandController::InitCommandState() {
        IDC_LUMO_LAUNCH_THORIUM_PROFILE,
        base::FeatureList::IsEnabled(features::kLumoLaunchThoriumProfile));
  #endif

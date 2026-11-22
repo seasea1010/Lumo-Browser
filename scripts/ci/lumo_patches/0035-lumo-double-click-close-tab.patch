@@ -1,0 +1,125 @@
+diff --git a/chrome/app/generated_resources.grd b/chrome/app/generated_resources.grd
+index a2a010a..4aad9eb 100644
+--- a/chrome/app/generated_resources.grd
++++ b/chrome/app/generated_resources.grd
+@@ -19157,6 +19157,12 @@ Please help our engineers fix this problem. Tell us what happened right before y
+     <message name="IDS_CHROMELABS_LUMO_TAB_GROUP_SESSION_SAVE_DESCRIPTION" desc="Description of the Lumo Labs experiment shown in the Labs bubble.">
+       タブグループをセッションとして保存し、後で復元できるようにします。有効にすると、アプリメニューから現在のタブグループを保存したり、保存したグループを復元したりできます（Lumo パッチ 0018）。
+     </message>
++    <message name="IDS_CHROMELABS_LUMO_DOUBLE_CLICK_CLOSE_TAB_NAME" desc="Name of the Lumo Labs experiment shown in the Labs bubble.">
++      ダブルクリックでタブを閉じる (Lumo)
++    </message>
++    <message name="IDS_CHROMELABS_LUMO_DOUBLE_CLICK_CLOSE_TAB_DESCRIPTION" desc="Description of the Lumo Labs experiment shown in the Labs bubble.">
++      タブをダブルクリックして閉じられるようにします（中クリックでも閉じられます）。有効にすると、タブのダブルクリックでそのタブを閉じます（Lumo パッチ 0035）。
++    </message>
+     <message name="IDS_LUMO_LAUNCH_THORIUM_PROFILE" desc="App menu item that launches Lumo with the original Thorium user profile data directory.">
+       もともとのThoriumのユーザープロファイルデータの保存場所から起動
+     </message>
+diff --git a/chrome/browser/thorium_flag_entries.h b/chrome/browser/thorium_flag_entries.h
+index 13e5891..0fd5f68 100644
+--- a/chrome/browser/thorium_flag_entries.h
++++ b/chrome/browser/thorium_flag_entries.h
+@@ -52,6 +52,11 @@
+      "Saves tab groups as sessions and restores them later, from the app menu. Implemented by Lumo patch 0018.",
+      kOsDesktop, FEATURE_VALUE_TYPE(features::kLumoTabGroupSessionSave)},
+ 
++    {"lumo-double-click-close-tab",
++     "Double-Click to Close Tab",
++     "Closes a tab when you double-click it, in addition to middle-click. Implemented by Lumo patch 0035.",
++     kOsDesktop, FEATURE_VALUE_TYPE(features::kLumoDoubleClickCloseTab)},
++
+     {"lumo-launch-thorium-profile",
+      "Launch with Thorium Profile Menu Item",
+      "Shows the app-menu item that launches Lumo with the original Thorium user profile data directory. The item is hidden by default so it cannot be clicked by accident.",
+diff --git a/chrome/browser/ui/toolbar/chrome_labs/chrome_labs_model.cc b/chrome/browser/ui/toolbar/chrome_labs/chrome_labs_model.cc
+index 8e80dcf..07a6662 100644
+--- a/chrome/browser/ui/toolbar/chrome_labs/chrome_labs_model.cc
++++ b/chrome/browser/ui/toolbar/chrome_labs/chrome_labs_model.cc
+@@ -124,6 +124,22 @@ const std::vector<LabInfo>& GetData() {
+         kLumoTabGroupSessionSaveFlagDescription,
+         "chrome-labs-lumo-tab-group-session-save", version_info::Channel::BETA);
+ 
++    const char kLumoDoubleClickCloseTabFlagId[] =
++        "lumo-double-click-close-tab";
++    const std::u16string kLumoDoubleClickCloseTabFlagName =
++        l10n_util::GetStringUTF16(
++            IDS_CHROMELABS_LUMO_DOUBLE_CLICK_CLOSE_TAB_NAME);
++    const std::u16string kLumoDoubleClickCloseTabFlagDescription =
++        l10n_util::GetStringUTF16(
++            IDS_CHROMELABS_LUMO_DOUBLE_CLICK_CLOSE_TAB_DESCRIPTION);
++
++    lab_info.emplace_back(
++        kLumoDoubleClickCloseTabFlagId,
++        kLumoDoubleClickCloseTabFlagName,
++        kLumoDoubleClickCloseTabFlagDescription,
++        "chrome-labs-lumo-double-click-close-tab",
++        version_info::Channel::BETA);
++
+     const char kLumoLaunchThoriumProfileFlagId[] =
+         "lumo-launch-thorium-profile";
+     const std::u16string kLumoLaunchThoriumProfileFlagName =
+diff --git a/chrome/browser/ui/ui_features.cc b/chrome/browser/ui/ui_features.cc
+index 664fba1..b8ea156 100644
+--- a/chrome/browser/ui/ui_features.cc
++++ b/chrome/browser/ui/ui_features.cc
+@@ -71,6 +71,8 @@ BASE_FEATURE(kLumoFullPageScreenshot, base::FEATURE_DISABLED_BY_DEFAULT);
+ 
+ BASE_FEATURE(kLumoTabGroupSessionSave, base::FEATURE_DISABLED_BY_DEFAULT);
+ 
++BASE_FEATURE(kLumoDoubleClickCloseTab, base::FEATURE_DISABLED_BY_DEFAULT);
++
+ // Lumo Labs experiment (Lumo patch 0012, task 15): when enabled,
+ // the app-menu item that launches a new process with the original
+ // Thorium user profile data directory (Lumo patch 0007) is shown,
+diff --git a/chrome/browser/ui/ui_features.h b/chrome/browser/ui/ui_features.h
+index d853c33..27f44c2 100644
+--- a/chrome/browser/ui/ui_features.h
++++ b/chrome/browser/ui/ui_features.h
+@@ -58,6 +58,9 @@ BASE_DECLARE_FEATURE(kLumoFullPageScreenshot);
+ // Lumo Labs experiment (Lumo patch 0011): Tab Group Session Save and Restore.
+ BASE_DECLARE_FEATURE(kLumoTabGroupSessionSave);
+ 
++// Lumo Labs experiment (Lumo patch 0035): Double-Click to Close Tab.
++BASE_DECLARE_FEATURE(kLumoDoubleClickCloseTab);
++
+ // Lumo Labs experiment (Lumo patch 0012): shows the app-menu item
+ // that launches with the original Thorium user profile (the item
+ // itself is patch 0007). Hidden by default; see task 15.
+diff --git a/chrome/browser/ui/views/tabs/common/tab_view.cc b/chrome/browser/ui/views/tabs/common/tab_view.cc
+index 5c30f12..5963ad0 100644
+--- a/chrome/browser/ui/views/tabs/common/tab_view.cc
++++ b/chrome/browser/ui/views/tabs/common/tab_view.cc
+@@ -717,8 +717,12 @@ void TabView::OnMouseReleased(const ui::MouseEvent& event) {
+ 
+   if (event.IsOnlyMiddleMouseButton() ||
+       (event.IsOnlyLeftMouseButton() && event.GetClickCount() == 2 &&
+-       base::CommandLine::ForCurrentProcess()->HasSwitch(
+-           "double-click-close-tab"))) {
++       (base::CommandLine::ForCurrentProcess()->HasSwitch(
++            "double-click-close-tab") ||
++        // Lumo (patch 0035): the Lumo Labs experiment enables the
++        // same behaviour without the command-line switch.
++        base::FeatureList::IsEnabled(
++            features::kLumoDoubleClickCloseTab)))) {
+     if (HitTestPoint(event.location())) {
+       controller->CloseTab(GetTabInterface(), CloseTabSource::kFromMouse);
+     }
+diff --git a/chrome/browser/ui/views/tabs/tab.cc b/chrome/browser/ui/views/tabs/tab.cc
+index df2eee3..9765ff9 100644
+--- a/chrome/browser/ui/views/tabs/tab.cc
++++ b/chrome/browser/ui/views/tabs/tab.cc
+@@ -855,8 +855,12 @@ void Tab::OnMouseReleased(const ui::MouseEvent& event) {
+   // releases happen off the element).
+   if (event.IsOnlyMiddleMouseButton() ||
+       (event.IsOnlyLeftMouseButton() && event.GetClickCount() == 2 &&
+-       base::CommandLine::ForCurrentProcess()->HasSwitch(
+-           "double-click-close-tab"))) {
++       (base::CommandLine::ForCurrentProcess()->HasSwitch(
++            "double-click-close-tab") ||
++        // Lumo (patch 0035): the Lumo Labs experiment enables the
++        // same behaviour without the command-line switch.
++        base::FeatureList::IsEnabled(
++            features::kLumoDoubleClickCloseTab)))) {
+     if (HitTestPoint(event.location())) {
+       controller_->CloseTab(this, CloseTabSource::kFromMouse);
+     } else if (closing_) {

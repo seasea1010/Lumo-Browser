@@ -1,0 +1,41 @@
+diff --git a/chrome/browser/thorium_url_utils.cc b/chrome/browser/thorium_url_utils.cc
+--- a/chrome/browser/thorium_url_utils.cc
++++ b/chrome/browser/thorium_url_utils.cc
+@@ -35,7 +35,7 @@
+   }
+ 
+   GURL::Replacements replacements;
+-  replacements.SetSchemeStr(content::kThoriumUIScheme);
++  replacements.SetSchemeStr(content::kLumoUIScheme);
+   return canonical_url.ReplaceComponents(replacements);
+ }
+ 
+@@ -43,8 +43,10 @@
+                                             std::u16string_view formatted_url) {
+   constexpr std::u16string_view kChromeScheme = u"chrome:";
+   constexpr std::u16string_view kThoriumScheme = u"thorium:";
++  constexpr std::u16string_view kLumoScheme = u"lumo:";
+   if (!url.SchemeIs(content::kChromeUIScheme) &&
+-      !url.SchemeIs(content::kThoriumUIScheme)) {
++      !url.SchemeIs(content::kThoriumUIScheme) &&
++      !url.SchemeIs(content::kLumoUIScheme)) {
+     return std::u16string(formatted_url);
+   }
+ 
+@@ -55,12 +57,15 @@
+   } else if (base::StartsWith(formatted_url, kThoriumScheme,
+                               base::CompareCase::INSENSITIVE_ASCII)) {
+     source_scheme = kThoriumScheme;
++  } else if (base::StartsWith(formatted_url, kLumoScheme,
++                              base::CompareCase::INSENSITIVE_ASCII)) {
++    source_scheme = kLumoScheme;
+   } else {
+     return std::u16string(formatted_url);
+   }
+ 
+   std::u16string result =
+-      IsInternalURLSchemeBrandingEnabled() ? u"thorium" : u"chrome";
++      IsInternalURLSchemeBrandingEnabled() ? u"lumo" : u"chrome";
+   result.append(formatted_url.substr(source_scheme.size() - 1));
+   return result;
+ }

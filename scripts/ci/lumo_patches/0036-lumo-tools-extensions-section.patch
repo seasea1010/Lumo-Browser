@@ -1,0 +1,99 @@
+diff --git a/chrome/browser/resources/lumo_tools/tools.css b/chrome/browser/resources/lumo_tools/tools.css
+index 3b6027c..4ea5bca 100644
+--- a/chrome/browser/resources/lumo_tools/tools.css
++++ b/chrome/browser/resources/lumo_tools/tools.css
+@@ -301,3 +301,50 @@ section.cat-group > h2 {
+ .hidden {
+   display: none !important;
+ }
++
++.ext-section {
++  margin-top: 36px;
++}
++
++.ext-section > h2 {
++  border-bottom: 1px solid var(--border);
++  font-size: 16px;
++  font-weight: 600;
++  margin: 0 0 12px;
++  padding-bottom: 6px;
++}
++
++.ext-card {
++  border: 1px solid var(--border);
++  border-radius: 6px;
++  margin-bottom: 12px;
++  padding: 12px 14px;
++}
++
++.ext-card h3 {
++  font-size: 14px;
++  font-weight: 600;
++  margin: 0 0 2px;
++}
++
++.ext-card .desc {
++  color: var(--muted);
++  font-size: 12px;
++  margin: 0 0 10px;
++}
++
++.ext-badge {
++  background: var(--accent);
++  border-radius: 4px;
++  color: var(--accent-fg);
++  font-size: 11px;
++  font-weight: 400;
++  margin-left: 6px;
++  padding: 1px 6px;
++  vertical-align: 2px;
++}
++
++.ext-card a {
++  color: var(--accent);
++  font-size: 12px;
++}
+diff --git a/chrome/browser/resources/lumo_tools/tools.html b/chrome/browser/resources/lumo_tools/tools.html
+index 425fa44..1e62fdf 100644
+--- a/chrome/browser/resources/lumo_tools/tools.html
++++ b/chrome/browser/resources/lumo_tools/tools.html
+@@ -18,6 +18,39 @@
+   <nav id="cats" aria-label="カテゴリ"></nav>
+   <main id="tools"></main>
+ </div>
++<section class="ext-section">
++  <h2>おすすめ拡張機能</h2>
++  <p class="subtitle">Lumo に標準で入っているものと、相性の良い拡張機能の紹介です。自動で入ることはありません。入れるときは各配布ページからどうぞ。</p>
++  <div class="ext-card">
++    <h3>uBlock Origin <span class="ext-badge">標準搭載</span></h3>
++    <p class="desc">広告とトラッカーをブロックする拡張機能です。Lumo には最初から入っています（GitHub 経由で自動更新されます）。</p>
++    <a href="https://github.com/gorhill/uBlock/releases" target="_blank" rel="noopener">配布ページ（GitHub）</a>
++  </div>
++  <div class="ext-card">
++    <h3>uBO Scope <span class="ext-badge">標準搭載</span></h3>
++    <p class="desc">サイトが裏で接続している先を可視化する、uBlock Origin の作者による拡張機能です。Lumo には最初から入っています。</p>
++    <a href="https://chromewebstore.google.com/detail/bbdpgcaljkaaigfcomhidmneffjjjfgp" target="_blank" rel="noopener">配布ページ（Chrome ウェブストア）</a>
++  </div>
++  <div class="ext-card">
++    <h3>Chrome Info Viewer <span class="ext-badge">標準搭載</span></h3>
++    <p class="desc">ブラウザの情報を確認するための、Lumo の作者による拡張機能です。Lumo には最初から入っています。</p>
++  </div>
++  <div class="ext-card">
++    <h3>SponsorBlock</h3>
++    <p class="desc">YouTube 動画のスポンサー部分などを自動でスキップします。</p>
++    <a href="https://chromewebstore.google.com/detail/mnjggcdmjocbbbhaepdhchncahnbgone" target="_blank" rel="noopener">配布ページ（Chrome ウェブストア）</a>
++  </div>
++  <div class="ext-card">
++    <h3>Bitwarden</h3>
++    <p class="desc">オープンソースのパスワードマネージャーです。無料プランでもデバイス数に制限なく使えます。</p>
++    <a href="https://chromewebstore.google.com/detail/nngceckbapebfimnlniiiahkandclblb" target="_blank" rel="noopener">配布ページ（Chrome ウェブストア）</a>
++  </div>
++  <div class="ext-card">
++    <h3>Dark Reader</h3>
++    <p class="desc">あらゆるサイトにダークテーマを適用します。</p>
++    <a href="https://chromewebstore.google.com/detail/eimadpbcbfnmbkopoojfekhnkhdbieeh" target="_blank" rel="noopener">配布ページ（Chrome ウェブストア）</a>
++  </div>
++</section>
+ <script src="tools.js"></script>
+ </body>
+ </html>

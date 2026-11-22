@@ -1,0 +1,47 @@
+diff --git a/chrome/browser/ui/views/toolbar/restore_tab_button.cc b/chrome/browser/ui/views/toolbar/restore_tab_button.cc
+index de888fb..31920be 100644
+--- a/chrome/browser/ui/views/toolbar/restore_tab_button.cc
++++ b/chrome/browser/ui/views/toolbar/restore_tab_button.cc
+@@ -40,15 +40,19 @@ RestoreTabButton::~RestoreTabButton() = default;
+ void RestoreTabButton::ButtonPressed() {
+   ExternalProtocolHandler::PermitLaunchUrl();
+ 
+-  int command;
++  int command = IDC_RESTORE_TAB;
+   // See chrome/app/chrome_command_ids.h for all possible commands
+   if (base::CommandLine::ForCurrentProcess()->HasSwitch("button-command")) {
+     const std::string button_command =
+         base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("button-command");
+-    command = base::StringToInt(button_command, &command);
+-    LOG(ERROR) << command;
+-  } else {
+-    command = IDC_RESTORE_TAB;
++    // Lumo (patch 0034): StringToInt writes the parsed value into
++    // `command` and returns only a success flag; the upstream code
++    // assigned that flag back into `command`, clobbering the parsed
++    // value with 0 or 1. Keep the parsed value, and keep the default
++    // command when parsing fails.
++    if (!base::StringToInt(button_command, &command)) {
++      command = IDC_RESTORE_TAB;
++    }
+   }
+   const int command_to_exec = command;
+ 
+diff --git a/ui/base/ui_base_features.cc b/ui/base/ui_base_features.cc
+index c543ba8..3166f29 100644
+--- a/ui/base/ui_base_features.cc
++++ b/ui/base/ui_base_features.cc
+@@ -424,9 +424,12 @@ bool IsThorium2024() {
+   return base::FeatureList::IsEnabled(kThorium2024) || th24_flag;
+ }
+ 
++// Lumo (patch 0034): the "restore closed tab" toolbar button is on
++// by default (feature list #28). It can still be turned off from
++// chrome://flags (restore-tab-button) or Lumo Labs.
+ BASE_FEATURE(kRestoreTabButton,
+              "RestoreTabButton",
+-             base::FEATURE_DISABLED_BY_DEFAULT);
++             base::FEATURE_ENABLED_BY_DEFAULT);
+ 
+ bool EnableRestoreTabButton() {
+   return base::FeatureList::IsEnabled(kRestoreTabButton);

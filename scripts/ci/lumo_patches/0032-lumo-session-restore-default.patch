@@ -1,0 +1,19 @@
+diff --git a/chrome/browser/ui/ui_features.cc b/chrome/browser/ui/ui_features.cc
+index 664fba1..a495263 100644
+--- a/chrome/browser/ui/ui_features.cc
++++ b/chrome/browser/ui/ui_features.cc
+@@ -455,11 +455,13 @@ BASE_FEATURE(kRespectShouldTriggerSessionRestoreOnDesktop,
+ 
+ BASE_FEATURE(kSessionRestoreInfobar, base::FEATURE_ENABLED_BY_DEFAULT);
+ 
++// Lumo (patch 0032): "On startup" defaults to "Continue where you
++// left off" (feature list #31).
+ BASE_FEATURE_PARAM(bool,
+                    kSetDefaultToContinueSession,
+                    &kSessionRestoreInfobar,
+                    "continue_session",
+-                   false);
++                   true);
+ #endif
+ 
+ #if !BUILDFLAG(IS_ANDROID)

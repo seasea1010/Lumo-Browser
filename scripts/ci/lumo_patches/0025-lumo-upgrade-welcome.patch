@@ -66,7 +66,7 @@ index 0000000..447f903
 +  }
 +  // Record at decision time, like whats_new::ShouldShowForState:
 +  // the welcome is offered once per build, even across relaunches
-+  // where the tab might never have been looked at.
++  // where the window might never have been looked at.
 +  prefs->SetInteger(kWelcomeShownBuildNumberPref, embedded);
 +  return true;
 +}
@@ -122,7 +122,7 @@ index 0000000..7c2d143
 +// recorded in the profile. The current build number is recorded as
 +// a side effect of returning true (mirroring
 +// whats_new::ShouldShowForState), so the flow is offered once per
-+// build even if the browser is closed before the tab is seen.
++// build even if the browser is closed before the window is seen.
 +// Always false when no build number was embedded (0).
 +bool ShouldShowUpgradeWelcome(Profile* profile);
 +
@@ -167,27 +167,245 @@ index c19d4ba..3ca0ae3 100644
  #include "chrome/browser/prefs/session_startup_pref.h"
  #include "chrome/browser/profiles/keep_alive/profile_keep_alive_types.h"
  #include "chrome/browser/profiles/keep_alive/scoped_profile_keep_alive.h"
-@@ -681,6 +682,23 @@ StartupBrowserCreatorImpl::DetermineStartupTabs(
+@@ -681,6 +682,18 @@ StartupBrowserCreatorImpl::DetermineStartupTabs(
        }
      }
  
-+    // Lumo (patch 0025): after an upgrade to a newer Lumo build,
-+    // show the welcome flow (chrome://intro, patch 0010) once for
-+    // existing profiles, as the first startup tab. The decision is
-+    // keyed on the CI build number embedded at build time versus
-+    // the build number recorded in the profile, because the
-+    // product version string is identical across Lumo builds.
-+    // New profiles only record the current build number: they see
-+    // the welcome flow in the first-run experience itself, and
-+    // must not get it a second time as an upgrade tab.
++    // Lumo (patch 0025): new profiles record the current build
++    // number here: they see the welcome flow in the first-run
++    // experience itself, and must not get it a second time as an
++    // upgrade. Existing profiles are handled earlier, in
++    // StartupBrowserCreator::LaunchBrowser, which shows the
++    // welcome flow in the profile picker's dedicated window
++    // before any browser window opens (never as a startup tab:
++    // hosted in a tab, the intro's sign-in buttons are dead).
 +    if (profile_->IsNewProfile()) {
 +      lumo::RecordWelcomeShownBuildNumber(profile_);
-+    } else if (!has_first_run_experience && reset_tabs.empty() &&
-+               lumo::ShouldShowUpgradeWelcome(profile_)) {
-+      tabs.insert(tabs.begin(),
-+                  StartupTab(GURL(chrome::kChromeUIIntroURL)));
 +    }
 +
      // If the user has set the preference indicating URLs to show on opening,
      // read and add those.
      StartupTabs prefs_tabs =
+diff --git a/chrome/browser/ui/profiles/profile_picker.h b/chrome/browser/ui/profiles/profile_picker.h
+--- a/chrome/browser/ui/profiles/profile_picker.h
++++ b/chrome/browser/ui/profiles/profile_picker.h
+@@ -173,6 +173,20 @@
+     static Params ForFirstRun(const base::FilePath& profile_path,
+                               FirstRunExitedCallback first_run_exited_callback);
+ 
++    // Lumo (patch 0025): like ForFirstRun(), but the flow is the
++    // upgrade welcome for an existing profile, not a first run.
++    // The hosting flow controller shows the intro step directly
++    // (no FRE welcome step, no first-run skip reasons), because
++    // the profile is already set up by definition. See
++    // `lumo_upgrade_welcome()`.
++    static Params ForLumoUpgradeWelcome(
++        const base::FilePath& profile_path,
++        FirstRunExitedCallback first_run_exited_callback);
++
++    // Whether this params object asks for the Lumo upgrade
++    // welcome flow (see ForLumoUpgradeWelcome()).
++    bool lumo_upgrade_welcome() const { return lumo_upgrade_welcome_; }
++
+     // Builds parameter with the `kForGlicManager` entry point.
+     //
+     // `picked_profile_callback` will be called when a Profile is selected
+@@ -220,6 +234,7 @@
+     GURL on_select_profile_target_url_;
+     base::FilePath profile_path_;
+     FirstRunExitedCallback first_run_exited_callback_;
++    bool lumo_upgrade_welcome_ = false;
+     base::OnceCallback<void(Profile*)> picked_profile_callback_;
+   };
+ 
+diff --git a/chrome/browser/ui/profiles/profile_picker.cc b/chrome/browser/ui/profiles/profile_picker.cc
+--- a/chrome/browser/ui/profiles/profile_picker.cc
++++ b/chrome/browser/ui/profiles/profile_picker.cc
+@@ -117,6 +117,16 @@
+ }
+ 
+ // static
++ProfilePicker::Params ProfilePicker::Params::ForLumoUpgradeWelcome(
++    const base::FilePath& profile_path,
++    FirstRunExitedCallback first_run_exited_callback) {
++  Params params = ForFirstRun(profile_path,
++                              std::move(first_run_exited_callback));
++  params.lumo_upgrade_welcome_ = true;
++  return params;
++}
++
++// static
+ ProfilePicker::Params ProfilePicker::Params::ForGlicManager(
+     base::OnceCallback<void(Profile*)> picked_profile_callback) {
+   Params params(EntryPoint::kGlicManager, GetPickerProfilePath());
+diff --git a/chrome/browser/ui/views/profiles/profile_picker_view.cc b/chrome/browser/ui/views/profiles/profile_picker_view.cc
+--- a/chrome/browser/ui/views/profiles/profile_picker_view.cc
++++ b/chrome/browser/ui/views/profiles/profile_picker_view.cc
+@@ -719,7 +719,8 @@
+                        base::Unretained(&params_));
+     return std::make_unique<FirstRunFlowController>(
+         /*host=*/this, std::move(clear_host_callback), picker_profile,
+-        std::move(first_run_exited_callback));
++        std::move(first_run_exited_callback),
++        params_.lumo_upgrade_welcome());
+   }
+ 
+   if (params_.entry_point() == ProfilePicker::EntryPoint::kGlicManager) {
+diff --git a/chrome/browser/ui/views/profiles/first_run_flow_controller.h b/chrome/browser/ui/views/profiles/first_run_flow_controller.h
+--- a/chrome/browser/ui/views/profiles/first_run_flow_controller.h
++++ b/chrome/browser/ui/views/profiles/first_run_flow_controller.h
+@@ -75,7 +75,10 @@
+       ProfilePickerWebContentsHost* host,
+       ClearHostClosure clear_host_callback,
+       Profile* profile,
+-      ProfilePicker::FirstRunExitedCallback first_run_exited_callback);
++      ProfilePicker::FirstRunExitedCallback first_run_exited_callback,
++      // Lumo (patch 0025): true when this flow hosts the upgrade
++      // welcome for an existing profile rather than a first run.
++      bool lumo_upgrade_welcome = false);
+   ~FirstRunFlowController() override;
+ 
+   // ProfileManagementFlowControllerImpl:
+@@ -141,6 +144,8 @@
+   void RegisterAndSwitchToIntroStep(bool effects_button_shown_by_default);
+ 
+   const raw_ptr<Profile> profile_;
++  // Lumo (patch 0025): see the constructor.
++  bool lumo_upgrade_welcome_ = false;
+   ProfilePicker::FirstRunExitedCallback first_run_exited_callback_;
+   ProfilePicker::FirstRunFinishReason finish_reason_ =
+       ProfilePicker::FirstRunFinishReason::kFinishedFlow;
+diff --git a/chrome/browser/ui/views/profiles/first_run_flow_controller.cc b/chrome/browser/ui/views/profiles/first_run_flow_controller.cc
+--- a/chrome/browser/ui/views/profiles/first_run_flow_controller.cc
++++ b/chrome/browser/ui/views/profiles/first_run_flow_controller.cc
+@@ -906,11 +906,13 @@
+     ProfilePickerWebContentsHost* host,
+     ClearHostClosure clear_host_callback,
+     Profile* profile,
+-    ProfilePicker::FirstRunExitedCallback first_run_exited_callback)
++    ProfilePicker::FirstRunExitedCallback first_run_exited_callback,
++    bool lumo_upgrade_welcome)
+     : ProfileManagementFlowControllerImpl(host,
+                                           std::move(clear_host_callback),
+                                           /*flow_type_string=*/"FREFlow"),
+       profile_(profile),
++      lumo_upgrade_welcome_(lumo_upgrade_welcome),
+       first_run_exited_callback_(std::move(first_run_exited_callback)) {
+   DCHECK(profile_);
+   DCHECK(first_run_exited_callback_);
+@@ -1029,7 +1031,14 @@
+     }
+   }
+ 
+-  if (switches::IsPreFirstRunDesktopRefreshEnabled()) {
++  if (lumo_upgrade_welcome_) {
++    // Lumo (patch 0025): the upgrade welcome goes straight to
++    // the intro step, which carries the Lumo welcome and credits
++    // screens (patch 0010). The FRE welcome step does not apply:
++    // the profile is already set up by definition.
++    RegisterAndSwitchToIntroStep(
++        /*effects_button_shown_by_default=*/sounds_manager_ != nullptr);
++  } else if (switches::IsPreFirstRunDesktopRefreshEnabled()) {
+     RegisterStep(
+         Step::kWelcome,
+         std::make_unique<WelcomeStepController>(
+@@ -1080,12 +1089,20 @@
+ }
+ 
+ void FirstRunFlowController::OnWelcomeCompleted() {
+-  if (const std::optional<ProfilePicker::FirstRunFinishReason> skip_reason =
+-          ProfilePicker::ComputeFirstRunSkipReason(*profile_);
+-      skip_reason.has_value()) {
+-    finish_reason_ = *skip_reason;
+-    FinishFlowAndRunInBrowser(profile_, PostHostClearedCallback());
+-    return;
++  // Lumo (patch 0025): in the upgrade welcome the profile is
++  // already set up, so the first-run skip reasons (which include
++  // "profile already set up") must not cut the flow short before
++  // the intro step. Init() skips the welcome step entirely in
++  // this mode; this guard keeps the invariant if that changes.
++  if (!lumo_upgrade_welcome_) {
++    if (const std::optional<ProfilePicker::FirstRunFinishReason>
++            skip_reason =
++                ProfilePicker::ComputeFirstRunSkipReason(*profile_);
++        skip_reason.has_value()) {
++      finish_reason_ = *skip_reason;
++      FinishFlowAndRunInBrowser(profile_, PostHostClearedCallback());
++      return;
++    }
+   }
+   RegisterAndSwitchToIntroStep(
+       /*effects_button_shown_by_default=*/sounds_manager_ != nullptr);
+diff --git a/chrome/browser/ui/startup/startup_browser_creator.cc b/chrome/browser/ui/startup/startup_browser_creator.cc
+--- a/chrome/browser/ui/startup/startup_browser_creator.cc
++++ b/chrome/browser/ui/startup/startup_browser_creator.cc
+@@ -119,6 +119,7 @@
+ #endif
+ 
+ #if BUILDFLAG(ENABLE_DICE_SUPPORT)
++#include "chrome/browser/lumo/lumo_upgrade_welcome.h"
+ #include "chrome/browser/ui/startup/first_run_service.h"
+ #endif
+ 
+@@ -482,6 +483,35 @@
+   browser_creator.AddFirstRunTabs(first_run_urls);
+   browser_creator.LaunchBrowser(command_line, profile, cur_dir, process_startup,
+                                 is_first_run, /*restore_tabbed_browser=*/true);
++}
++
++// Lumo (patch 0025): resume callback for the upgrade welcome,
++// mirroring FirstRunService::OnFirstRunHasExited's status
++// mapping: the browser launch proceeds when the flow completed
++// (or finished with an intent to quit at the end), and is
++// abandoned when the user closed the welcome window or aborted
++// the flow — no window opens then and the process exits,
++// exactly like the FRE. ShouldShowUpgradeWelcome() recorded the
++// build number when the welcome was offered, so the recursive
++// LaunchBrowser() call takes the normal path and cannot loop.
++void OnLumoUpgradeWelcomeExited(
++    const base::CommandLine& command_line,
++    Profile* profile,
++    const base::FilePath& cur_dir,
++    const std::vector<GURL>& first_run_urls,
++    chrome::startup::IsProcessStartup process_startup,
++    chrome::startup::IsFirstRun is_first_run,
++    ProfilePicker::FirstRunExitStatus status,
++    ProfilePicker::FirstRunFinishReason finish_reason) {
++  if (status != ProfilePicker::FirstRunExitStatus::kCompleted &&
++      status != ProfilePicker::FirstRunExitStatus::kQuitAtEnd) {
++    return;
++  }
++  StartupBrowserCreator browser_creator;
++  browser_creator.AddFirstRunTabs(first_run_urls);
++  browser_creator.LaunchBrowser(command_line, profile, cur_dir,
++                                process_startup, is_first_run,
++                                /*restore_tabbed_browser=*/true);
+ }
+ #endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
+ 
+@@ -740,6 +770,25 @@
+       fre_service->OpenFirstRunIfNeeded(base::BindOnce(
+           &OpenNewWindowForFirstRun, command_line, profile, cur_dir,
+           first_run_tabs_, process_startup, is_first_run));
++      return;
++    }
++
++    // Lumo (patch 0025): after an upgrade to a newer Lumo build,
++    // show the welcome flow once for existing profiles — in the
++    // profile picker's dedicated window, hosted by
++    // FirstRunFlowController, and let
++    // `OnLumoUpgradeWelcomeExited()` handle the browser launch,
++    // exactly like the FRE above. The welcome is never a startup
++    // tab: hosted in a tab, the intro's sign-in buttons are dead
++    // (nothing wires the sign-in choice callback outside the
++    // picker host), which build #29's real-machine check proved.
++    if (!profile->IsNewProfile() && !profile->IsOffTheRecord() &&
++        lumo::ShouldShowUpgradeWelcome(profile)) {
++      ProfilePicker::Show(ProfilePicker::Params::ForLumoUpgradeWelcome(
++          profile->GetPath(),
++          base::BindOnce(&OnLumoUpgradeWelcomeExited, command_line,
++                         profile, cur_dir, first_run_tabs_,
++                         process_startup, is_first_run)));
+       return;
+     }
+ #endif

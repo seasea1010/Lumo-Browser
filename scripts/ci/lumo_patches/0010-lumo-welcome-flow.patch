@@ -37,7 +37,7 @@ diff --git a/chrome/browser/resources/intro/intro_app.css b/chrome/browser/resou
 index 3e604de..e1becf3 100644
 --- a/chrome/browser/resources/intro/intro_app.css
 +++ b/chrome/browser/resources/intro/intro_app.css
-@@ -25,3 +25,18 @@ cr-view-manager {
+@@ -25,3 +25,19 @@ cr-view-manager {
    transform: translate(-50%, -50%);
    width: 160px;
  }
@@ -47,6 +47,7 @@ index 3e604de..e1becf3 100644
 +  align-items: center;
 +  display: flex;
 +  flex-direction: column;
++  gap: 1.5rem;
 +  height: 100%;
 +  justify-content: center;
 +  text-align: center;
@@ -166,16 +167,21 @@ diff --git a/chrome/browser/resources/intro/sign_in_promo_refresh.css b/chrome/b
 index b8d20a7..603f47f 100644
 --- a/chrome/browser/resources/intro/sign_in_promo_refresh.css
 +++ b/chrome/browser/resources/intro/sign_in_promo_refresh.css
-@@ -371,3 +371,25 @@ h2 {
+@@ -371,3 +371,43 @@ h2 {
    }
    </if>
  }
 +
-+/* Lumo: welcome-flow screens (Lumo patch 0010). */
++/* Lumo: welcome-flow screens (Lumo patch 0010). The gap keeps
++   the (padded) product logo, the heading and the button from
++   touching; the credits screen gets wider spacing and an
++   underlined heading so it does not read as a second copy of
++   the welcome screen when the flow passes through it. */
 +.lumo-welcome {
 +  align-items: center;
 +  display: flex;
 +  flex-direction: column;
++  gap: 1.5rem;
 +  text-align: center;
 +}
 +
@@ -191,6 +197,19 @@ index b8d20a7..603f47f 100644
 +  font-size: 13px;
 +  line-height: 20px;
 +  max-width: 520px;
++}
++
++.lumo-credits p {
++  margin: 8px 0;
++}
++
++.lumo-credits-screen {
++  gap: 2rem;
++}
++
++.lumo-credits-screen .title {
++  border-bottom: 2px solid var(--cr-fallback-color-primary);
++  padding-bottom: 12px;
 +}
 diff --git a/chrome/browser/resources/intro/sign_in_promo_refresh.html.ts b/chrome/browser/resources/intro/sign_in_promo_refresh.html.ts
 index 1b98a07..80e9833 100644
@@ -217,7 +236,7 @@ index 1b98a07..80e9833 100644
 +</div>
 +` : ''}
 +${this.lumoStep_ === 1 ? html`
-+<div class="lumo-welcome">
++<div class="lumo-welcome lumo-credits-screen">
 +  <h1 class="title fade-in">$i18n{lumoCreditsHeading}</h1>
 +  <div class="lumo-credits fade-in">
 +    <p>$i18n{lumoCreditsCopyright}</p>
