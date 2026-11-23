@@ -1,0 +1,720 @@
+diff --git a/chrome/browser/ui/actions/chrome_action_id.h b/chrome/browser/ui/actions/chrome_action_id.h
+index ed48aa3..23ccb21 100644
+--- a/chrome/browser/ui/actions/chrome_action_id.h
++++ b/chrome/browser/ui/actions/chrome_action_id.h
+@@ -1,4 +1,5 @@
+   E(kActionSidePanelShowTabsFromOtherDevices, \
+-    IDC_SHOW_TABS_FROM_OTHER_DEVICES_SIDE_PANEL)
++    IDC_SHOW_TABS_FROM_OTHER_DEVICES_SIDE_PANEL) \
++  E(kActionSidePanelShowLumoWebPanel)
+ 
+ #define TOOLBAR_PINNABLE_ACTION_IDS \
+diff --git a/chrome/browser/ui/browser_actions.cc b/chrome/browser/ui/browser_actions.cc
+index 33b43f9..766e40b 100644
+--- a/chrome/browser/ui/browser_actions.cc
++++ b/chrome/browser/ui/browser_actions.cc
+@@ -1,5 +1,7 @@
+ #include "base/check_op.h"
+ 
++#include "base/feature_list.h"
++
+ #include "base/functional/bind.h"
+ 
+   if (HistorySidePanelCoordinator::IsSupported()) {
+@@ -12,3 +14,16 @@
+                         kActionSidePanelShowHistory, bwi, true)
+             .Build());
+   }
++
++  // Lumo (patch 0038): action item for the sidebar web panel. The
++  // entry itself is registered in SidePanelHelper only while the
++  // kLumoSidebar feature is enabled.
++  if (base::FeatureList::IsEnabled(features::kLumoSidebar)) {
++    root_action_item_->AddChild(
++        SidePanelAction(SidePanelEntryId::kLumoWebPanel,
++                        IDS_LUMO_SIDEBAR_WEB_PANEL_TITLE,
++                        IDS_LUMO_SIDEBAR_WEB_PANEL_TITLE,
++                        vector_icons::kGlobeIcon,
++                        kActionSidePanelShowLumoWebPanel, bwi, true)
++            .Build());
++  }
+diff --git a/chrome/browser/ui/side_panel/side_panel_entry_id.h b/chrome/browser/ui/side_panel/side_panel_entry_id.h
+index 3b85738..a23b1dd 100644
+--- a/chrome/browser/ui/side_panel/side_panel_entry_id.h
++++ b/chrome/browser/ui/side_panel/side_panel_entry_id.h
+@@ -8,6 +8,7 @@
+   V(kFeed, kActionSidePanelShowFeed, "Feed")                                  \
+   V(kWebView, std::nullopt, "WebView")                                        \
+   V(kContextualTasks, kActionSidePanelShowContextualTasks, "ContextualTasks") \
++  V(kLumoWebPanel, kActionSidePanelShowLumoWebPanel, "LumoWebPanel")          \
+   /* Contextual Entries */                                                    \
+   V(kSideSearch, kActionSidePanelShowSideSearch, "SideSearch")                \
+   V(kLens, kActionSidePanelShowLens, "Lens")                                  \
+diff --git a/chrome/browser/ui/views/frame/browser_view.cc b/chrome/browser/ui/views/frame/browser_view.cc
+index 7c8572b..1907b08 100644
+--- a/chrome/browser/ui/views/frame/browser_view.cc
++++ b/chrome/browser/ui/views/frame/browser_view.cc
+@@ -1,12 +1,41 @@
++#include "chrome/browser/ui/views/side_panel/lumo/lumo_sidebar_bar.h"
++
+ #include "chrome/browser/ui/views/side_panel/side_panel.h"
+ 
+ #include "chrome/browser/ui/views/side_panel/side_panel_animation_content_view.h"
+ 
+   lumo_dev_stage_label_ = AddChildView(std::move(lumo_dev_stage_label));
+ 
++  // Lumo: Floorp-style sidebar icon bar (patch 0038). Created only
++  // while the kLumoSidebar experiment is enabled and only for
++  // normal browser windows. Layout() pins it to the left edge of
++  // the contents area; like the label above it paints to its own
++  // layer so it stays visible above the web contents.
++  if (base::FeatureList::IsEnabled(features::kLumoSidebar) &&
++      browser->GetType() == BrowserWindowInterface::Type::TYPE_NORMAL) {
++    lumo_sidebar_bar_ = AddChildView(
++        std::make_unique<lumo_sidebar::LumoSidebarBar>(browser));
++  }
++
+ #if BUILDFLAG(IS_WIN)
+ 
+     startup_layout_state_ = StartupLayoutState::kDeferring;
+   }
+ 
++  // Lumo: keep the sidebar icon bar pinned to the left edge of the
++  // contents area (patch 0038). The bar is an overlay and does not
++  // shrink the web contents. The development-stage label below is
++  // re-fronted after this block, so it stays on top of the bar's
++  // empty top strip.
++  if (lumo_sidebar_bar_ && multi_contents_view_) {
++    const gfx::Rect contents_bounds = multi_contents_view_->bounds();
++    const int bar_width =
++        GetProfile()->GetPrefs()->GetBoolean(
++            prefs::kLumoSidebarBarCollapsed)
++            ? lumo_sidebar::LumoSidebarBar::kCollapsedWidth
++            : lumo_sidebar::LumoSidebarBar::kExpandedWidth;
++    lumo_sidebar_bar_->SetBounds(contents_bounds.x(), contents_bounds.y(),
++                                 bar_width, contents_bounds.height());
++  }
++
+   // Lumo: keep the development-stage label pinned to the top-left
+diff --git a/chrome/browser/ui/views/frame/browser_view.h b/chrome/browser/ui/views/frame/browser_view.h
+index bf00259..f89f690 100644
+--- a/chrome/browser/ui/views/frame/browser_view.h
++++ b/chrome/browser/ui/views/frame/browser_view.h
+@@ -1,3 +1,9 @@
+   raw_ptr<views::Label> lumo_dev_stage_label_ = nullptr;
+ 
++  // Lumo: Floorp-style sidebar icon bar (patch 0038). Created in
++  // the constructor while the kLumoSidebar experiment is enabled;
++  // Layout() keeps it pinned to the left edge of the contents area.
++  // Stored as a plain View; the concrete type lives in the .cc.
++  raw_ptr<views::View> lumo_sidebar_bar_ = nullptr;
++
+   // The view that contains the tabstrip, new tab button, and grab handle space.
+diff --git a/chrome/browser/ui/views/side_panel/BUILD.gn b/chrome/browser/ui/views/side_panel/BUILD.gn
+index 2f23f23..c890a66 100644
+--- a/chrome/browser/ui/views/side_panel/BUILD.gn
++++ b/chrome/browser/ui/views/side_panel/BUILD.gn
+@@ -1,2 +1,8 @@
+     "history_clusters/history_clusters_tab_helper.h",
++    "lumo/lumo_sidebar_bar.cc",
++    "lumo/lumo_sidebar_bar.h",
++    "lumo/lumo_sidebar_entries.cc",
++    "lumo/lumo_sidebar_entries.h",
++    "lumo/lumo_web_panel_view.cc",
++    "lumo/lumo_web_panel_view.h",
+     "reading_list/read_later_side_panel_web_view.cc",
+diff --git a/chrome/browser/ui/views/side_panel/lumo/lumo_sidebar_bar.cc b/chrome/browser/ui/views/side_panel/lumo/lumo_sidebar_bar.cc
+new file mode 100644
+index 0000000..0b3da5c
+--- /dev/null
++++ b/chrome/browser/ui/views/side_panel/lumo/lumo_sidebar_bar.cc
+@@ -0,0 +1,263 @@
++// Copyright 2026 seasea1010
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/ui/views/side_panel/lumo/lumo_sidebar_bar.h"
++
++#include <memory>
++#include <string>
++#include <utility>
++
++#include "base/functional/bind.h"
++#include "base/strings/utf_string_conversions.h"
++#include "base/task/sequenced_task_runner.h"
++#include "base/values.h"
++#include "chrome/app/vector_icons/vector_icons.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/chrome_pages.h"
++#include "chrome/browser/ui/color/chrome_color_id.h"
++#include "chrome/browser/ui/side_panel/side_panel_entry.h"
++#include "chrome/browser/ui/side_panel/side_panel_entry_id.h"
++#include "chrome/browser/ui/side_panel/side_panel_registry.h"
++#include "chrome/browser/ui/side_panel/side_panel_ui.h"
++#include "chrome/browser/ui/views/side_panel/side_panel_helper.h"
++#include "chrome/common/pref_names.h"
++#include "chrome/grit/generated_resources.h"
++#include "components/prefs/pref_service.h"
++#include "ui/actions/action_item.h"
++#include "ui/base/l10n/l10n_util.h"
++#include "ui/base/models/image_model.h"
++#include "ui/gfx/geometry/insets.h"
++#include "ui/gfx/text_constants.h"
++#include "ui/views/background.h"
++#include "ui/views/controls/button/image_button.h"
++#include "ui/views/controls/button/image_button_factory.h"
++#include "ui/views/controls/button/label_button.h"
++#include "ui/views/controls/separator.h"
++#include "ui/views/layout/box_layout.h"
++#include "ui/views/vector_icons.h"
++
++namespace lumo_sidebar {
++
++namespace {
++
++constexpr int kIconSize = 20;
++constexpr int kButtonSpacing = 4;
++
++std::unique_ptr<views::ImageButton> MakeIconButton(
++    views::Button::PressedCallback callback,
++    const gfx::VectorIcon& icon,
++    const std::u16string& tooltip) {
++  auto button = views::CreateVectorImageButtonWithNativeTheme(
++      std::move(callback), icon, kIconSize, kColorToolbarButtonIcon,
++      kColorToolbarButtonIconInactive);
++  button->SetTooltipText(tooltip);
++  return button;
++}
++
++}  // namespace
++
++LumoSidebarBar::LumoSidebarBar(BrowserWindowInterface* browser)
++    : browser_(browser), profile_(browser->GetProfile()) {
++  auto* layout = SetLayoutManager(std::make_unique<views::BoxLayout>(
++      views::BoxLayout::Orientation::kVertical,
++      gfx::Insets::TLBR(kTopInset, 6, 6, 6), kButtonSpacing));
++  layout->set_main_axis_alignment(
++      views::BoxLayout::MainAxisAlignment::kStart);
++  layout->set_cross_axis_alignment(
++      views::BoxLayout::CrossAxisAlignment::kCenter);
++  SetBackground(views::CreateThemedSolidBackground(kColorToolbar));
++  // The bar overlaps the web contents, so it must paint to its own
++  // layer to stay visible above the contents layer (the same reason
++  // the patch 0008 label paints to a layer).
++  SetPaintToLayer();
++  layer()->SetFillsBoundsOpaquely(false);
++  layer()->SetName("Lumo Sidebar Bar");
++}
++
++LumoSidebarBar::~LumoSidebarBar() = default;
++
++void LumoSidebarBar::AddedToWidget() {
++  views::View::AddedToWidget();
++  if (buttons_built_) {
++    return;
++  }
++  buttons_built_ = true;
++  // The BrowserWindowFeatures (BrowserActions, SidePanelRegistry,
++  // ...) may not be initialized yet while the window is being
++  // created, so build the buttons on the next task.
++  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
++      FROM_HERE, base::BindOnce(&LumoSidebarBar::BuildButtons,
++                                weak_factory_.GetWeakPtr()));
++}
++
++void LumoSidebarBar::BuildButtons() {
++  if (!browser_ || !profile_) {
++    return;
++  }
++
++  AddEntryButton(SidePanelEntryKey(SidePanelEntryId::kBookmarks));
++  AddEntryButton(SidePanelEntryKey(SidePanelEntryId::kHistory));
++  AddEntryButton(SidePanelEntryKey(SidePanelEntryId::kReadingList));
++  AddEntryButton(SidePanelEntryKey(SidePanelEntryId::kLumoWebPanel));
++
++  AddSeparator();
++
++  // Web panel presets from the pref (name/URL pairs).
++  const base::ListValue& panels =
++      profile_->GetPrefs()->GetList(prefs::kLumoSidebarWebPanels);
++  for (const base::Value& panel : panels) {
++    if (!panel.is_dict()) {
++      continue;
++    }
++    const base::DictValue& dict = panel.GetDict();
++    const std::string* name = dict.FindString("name");
++    const std::string* url = dict.FindString("url");
++    if (name && url && !name->empty() && !url->empty()) {
++      AddWebPanelPresetButton(*name, *url);
++    }
++  }
++
++  AddSeparator();
++
++  AddUtilityButton(vector_icons::kDownloadIcon,
++                   l10n_util::GetStringUTF16(IDS_LUMO_SIDEBAR_DOWNLOADS),
++                   "chrome://downloads/");
++  AddUtilityButton(vector_icons::kPasswordIcon,
++                   l10n_util::GetStringUTF16(IDS_LUMO_SIDEBAR_PASSWORDS),
++                   "chrome://password-manager/");
++  AddUtilityButton(views::kMenuIcon,
++                   l10n_util::GetStringUTF16(IDS_LUMO_SIDEBAR_TOOLS),
++                   "chrome://tools/");
++
++  // Extension side panel entries registered for this window.
++  // Extensions enabled later appear from the next window on.
++  if (SidePanelRegistry* registry = SidePanelRegistry::From(browser_)) {
++    for (const auto& entry : registry->entries()) {
++      if (entry->key().id() == SidePanelEntryId::kExtension) {
++        AddEntryButton(entry->key());
++      }
++    }
++  }
++
++  // Flexible spacer pushes the bottom controls down.
++  auto spacer = std::make_unique<views::View>();
++  views::View* spacer_ptr = AddChildView(std::move(spacer));
++  static_cast<views::BoxLayout*>(layout_manager())
++      ->SetFlexForView(spacer_ptr, 1);
++  collapsible_children_.push_back(spacer_ptr);
++
++  auto collapse = std::make_unique<views::LabelButton>(
++      base::BindRepeating(&LumoSidebarBar::OnCollapseToggle,
++                          base::Unretained(this)),
++      u"\u2039");
++  collapse_button_ = AddChildView(std::move(collapse));
++
++  collapsible_children_.push_back(AddChildView(MakeIconButton(
++      base::BindRepeating(&LumoSidebarBar::OnSettingsPressed,
++                          base::Unretained(this)),
++      vector_icons::kSettingsIcon,
++      l10n_util::GetStringUTF16(IDS_LUMO_SIDEBAR_SETTINGS))));
++
++  RefreshCollapsedState();
++  InvalidateLayout();
++}
++
++void LumoSidebarBar::AddEntryButton(SidePanelEntryKey key) {
++  actions::ActionItem* item = SidePanelHelper::GetActionItem(browser_, key);
++  if (!item) {
++    return;
++  }
++  ui::ImageModel image = item->GetImage();
++  if (!image.IsVectorIcon()) {
++    return;
++  }
++  const gfx::VectorIcon* icon = image.GetVectorIcon().vector_icon();
++  if (!icon) {
++    return;
++  }
++  collapsible_children_.push_back(AddChildView(MakeIconButton(
++      base::BindRepeating(&LumoSidebarBar::ToggleEntry,
++                          base::Unretained(this), key),
++      *icon, item->GetText())));
++}
++
++void LumoSidebarBar::AddWebPanelPresetButton(const std::string& name,
++                                             const std::string& url) {
++  // Preset buttons show the first letters of the site name, like a
++  // favicon fallback tile, instead of a fake icon.
++  std::string initials = name.substr(0, name.size() >= 2 ? 2 : 1);
++  auto button = std::make_unique<views::LabelButton>(
++      base::BindRepeating(&LumoSidebarBar::ShowWebPanel,
++                          base::Unretained(this), url),
++      base::UTF8ToUTF16(initials));
++  button->SetTooltipText(base::UTF8ToUTF16(name));
++  button->SetHorizontalAlignment(gfx::ALIGN_CENTER);
++  collapsible_children_.push_back(AddChildView(std::move(button)));
++}
++
++void LumoSidebarBar::AddUtilityButton(const gfx::VectorIcon& icon,
++                                       const std::u16string& tooltip,
++                                       const std::string& url) {
++  collapsible_children_.push_back(AddChildView(MakeIconButton(
++      base::BindRepeating(&LumoSidebarBar::ShowWebPanel,
++                          base::Unretained(this), url),
++      icon, tooltip)));
++}
++
++void LumoSidebarBar::AddSeparator() {
++  auto separator = std::make_unique<views::Separator>();
++  separator->SetPreferredLength(kExpandedWidth - 16);
++  collapsible_children_.push_back(AddChildView(std::move(separator)));
++}
++
++void LumoSidebarBar::ShowWebPanel(const std::string& url) {
++  profile_->GetPrefs()->SetString(prefs::kLumoSidebarWebPanelUrl, url);
++  if (auto* side_panel_ui = SidePanelUI::From(browser_)) {
++    side_panel_ui->Show(SidePanelEntryId::kLumoWebPanel,
++                        SidePanelOpenTrigger::kToolbarButton);
++  }
++}
++
++void LumoSidebarBar::ToggleEntry(SidePanelEntryKey key) {
++  if (auto* side_panel_ui = SidePanelUI::From(browser_)) {
++    side_panel_ui->Toggle(key, SidePanelOpenTrigger::kToolbarButton);
++  }
++}
++
++void LumoSidebarBar::OnCollapseToggle() {
++  if (!profile_) {
++    return;
++  }
++  PrefService* prefs = profile_->GetPrefs();
++  prefs->SetBoolean(prefs::kLumoSidebarBarCollapsed,
++                    !prefs->GetBoolean(prefs::kLumoSidebarBarCollapsed));
++  RefreshCollapsedState();
++  InvalidateLayout();
++}
++
++void LumoSidebarBar::OnSettingsPressed() {
++  if (profile_) {
++    chrome::ShowSettings(profile_);
++  }
++}
++
++void LumoSidebarBar::RefreshCollapsedState() {
++  const bool collapsed = IsCollapsed();
++  for (views::View* child : collapsible_children_) {
++    child->SetVisible(!collapsed);
++  }
++  if (collapse_button_) {
++    collapse_button_->SetText(collapsed ? u"\u203a" : u"\u2039");
++    collapse_button_->SetTooltipText(l10n_util::GetStringUTF16(
++        collapsed ? IDS_LUMO_SIDEBAR_EXPAND : IDS_LUMO_SIDEBAR_COLLAPSE));
++  }
++}
++
++bool LumoSidebarBar::IsCollapsed() const {
++  return profile_ &&
++         profile_->GetPrefs()->GetBoolean(prefs::kLumoSidebarBarCollapsed);
++}
++
++}  // namespace lumo_sidebar
+diff --git a/chrome/browser/ui/views/side_panel/lumo/lumo_sidebar_bar.h b/chrome/browser/ui/views/side_panel/lumo/lumo_sidebar_bar.h
+new file mode 100644
+index 0000000..25c098d
+--- /dev/null
++++ b/chrome/browser/ui/views/side_panel/lumo/lumo_sidebar_bar.h
+@@ -0,0 +1,74 @@
++// Copyright 2026 seasea1010
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_VIEWS_SIDE_PANEL_LUMO_LUMO_SIDEBAR_BAR_H_
++#define CHROME_BROWSER_UI_VIEWS_SIDE_PANEL_LUMO_LUMO_SIDEBAR_BAR_H_
++
++#include <string>
++#include <vector>
++
++#include "base/memory/raw_ptr.h"
++#include "base/memory/weak_ptr.h"
++#include "chrome/browser/ui/side_panel/side_panel_entry_key.h"
++#include "ui/gfx/paint_vector_icon.h"
++#include "ui/views/view.h"
++
++class BrowserWindowInterface;
++class Profile;
++
++namespace views {
++class LabelButton;
++}  // namespace views
++
++namespace lumo_sidebar {
++
++// The Floorp-style vertical icon bar shown at the left edge of the
++// browser window while the kLumoSidebar feature is enabled (Lumo
++// patch 0038). Buttons toggle the built-in side panel entries, open
++// web panels, and toggle extension side panels. The bar is an
++// overlay: BrowserView::Layout() pins it to the left edge of the
++// contents area without shrinking the web contents.
++class LumoSidebarBar : public views::View {
++ public:
++  static constexpr int kExpandedWidth = 52;
++  static constexpr int kCollapsedWidth = 20;
++  // Space left above the first button so the always-visible
++  // development-stage label (patch 0008) never overlaps a button.
++  static constexpr int kTopInset = 40;
++
++  explicit LumoSidebarBar(BrowserWindowInterface* browser);
++  LumoSidebarBar(const LumoSidebarBar&) = delete;
++  LumoSidebarBar& operator=(const LumoSidebarBar&) = delete;
++  ~LumoSidebarBar() override;
++
++  // views::View:
++  void AddedToWidget() override;
++
++ private:
++  void BuildButtons();
++  void AddEntryButton(SidePanelEntryKey key);
++  void AddWebPanelPresetButton(const std::string& name,
++                               const std::string& url);
++  void AddUtilityButton(const gfx::VectorIcon& icon,
++                        const std::u16string& tooltip,
++                        const std::string& url);
++  void AddSeparator();
++  void ShowWebPanel(const std::string& url);
++  void ToggleEntry(SidePanelEntryKey key);
++  void OnCollapseToggle();
++  void OnSettingsPressed();
++  void RefreshCollapsedState();
++  bool IsCollapsed() const;
++
++  const raw_ptr<BrowserWindowInterface> browser_;
++  raw_ptr<Profile> profile_;
++  bool buttons_built_ = false;
++  raw_ptr<views::LabelButton> collapse_button_ = nullptr;
++  std::vector<raw_ptr<views::View>> collapsible_children_;
++  base::WeakPtrFactory<LumoSidebarBar> weak_factory_{this};
++};
++
++}  // namespace lumo_sidebar
++
++#endif  // CHROME_BROWSER_UI_VIEWS_SIDE_PANEL_LUMO_LUMO_SIDEBAR_BAR_H_
+diff --git a/chrome/browser/ui/views/side_panel/lumo/lumo_sidebar_entries.cc b/chrome/browser/ui/views/side_panel/lumo/lumo_sidebar_entries.cc
+new file mode 100644
+index 0000000..c56a794
+--- /dev/null
++++ b/chrome/browser/ui/views/side_panel/lumo/lumo_sidebar_entries.cc
+@@ -0,0 +1,42 @@
++// Copyright 2026 seasea1010
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/ui/views/side_panel/lumo/lumo_sidebar_entries.h"
++
++#include <memory>
++#include <utility>
++
++#include "base/functional/bind.h"
++#include "base/functional/callback_helpers.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/side_panel/side_panel_entry.h"
++#include "chrome/browser/ui/side_panel/side_panel_entry_id.h"
++#include "chrome/browser/ui/side_panel/side_panel_entry_scope.h"
++#include "chrome/browser/ui/side_panel/side_panel_native_view.h"
++#include "chrome/browser/ui/side_panel/side_panel_registry.h"
++#include "chrome/browser/ui/views/side_panel/lumo/lumo_web_panel_view.h"
++
++namespace lumo_sidebar {
++
++namespace {
++
++SidePanelNativeView CreateWebPanelView(Profile* profile,
++                                       SidePanelEntryScope& scope) {
++  return std::make_unique<LumoWebPanelView>(profile);
++}
++
++}  // namespace
++
++void RegisterLumoSidebarEntries(BrowserWindowInterface* browser,
++                                SidePanelRegistry* window_registry) {
++  Profile* profile = browser->GetProfile();
++  auto entry = std::make_unique<SidePanelEntry>(
++      SidePanelEntry::Key(SidePanelEntryId::kLumoWebPanel),
++      base::BindRepeating(&CreateWebPanelView, profile),
++      /*default_content_width_callback=*/base::NullCallback());
++  window_registry->Register(std::move(entry));
++}
++
++}  // namespace lumo_sidebar
+diff --git a/chrome/browser/ui/views/side_panel/lumo/lumo_sidebar_entries.h b/chrome/browser/ui/views/side_panel/lumo/lumo_sidebar_entries.h
+new file mode 100644
+index 0000000..ab9ce05
+--- /dev/null
++++ b/chrome/browser/ui/views/side_panel/lumo/lumo_sidebar_entries.h
+@@ -0,0 +1,22 @@
++// Copyright 2026 seasea1010
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_VIEWS_SIDE_PANEL_LUMO_LUMO_SIDEBAR_ENTRIES_H_
++#define CHROME_BROWSER_UI_VIEWS_SIDE_PANEL_LUMO_LUMO_SIDEBAR_ENTRIES_H_
++
++class BrowserWindowInterface;
++class SidePanelRegistry;
++
++namespace lumo_sidebar {
++
++// Registers the Lumo sidebar entries (currently the web panel) with
++// the window's side panel registry. Called from
++// SidePanelHelper::PopulateGlobalEntries() while the kLumoSidebar
++// feature is enabled (Lumo patch 0038).
++void RegisterLumoSidebarEntries(BrowserWindowInterface* browser,
++                                SidePanelRegistry* window_registry);
++
++}  // namespace lumo_sidebar
++
++#endif  // CHROME_BROWSER_UI_VIEWS_SIDE_PANEL_LUMO_LUMO_SIDEBAR_ENTRIES_H_
+diff --git a/chrome/browser/ui/views/side_panel/lumo/lumo_web_panel_view.cc b/chrome/browser/ui/views/side_panel/lumo/lumo_web_panel_view.cc
+new file mode 100644
+index 0000000..7a3bda6
+--- /dev/null
++++ b/chrome/browser/ui/views/side_panel/lumo/lumo_web_panel_view.cc
+@@ -0,0 +1,59 @@
++// Copyright 2026 seasea1010
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/ui/views/side_panel/lumo/lumo_web_panel_view.h"
++
++#include <string>
++#include <utility>
++
++#include "base/functional/bind.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/common/pref_names.h"
++#include "components/prefs/pref_service.h"
++#include "content/public/browser/navigation_controller.h"
++#include "content/public/browser/web_contents.h"
++#include "ui/base/page_transition_types.h"
++#include "ui/views/controls/webview/webview.h"
++#include "url/gurl.h"
++
++namespace lumo_sidebar {
++
++LumoWebPanelView::LumoWebPanelView(Profile* profile) : profile_(profile) {
++  SetUseDefaultFillLayout(true);
++
++  content::WebContents::CreateParams create_params(profile);
++  web_contents_ = content::WebContents::Create(create_params);
++  web_view_ = AddChildView(std::make_unique<views::WebView>(profile));
++  web_view_->SetWebContents(web_contents_.get());
++
++  pref_change_registrar_.Init(profile->GetPrefs());
++  pref_change_registrar_.Add(
++      prefs::kLumoSidebarWebPanelUrl,
++      base::BindRepeating(&LumoWebPanelView::NavigateToPrefUrl,
++                          base::Unretained(this)));
++  NavigateToPrefUrl();
++}
++
++LumoWebPanelView::~LumoWebPanelView() {
++  // Detach the WebContents from the WebView before destroying it,
++  // so the WebView never points at a dead WebContents.
++  if (web_view_) {
++    web_view_->SetWebContents(nullptr);
++  }
++  web_contents_.reset();
++}
++
++void LumoWebPanelView::NavigateToPrefUrl() {
++  const std::string url_string =
++      profile_->GetPrefs()->GetString(prefs::kLumoSidebarWebPanelUrl);
++  const GURL url(url_string);
++  if (!url.is_valid() || web_contents_->GetURL() == url) {
++    return;
++  }
++  content::NavigationController::LoadURLParams params(url);
++  params.transition_type = ui::PAGE_TRANSITION_TYPED;
++  web_contents_->GetController().LoadURLWithParams(params);
++}
++
++}  // namespace lumo_sidebar
+diff --git a/chrome/browser/ui/views/side_panel/lumo/lumo_web_panel_view.h b/chrome/browser/ui/views/side_panel/lumo/lumo_web_panel_view.h
+new file mode 100644
+index 0000000..f098df2
+--- /dev/null
++++ b/chrome/browser/ui/views/side_panel/lumo/lumo_web_panel_view.h
+@@ -0,0 +1,50 @@
++// Copyright 2026 seasea1010
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_VIEWS_SIDE_PANEL_LUMO_LUMO_WEB_PANEL_VIEW_H_
++#define CHROME_BROWSER_UI_VIEWS_SIDE_PANEL_LUMO_LUMO_WEB_PANEL_VIEW_H_
++
++#include <memory>
++
++#include "base/memory/raw_ptr.h"
++#include "components/prefs/pref_change_registrar.h"
++#include "ui/views/view.h"
++
++class Profile;
++
++namespace content {
++class WebContents;
++}  // namespace content
++
++namespace views {
++class WebView;
++}  // namespace views
++
++namespace lumo_sidebar {
++
++// The content view of the Lumo sidebar web panel (patch 0038): a
++// plain WebContents hosted in a views::WebView. It shows the URL
++// stored in the lumo.sidebar.web_panel_url pref and navigates
++// whenever that pref changes (the sidebar bar sets it when a web
++// panel button is pressed). No WebContentsDelegate is attached, so
++// links that would open a new window do nothing in this version.
++class LumoWebPanelView : public views::View {
++ public:
++  explicit LumoWebPanelView(Profile* profile);
++  LumoWebPanelView(const LumoWebPanelView&) = delete;
++  LumoWebPanelView& operator=(const LumoWebPanelView&) = delete;
++  ~LumoWebPanelView() override;
++
++ private:
++  void NavigateToPrefUrl();
++
++  const raw_ptr<Profile> profile_;
++  std::unique_ptr<content::WebContents> web_contents_;
++  raw_ptr<views::WebView> web_view_ = nullptr;
++  PrefChangeRegistrar pref_change_registrar_;
++};
++
++}  // namespace lumo_sidebar
++
++#endif  // CHROME_BROWSER_UI_VIEWS_SIDE_PANEL_LUMO_LUMO_WEB_PANEL_VIEW_H_
+diff --git a/chrome/browser/ui/views/side_panel/side_panel.cc b/chrome/browser/ui/views/side_panel/side_panel.cc
+index 716609d..c6e72b5 100644
+--- a/chrome/browser/ui/views/side_panel/side_panel.cc
++++ b/chrome/browser/ui/views/side_panel/side_panel.cc
+@@ -1,9 +1,16 @@
+ #include "base/callback_list.h"
+ 
++#include "base/feature_list.h"
++
+ #include "base/functional/bind.h"
+ 
+ SidePanel::HorizontalAlignment GetHorizontalAlignment(
+     PrefService* pref_service,
+     std::optional<SidePanelEntryId> entry_id) {
++  // Lumo (patch 0038): the Lumo sidebar always docks on the left.
++  if (base::FeatureList::IsEnabled(features::kLumoSidebar)) {
++    return SidePanel::HorizontalAlignment::kLeft;
++  }
++
+   const base::DictValue& overrides =
+       pref_service->GetDict(prefs::kSidePanelAlignmentOverrides);
+diff --git a/chrome/browser/ui/views/side_panel/side_panel_helper.cc b/chrome/browser/ui/views/side_panel/side_panel_helper.cc
+index 4e86729..2992ae3 100644
+--- a/chrome/browser/ui/views/side_panel/side_panel_helper.cc
++++ b/chrome/browser/ui/views/side_panel/side_panel_helper.cc
+@@ -1,9 +1,13 @@
+ #include "chrome/browser/ui/views/side_panel/side_panel_helper.h"
+ 
++#include "base/feature_list.h"
++
+ #include "chrome/browser/history_clusters/history_clusters_service_factory.h"
+ 
+ #include "chrome/browser/ui/views/side_panel/history_clusters/history_clusters_side_panel_coordinator.h"
+ 
++#include "chrome/browser/ui/views/side_panel/lumo/lumo_sidebar_entries.h"
++
+ #include "chrome/browser/ui/views/side_panel/reading_list/reading_list_side_panel_coordinator.h"
+ 
+   // Add comments.
+@@ -11,4 +15,9 @@
+     CommentsSidePanelCoordinator::From(browser)->CreateAndRegisterEntry(
+         window_registry);
+   }
++
++  // Lumo (patch 0038): register the sidebar web panel entry.
++  if (base::FeatureList::IsEnabled(features::kLumoSidebar)) {
++    lumo_sidebar::RegisterLumoSidebarEntries(browser, window_registry);
++  }
+ }

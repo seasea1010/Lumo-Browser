@@ -1,0 +1,1074 @@
+diff --git a/chrome/app/generated_resources.grd b/chrome/app/generated_resources.grd
+index 68503a9..9bbced0 100644
+--- a/chrome/app/generated_resources.grd
++++ b/chrome/app/generated_resources.grd
+@@ -28,6 +28,24 @@
+     <message name="IDS_LUMO_SIDEBAR_EXPAND" desc="Tooltip of the button that expands the collapsed Lumo sidebar icon bar.">
+       サイドバーを展開する
+     </message>
++    <message name="IDS_LUMO_SIDEBAR_MEDIA_TITLE" desc="Title of the Lumo sidebar media panel, which controls the currently playing media.">
++      メディア操作
++    </message>
++    <message name="IDS_LUMO_MEDIA_PANEL_EMPTY" desc="Text shown in the Lumo sidebar media panel when no media is playing.">
++      再生中のメディアはありません
++    </message>
++    <message name="IDS_LUMO_MEDIA_PANEL_PLAY" desc="Tooltip of the play button in the Lumo sidebar media panel.">
++      再生
++    </message>
++    <message name="IDS_LUMO_MEDIA_PANEL_PAUSE" desc="Tooltip of the pause button in the Lumo sidebar media panel.">
++      一時停止
++    </message>
++    <message name="IDS_LUMO_MEDIA_PANEL_PREVIOUS_TRACK" desc="Tooltip of the previous track button in the Lumo sidebar media panel.">
++      前のトラック
++    </message>
++    <message name="IDS_LUMO_MEDIA_PANEL_NEXT_TRACK" desc="Tooltip of the next track button in the Lumo sidebar media panel.">
++      次のトラック
++    </message>
+     <message name="IDS_LUMO_LAUNCH_THORIUM_PROFILE" desc="App menu item that launches Lumo with the original Thorium user profile data directory.">
+       もともとのThoriumのユーザープロファイルデータの保存場所から起動
+     </message>
+diff --git a/chrome/browser/ui/actions/chrome_action_id.h b/chrome/browser/ui/actions/chrome_action_id.h
+index 23ccb21..8e504ef 100644
+--- a/chrome/browser/ui/actions/chrome_action_id.h
++++ b/chrome/browser/ui/actions/chrome_action_id.h
+@@ -1,5 +1,6 @@
+   E(kActionSidePanelShowTabsFromOtherDevices, \
+     IDC_SHOW_TABS_FROM_OTHER_DEVICES_SIDE_PANEL) \
+-  E(kActionSidePanelShowLumoWebPanel)
++  E(kActionSidePanelShowLumoWebPanel) \
++  E(kActionSidePanelShowLumoMediaPanel)
+ 
+ #define TOOLBAR_PINNABLE_ACTION_IDS \
+diff --git a/chrome/browser/ui/browser_actions.cc b/chrome/browser/ui/browser_actions.cc
+index 9b1f59d..5090962 100644
+--- a/chrome/browser/ui/browser_actions.cc
++++ b/chrome/browser/ui/browser_actions.cc
+@@ -21,3 +21,14 @@
+                         kActionSidePanelShowLumoWebPanel, bwi, true)
+             .Build());
+   }
++
++  // Lumo (patch 0039): action item for the sidebar media panel.
++  if (base::FeatureList::IsEnabled(features::kLumoSidebar)) {
++    root_action_item_->AddChild(
++        SidePanelAction(SidePanelEntryId::kLumoMediaPanel,
++                        IDS_LUMO_SIDEBAR_MEDIA_TITLE,
++                        IDS_LUMO_SIDEBAR_MEDIA_TITLE,
++                        vector_icons::kQueueMusicIcon,
++                        kActionSidePanelShowLumoMediaPanel, bwi, true)
++            .Build());
++  }
+diff --git a/chrome/browser/ui/side_panel/side_panel_entry_id.h b/chrome/browser/ui/side_panel/side_panel_entry_id.h
+index c8456b4..45c6e14 100644
+--- a/chrome/browser/ui/side_panel/side_panel_entry_id.h
++++ b/chrome/browser/ui/side_panel/side_panel_entry_id.h
+@@ -2,6 +2,7 @@
+   V(kWebView, std::nullopt, "WebView")                                        \
+   V(kContextualTasks, kActionSidePanelShowContextualTasks, "ContextualTasks") \
+   V(kLumoWebPanel, kActionSidePanelShowLumoWebPanel, "LumoWebPanel")          \
++  V(kLumoMediaPanel, kActionSidePanelShowLumoMediaPanel, "LumoMediaPanel")    \
+   /* Contextual Entries */                                                    \
+   V(kSideSearch, kActionSidePanelShowSideSearch, "SideSearch")                \
+   V(kLens, kActionSidePanelShowLens, "Lens")                                  \
+diff --git a/chrome/browser/ui/views/side_panel/BUILD.gn b/chrome/browser/ui/views/side_panel/BUILD.gn
+index 1624c1a..450638c 100644
+--- a/chrome/browser/ui/views/side_panel/BUILD.gn
++++ b/chrome/browser/ui/views/side_panel/BUILD.gn
+@@ -1,4 +1,8 @@
+     "history_clusters/history_clusters_tab_helper.h",
++    "lumo/lumo_media_item_view.cc",
++    "lumo/lumo_media_item_view.h",
++    "lumo/lumo_media_panel_view.cc",
++    "lumo/lumo_media_panel_view.h",
+     "lumo/lumo_sidebar_bar.cc",
+     "lumo/lumo_sidebar_bar.h",
+     "lumo/lumo_sidebar_entries.cc",
+@@ -27,6 +31,7 @@
+     "//chrome/browser/ui/bookmarks",
+     "//chrome/browser/ui/browser_window",
+     "//chrome/browser/ui/extensions",
++    "//chrome/browser/ui/global_media_controls:global_media_controls",
+     "//chrome/browser/ui/side_panel",
+     "//chrome/browser/ui/tabs:tab_strip",
+     "//chrome/browser/ui/tabs:tabs_public",
+@@ -53,11 +58,14 @@
+     "//components/download/content/public",
+     "//components/favicon_base",
+     "//components/feature_engagement/public",
++    "//components/global_media_controls",
+     "//components/google/core/common",
+     "//components/history_clusters/core",
+     "//components/keyed_service/core",
+     "//components/language/core/browser",
+     "//components/language/core/common",
++    "//components/media_message_center",
++    "//components/media_message_center/vector_icons",
+     "//components/omnibox/browser:vector_icons",
+     "//components/optimization_guide/core:features",
+     "//components/performance_manager",
+diff --git a/chrome/browser/ui/views/side_panel/lumo/lumo_media_item_view.cc b/chrome/browser/ui/views/side_panel/lumo/lumo_media_item_view.cc
+new file mode 100644
+index 0000000..1581dde
+--- /dev/null
++++ b/chrome/browser/ui/views/side_panel/lumo/lumo_media_item_view.cc
+@@ -0,0 +1,558 @@
++// Copyright 2026 seasea1010
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/ui/views/side_panel/lumo/lumo_media_item_view.h"
++
++#include <algorithm>
++#include <cmath>
++#include <memory>
++#include <utility>
++
++#include "base/functional/bind.h"
++#include "base/functional/callback.h"
++#include "base/strings/stringprintf.h"
++#include "base/strings/utf_string_conversions.h"
++#include "base/time/time.h"
++#include "base/timer/timer.h"
++#include "cc/paint/paint_flags.h"
++#include "chrome/grit/generated_resources.h"
++#include "components/global_media_controls/public/media_item_ui_observer.h"
++#include "components/media_message_center/media_notification_item.h"
++#include "components/media_message_center/vector_icons/vector_icons.h"
++#include "skia/ext/image_operations.h"
++#include "third_party/skia/include/core/SkPath.h"
++#include "ui/base/l10n/l10n_util.h"
++#include "ui/base/models/image_model.h"
++#include "ui/color/color_id.h"
++#include "ui/color/color_provider.h"
++#include "ui/events/event.h"
++#include "ui/gfx/canvas.h"
++#include "ui/gfx/font_list.h"
++#include "ui/gfx/geometry/insets.h"
++#include "ui/gfx/geometry/point_f.h"
++#include "ui/gfx/geometry/rect_f.h"
++#include "ui/gfx/geometry/size.h"
++#include "ui/gfx/image/image_skia_operations.h"
++#include "ui/gfx/text_constants.h"
++#include "ui/views/background.h"
++#include "ui/views/controls/button/image_button.h"
++#include "ui/views/controls/image_view.h"
++#include "ui/views/controls/label.h"
++#include "ui/views/layout/box_layout.h"
++
++namespace lumo_sidebar {
++
++namespace {
++
++using media_session::mojom::MediaSessionAction;
++
++// Material type scale steps used by the card: the title is one step
++// up and medium weight, the artist and the timestamps stay at the
++// default size in the variant color.
++constexpr int kArtworkSize = 56;
++constexpr int kArtworkRadius = 12;
++constexpr int kCardRadius = 16;
++constexpr int kPlayButtonSize = 48;
++constexpr int kPlayIconSize = 28;
++constexpr int kSkipIconSize = 24;
++
++std::u16string FormatTime(base::TimeDelta delta) {
++  const int total_seconds = static_cast<int>(delta.InSeconds());
++  return base::UTF8ToUTF16(
++      base::StringPrintf("%d:%02d", total_seconds / 60, total_seconds % 60));
++}
++
++std::unique_ptr<views::ImageButton> MakeIconButton(
++    const gfx::VectorIcon& icon,
++    int icon_size,
++    ui::ColorId icon_color,
++    const std::u16string& tooltip,
++    views::Button::PressedCallback callback) {
++  auto button = std::make_unique<views::ImageButton>(std::move(callback));
++  button->SetImageModel(
++      views::Button::STATE_NORMAL,
++      ui::ImageModel::FromVectorIcon(icon, icon_color, icon_size));
++  button->SetTooltipText(tooltip);
++  return button;
++}
++
++}  // namespace
++
++// A Material progress bar: a 4dp rounded track in the highest
++// surface-container tone, the played part and a vertical pill
++// thumb in the primary color. While playing, the played part is
++// a sine wave travelling rightward (+x) on a ~30fps timer (the
++// YouTube Music style wavy progress bar, tuned strong -- see the
++// constants below); the wave tapers into the centre line just
++// before the thumb, which always stands straight on the centre
++// line and never rides the wave. While paused or while dragging,
++// the played part is a straight line so the position stays easy
++// to read. Clicking or dragging seeks; sent on mouse release.
++class LumoMediaProgressView : public views::View {
++ public:
++  explicit LumoMediaProgressView(
++      base::RepeatingCallback<void(double)> on_seek)
++      : on_seek_(std::move(on_seek)) {
++    SetPreferredSize(gfx::Size(0, 20));
++  }
++
++  void SetFraction(double fraction) {
++    fraction_ = fraction;
++    SchedulePaint();
++  }
++
++  void SetHasPosition(bool has_position) {
++    has_position_ = has_position;
++    SchedulePaint();
++  }
++
++  // Whether the played part should undulate. The owner drives this
++  // from the session's playback state; the wave also stops while
++  // dragging (see IsWaving()).
++  void SetWaving(bool waving) {
++    waving_ = waving;
++    UpdateWaveTimer();
++    SchedulePaint();
++  }
++
++  // views::View:
++  void OnPaint(gfx::Canvas* canvas) override {
++    views::View::OnPaint(canvas);
++    if (!has_position_) {
++      return;
++    }
++    const ui::ColorProvider* color_provider = GetColorProvider();
++    if (!color_provider) {
++      return;
++    }
++    const float center_y = height() / 2.0f;
++    constexpr float kTrackHeight = 4.0f;
++    cc::PaintFlags flags;
++    flags.setAntiAlias(true);
++    flags.setStyle(cc::PaintFlags::kFill_Style);
++    flags.setColor(
++        color_provider->GetColor(ui::kColorSysSurfaceContainerHighest));
++    canvas->DrawRoundRect(
++        gfx::RectF(0, center_y - kTrackHeight / 2, width(), kTrackHeight),
++        kTrackHeight / 2, flags);
++    const double shown = dragging_ ? drag_fraction_ : fraction_;
++    const float played_width = static_cast<float>(width() * shown);
++    flags.setColor(color_provider->GetColor(ui::kColorSysPrimary));
++    if (shown > 0) {
++      if (IsWaving()) {
++        DrawWave(canvas, center_y, played_width, kTrackHeight, flags);
++      } else {
++        canvas->DrawRoundRect(
++            gfx::RectF(0, center_y - kTrackHeight / 2, played_width,
++                       kTrackHeight),
++            kTrackHeight / 2, flags);
++      }
++    }
++    // The thumb is a straight vertical pill standing on the
++    // centre line, in every state; it never rides the wave.
++    canvas->DrawRoundRect(
++        gfx::RectF(played_width - kThumbWidth / 2,
++                   center_y - kThumbHeight / 2, kThumbWidth,
++                   kThumbHeight),
++        kThumbWidth / 2, flags);
++  }
++
++  bool OnMousePressed(const ui::MouseEvent& event) override {
++    if (!has_position_ || !event.IsOnlyLeftMouseButton()) {
++      return false;
++    }
++    dragging_ = true;
++    drag_fraction_ = FractionForX(event.location().x());
++    UpdateWaveTimer();
++    SchedulePaint();
++    return true;
++  }
++
++  void OnMouseDragged(const ui::MouseEvent& event) override {
++    if (dragging_) {
++      drag_fraction_ = FractionForX(event.location().x());
++      SchedulePaint();
++    }
++  }
++
++  void OnMouseReleased(const ui::MouseEvent& event) override {
++    if (dragging_) {
++      dragging_ = false;
++      fraction_ = drag_fraction_;
++      if (on_seek_) {
++        on_seek_.Run(drag_fraction_);
++      }
++      UpdateWaveTimer();
++      SchedulePaint();
++    }
++  }
++
++ private:
++  // Wave tuning. The animation is deliberately strong: the
++  // amplitude is large (3.5dp against a 4dp track) and the phase
++  // advances 0.35 rad per ~33ms frame, so the motion is clearly
++  // visible; WaveOffset() uses sin(kx - phase) with the phase
++  // increasing, so the crests travel rightward (+x). The wave-
++  // length is 21dp: halving the original 32dp spacing packed the
++  // crests too tightly; three quarters (24dp) felt sparse, so
++  // the final value sits at about two thirds of the original.
++  // Over the last kWaveTaperLength before the thumb the amplitude
++  // eases down to zero, so the wave stops at the centre line
++  // instead of wiggling into the thumb; the thumb itself is a
++  // straight vertical pill (kThumbWidth x kThumbHeight) standing
++  // on the centre line in every state.
++  static constexpr float kWaveAmplitude = 3.5f;
++  static constexpr float kWaveLength = 21.0f;
++  static constexpr float kWaveSampleStep = 2.0f;
++  static constexpr float kWaveTaperLength = 12.0f;
++  static constexpr float kThumbWidth = 4.0f;
++  static constexpr float kThumbHeight = 14.0f;
++  static constexpr double kWavePhaseStep = 0.35;
++  static constexpr double kTwoPi = 6.283185307179586;
++  static constexpr double kPi = 3.141592653589793;
++
++  bool IsWaving() const { return waving_ && !dragging_; }
++
++  float WaveOffset(float x, float played_width) const {
++    return static_cast<float>(
++        WaveTaper(x, played_width) * kWaveAmplitude *
++        std::sin(kTwoPi * x / kWaveLength - wave_phase_));
++  }
++
++  // Envelope for the wave's end: full amplitude until
++  // kWaveTaperLength before the end of the played part, then a
++  // cosine ease down to exactly zero at the thumb, so the wave
++  // settles onto the centre line where the pill thumb stands.
++  float WaveTaper(float x, float played_width) const {
++    const float taper_start = played_width - kWaveTaperLength;
++    if (x <= taper_start) {
++      return 1.0f;
++    }
++    const float t =
++        std::clamp((x - taper_start) / kWaveTaperLength, 0.0f, 1.0f);
++    return static_cast<float>(0.5 + 0.5 * std::cos(kPi * t));
++  }
++
++  void DrawWave(gfx::Canvas* canvas,
++                float center_y,
++                float played_width,
++                float track_height,
++                cc::PaintFlags& flags) {
++    SkPath path;
++    path.moveTo(0, center_y + WaveOffset(0, played_width));
++    for (float x = kWaveSampleStep; x < played_width; x += kWaveSampleStep) {
++      path.lineTo(x, center_y + WaveOffset(x, played_width));
++    }
++    // The taper makes the offset exactly zero at the thumb.
++    path.lineTo(played_width, center_y);
++    flags.setStyle(cc::PaintFlags::kStroke_Style);
++    flags.setStrokeWidth(track_height);
++    flags.setStrokeCap(cc::PaintFlags::kRound_Cap);
++    flags.setStrokeJoin(cc::PaintFlags::kRound_Join);
++    canvas->DrawPath(path, flags);
++    flags.setStyle(cc::PaintFlags::kFill_Style);
++  }
++
++  void UpdateWaveTimer() {
++    if (IsWaving()) {
++      if (!wave_timer_.IsRunning()) {
++        wave_timer_.Start(FROM_HERE, base::Milliseconds(33), this,
++                          &LumoMediaProgressView::OnWaveTimer);
++      }
++    } else {
++      wave_timer_.Stop();
++    }
++  }
++
++  void OnWaveTimer() {
++    wave_phase_ += kWavePhaseStep;
++    SchedulePaint();
++  }
++
++  double FractionForX(int x) const {
++    if (width() <= 0) {
++      return 0;
++    }
++    return std::clamp(static_cast<double>(x) / width(), 0.0, 1.0);
++  }
++
++  base::RepeatingCallback<void(double)> on_seek_;
++  double fraction_ = 0;
++  double drag_fraction_ = 0;
++  double wave_phase_ = 0;
++  bool has_position_ = false;
++  bool dragging_ = false;
++  bool waving_ = false;
++  base::RepeatingTimer wave_timer_;
++};
++
++LumoMediaItemView::LumoMediaItemView(
++    const std::string& id,
++    base::WeakPtr<media_message_center::MediaNotificationItem> item)
++    : id_(id), item_(item) {
++  auto* layout = SetLayoutManager(std::make_unique<views::BoxLayout>(
++      views::BoxLayout::Orientation::kVertical,
++      gfx::Insets::TLBR(16, 16, 16, 16), 8));
++  layout->set_cross_axis_alignment(
++      views::BoxLayout::CrossAxisAlignment::kStretch);
++  // Material card: surface-container tone, 16dp corner radius, no
++  // elevation shadow (flat, tonal elevation only).
++  SetBackground(views::CreateRoundedRectBackground(
++      ui::kColorSysSurfaceContainer, kCardRadius));
++
++  // Header row: rounded artwork plus the title/artist hierarchy.
++  auto header = std::make_unique<views::View>();
++  auto* header_layout = header->SetLayoutManager(
++      std::make_unique<views::BoxLayout>(
++          views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 12));
++  header_layout->set_cross_axis_alignment(
++      views::BoxLayout::CrossAxisAlignment::kCenter);
++  artwork_view_ = header->AddChildView(std::make_unique<views::ImageView>());
++  artwork_view_->SetPreferredSize(gfx::Size(kArtworkSize, kArtworkSize));
++  artwork_view_->SetCornerRadius(kArtworkRadius);
++
++  auto texts = std::make_unique<views::View>();
++  texts->SetLayoutManager(std::make_unique<views::BoxLayout>(
++      views::BoxLayout::Orientation::kVertical, gfx::Insets(), 2));
++  title_label_ = texts->AddChildView(std::make_unique<views::Label>());
++  title_label_->SetEnabledColor(ui::kColorSysOnSurface);
++  title_label_->SetAutoColorReadabilityEnabled(false);
++  title_label_->SetFontList(title_label_->font_list()
++                                .DeriveWithSizeDelta(1)
++                                .DeriveWithWeight(gfx::Font::Weight::MEDIUM));
++  title_label_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
++  title_label_->SetElideBehavior(gfx::ELIDE_TAIL);
++  artist_label_ = texts->AddChildView(std::make_unique<views::Label>());
++  artist_label_->SetEnabledColor(ui::kColorSysOnSurfaceVariant);
++  artist_label_->SetAutoColorReadabilityEnabled(false);
++  artist_label_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
++  artist_label_->SetElideBehavior(gfx::ELIDE_TAIL);
++  views::View* texts_ptr = header->AddChildView(std::move(texts));
++  header_layout->SetFlexForView(texts_ptr, 1);
++  AddChildView(std::move(header));
++
++  // Progress bar and the current/total timestamps under it.
++  progress_view_ = AddChildView(std::make_unique<LumoMediaProgressView>(
++      base::BindRepeating(&LumoMediaItemView::OnSeek,
++                          base::Unretained(this))));
++  auto times = std::make_unique<views::View>();
++  auto* times_layout = times->SetLayoutManager(
++      std::make_unique<views::BoxLayout>(
++          views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 8));
++  current_time_label_ =
++      times->AddChildView(std::make_unique<views::Label>());
++  current_time_label_->SetEnabledColor(ui::kColorSysOnSurfaceVariant);
++  current_time_label_->SetAutoColorReadabilityEnabled(false);
++  auto spacer = std::make_unique<views::View>();
++  views::View* spacer_ptr = times->AddChildView(std::move(spacer));
++  times_layout->SetFlexForView(spacer_ptr, 1);
++  duration_label_ = times->AddChildView(std::make_unique<views::Label>());
++  duration_label_->SetEnabledColor(ui::kColorSysOnSurfaceVariant);
++  duration_label_->SetAutoColorReadabilityEnabled(false);
++  AddChildView(std::move(times));
++
++  // Controls row, centered: previous / play-pause / next. The
++  // play-pause button is a filled circle in the primary color, the
++  // Material shape for the main media action.
++  auto controls = std::make_unique<views::View>();
++  auto* controls_layout = controls->SetLayoutManager(
++      std::make_unique<views::BoxLayout>(
++          views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 8));
++  controls_layout->set_main_axis_alignment(
++      views::BoxLayout::MainAxisAlignment::kCenter);
++  controls_layout->set_cross_axis_alignment(
++      views::BoxLayout::CrossAxisAlignment::kCenter);
++  previous_button_ = controls->AddChildView(MakeIconButton(
++      media_message_center::kSkipPreviousFilledIcon, kSkipIconSize,
++      ui::kColorSysOnSurface,
++      l10n_util::GetStringUTF16(IDS_LUMO_MEDIA_PANEL_PREVIOUS_TRACK),
++      base::BindRepeating(&LumoMediaItemView::OnPreviousTrackPressed,
++                          base::Unretained(this))));
++  play_pause_button_ = controls->AddChildView(MakeIconButton(
++      media_message_center::kPlayArrowFilledIcon, kPlayIconSize,
++      ui::kColorSysOnPrimary,
++      l10n_util::GetStringUTF16(IDS_LUMO_MEDIA_PANEL_PLAY),
++      base::BindRepeating(&LumoMediaItemView::OnPlayPausePressed,
++                          base::Unretained(this))));
++  play_pause_button_->SetPreferredSize(
++      gfx::Size(kPlayButtonSize, kPlayButtonSize));
++  play_pause_button_->SetBackground(views::CreateRoundedRectBackground(
++      ui::kColorSysPrimary, kPlayButtonSize / 2));
++  next_button_ = controls->AddChildView(MakeIconButton(
++      media_message_center::kSkipNextFilledIcon, kSkipIconSize,
++      ui::kColorSysOnSurface,
++      l10n_util::GetStringUTF16(IDS_LUMO_MEDIA_PANEL_NEXT_TRACK),
++      base::BindRepeating(&LumoMediaItemView::OnNextTrackPressed,
++                          base::Unretained(this))));
++  AddChildView(std::move(controls));
++
++  if (item_) {
++    item_->SetView(this);
++  }
++}
++
++LumoMediaItemView::~LumoMediaItemView() {
++  progress_timer_.Stop();
++  if (item_) {
++    item_->SetView(nullptr);
++  }
++  observers_.Notify(
++      &global_media_controls::MediaItemUIObserver::OnMediaItemUIDestroyed,
++      id_);
++}
++
++void LumoMediaItemView::SetItem(
++    base::WeakPtr<media_message_center::MediaNotificationItem> item) {
++  if (item_.get() != item.get()) {
++    if (item_) {
++      item_->SetView(nullptr);
++    }
++    item_ = item;
++  }
++  if (item_) {
++    item_->SetView(this);
++  }
++}
++
++void LumoMediaItemView::AddObserver(
++    global_media_controls::MediaItemUIObserver* observer) {
++  observers_.AddObserver(observer);
++}
++
++void LumoMediaItemView::RemoveObserver(
++    global_media_controls::MediaItemUIObserver* observer) {
++  observers_.RemoveObserver(observer);
++}
++
++void LumoMediaItemView::UpdateWithMediaSessionInfo(
++    const media_session::mojom::MediaSessionInfoPtr& session_info) {
++  playing_ = session_info && session_info->playback_state ==
++                                 media_session::mojom::MediaPlaybackState::
++                                     kPlaying;
++  UpdatePlayPauseButton();
++  if (progress_view_) {
++    progress_view_->SetWaving(playing_);
++  }
++  if (playing_) {
++    progress_timer_.Start(FROM_HERE, base::Milliseconds(500), this,
++                          &LumoMediaItemView::OnProgressTimer);
++  } else {
++    progress_timer_.Stop();
++    UpdatePositionDisplay();
++  }
++}
++
++void LumoMediaItemView::UpdateWithMediaMetadata(
++    const media_session::MediaMetadata& metadata) {
++  title_label_->SetText(metadata.title.empty() ? metadata.source_title
++                                               : metadata.title);
++  artist_label_->SetText(metadata.artist.empty() ? metadata.album
++                                                 : metadata.artist);
++  observers_.Notify(
++      &global_media_controls::MediaItemUIObserver::OnMediaItemUIMetadataChanged);
++  InvalidateLayout();
++}
++
++void LumoMediaItemView::UpdateWithMediaActions(
++    const base::flat_set<MediaSessionAction>& actions) {
++  actions_ = actions;
++  UpdateActionButtonsVisibility();
++  observers_.Notify(
++      &global_media_controls::MediaItemUIObserver::OnMediaItemUIActionsChanged);
++}
++
++void LumoMediaItemView::UpdateWithMediaPosition(
++    const media_session::MediaPosition& position) {
++  position_ = position;
++  UpdatePositionDisplay();
++}
++
++void LumoMediaItemView::UpdateWithMediaArtwork(const gfx::ImageSkia& image) {
++  if (image.IsEmpty()) {
++    return;
++  }
++  // The artwork arrives at source size; scale it down to the
++  // 56dp slot (at 2x for retina) before handing it to the view.
++  artwork_view_->SetImage(gfx::ImageSkiaOperations::CreateResizedImage(
++      image, skia::ImageOperations::RESIZE_BEST,
++      gfx::Size(kArtworkSize * 2, kArtworkSize * 2)));
++}
++
++void LumoMediaItemView::OnPlayPausePressed() {
++  if (item_) {
++    item_->OnMediaSessionActionButtonPressed(
++        playing_ ? MediaSessionAction::kPause : MediaSessionAction::kPlay);
++  }
++}
++
++void LumoMediaItemView::OnPreviousTrackPressed() {
++  if (item_) {
++    item_->OnMediaSessionActionButtonPressed(
++        MediaSessionAction::kPreviousTrack);
++  }
++}
++
++void LumoMediaItemView::OnNextTrackPressed() {
++  if (item_) {
++    item_->OnMediaSessionActionButtonPressed(MediaSessionAction::kNextTrack);
++  }
++}
++
++void LumoMediaItemView::OnSeek(double fraction) {
++  if (item_ && position_.duration().is_positive()) {
++    item_->SeekTo(position_.duration() * fraction);
++  }
++}
++
++void LumoMediaItemView::OnProgressTimer() {
++  UpdatePositionDisplay();
++}
++
++void LumoMediaItemView::UpdatePlayPauseButton() {
++  if (!play_pause_button_) {
++    return;
++  }
++  play_pause_button_->SetImageModel(
++      views::Button::STATE_NORMAL,
++      ui::ImageModel::FromVectorIcon(
++          playing_ ? media_message_center::kPauseFilledIcon
++                   : media_message_center::kPlayArrowFilledIcon,
++          ui::kColorSysOnPrimary, kPlayIconSize));
++  play_pause_button_->SetTooltipText(l10n_util::GetStringUTF16(
++      playing_ ? IDS_LUMO_MEDIA_PANEL_PAUSE : IDS_LUMO_MEDIA_PANEL_PLAY));
++}
++
++void LumoMediaItemView::UpdateActionButtonsVisibility() {
++  previous_button_->SetVisible(
++      actions_.contains(MediaSessionAction::kPreviousTrack));
++  next_button_->SetVisible(actions_.contains(MediaSessionAction::kNextTrack));
++  play_pause_button_->SetVisible(actions_.contains(MediaSessionAction::kPlay) ||
++                                 actions_.contains(MediaSessionAction::kPause));
++  InvalidateLayout();
++}
++
++void LumoMediaItemView::UpdatePositionDisplay() {
++  if (!progress_view_) {
++    return;
++  }
++  const base::TimeDelta duration = position_.duration();
++  progress_view_->SetHasPosition(duration.is_positive());
++  if (!duration.is_positive()) {
++    return;
++  }
++  base::TimeDelta position =
++      position_.GetPositionAtTime(base::TimeTicks::Now());
++  if (position > duration) {
++    position = duration;
++  }
++  if (position.is_negative()) {
++    position = base::TimeDelta();
++  }
++  progress_view_->SetFraction(position.InMillisecondsF() /
++                              duration.InMillisecondsF());
++  current_time_label_->SetText(FormatTime(position));
++  duration_label_->SetText(FormatTime(duration));
++}
++
++}  // namespace lumo_sidebar
+diff --git a/chrome/browser/ui/views/side_panel/lumo/lumo_media_item_view.h b/chrome/browser/ui/views/side_panel/lumo/lumo_media_item_view.h
+new file mode 100644
+index 0000000..d61a84a
+--- /dev/null
++++ b/chrome/browser/ui/views/side_panel/lumo/lumo_media_item_view.h
+@@ -0,0 +1,125 @@
++// Copyright 2026 seasea1010
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_VIEWS_SIDE_PANEL_LUMO_LUMO_MEDIA_ITEM_VIEW_H_
++#define CHROME_BROWSER_UI_VIEWS_SIDE_PANEL_LUMO_LUMO_MEDIA_ITEM_VIEW_H_
++
++#include <string>
++
++#include "base/containers/flat_set.h"
++#include "base/memory/raw_ptr.h"
++#include "base/memory/weak_ptr.h"
++#include "base/observer_list.h"
++#include "base/timer/timer.h"
++#include "components/global_media_controls/public/media_item_ui.h"
++#include "components/media_message_center/media_notification_view.h"
++#include "services/media_session/public/cpp/media_position.h"
++#include "services/media_session/public/mojom/media_session.mojom.h"
++
++namespace gfx {
++class ImageSkia;
++struct VectorIcon;
++}  // namespace gfx
++
++namespace media_message_center {
++class MediaNotificationItem;
++}  // namespace media_message_center
++
++namespace views {
++class ImageButton;
++class ImageView;
++class Label;
++}  // namespace views
++
++namespace lumo_sidebar {
++
++class LumoMediaProgressView;
++
++// One media session card in the Lumo sidebar media panel (patch
++// 0039). The card is an original Material Design view: a rounded
++// surface-container card with rounded artwork, a clear title/artist
++// hierarchy, a Material progress bar and a filled circular
++// play/pause button in the theme's primary color. It implements the
++// standard MediaSession data interfaces -- MediaNotificationView
++// (the item pushes metadata, artwork, actions and position into it)
++// and MediaItemUI (observer bookkeeping for the MediaItemManager) --
++// and sends user actions back through MediaNotificationItem. No view
++// from the built-in media dialog is reused.
++class LumoMediaItemView : public media_message_center::MediaNotificationView,
++                          public global_media_controls::MediaItemUI {
++ public:
++  LumoMediaItemView(
++      const std::string& id,
++      base::WeakPtr<media_message_center::MediaNotificationItem> item);
++  LumoMediaItemView(const LumoMediaItemView&) = delete;
++  LumoMediaItemView& operator=(const LumoMediaItemView&) = delete;
++  ~LumoMediaItemView() override;
++
++  // Rebinds the card to a (refreshed) item. Used by
++  // LumoMediaPanelView::RefreshMediaItem().
++  void SetItem(
++      base::WeakPtr<media_message_center::MediaNotificationItem> item);
++
++  // global_media_controls::MediaItemUI:
++  void AddObserver(
++      global_media_controls::MediaItemUIObserver* observer) override;
++  void RemoveObserver(
++      global_media_controls::MediaItemUIObserver* observer) override;
++
++  // media_message_center::MediaNotificationView:
++  void SetForcedExpandedState(bool* forced_expanded_state) override {}
++  void SetExpanded(bool expanded) override {}
++  void UpdateCornerRadius(int top_radius, int bottom_radius) override {}
++  void UpdateWithMediaSessionInfo(
++      const media_session::mojom::MediaSessionInfoPtr& session_info) override;
++  void UpdateWithMediaMetadata(
++      const media_session::MediaMetadata& metadata) override;
++  void UpdateWithMediaActions(
++      const base::flat_set<media_session::mojom::MediaSessionAction>& actions)
++      override;
++  void UpdateWithMediaPosition(
++      const media_session::MediaPosition& position) override;
++  void UpdateWithMediaArtwork(const gfx::ImageSkia& image) override;
++  void UpdateWithChapterArtwork(int index,
++                                const gfx::ImageSkia& image) override {}
++  void UpdateWithFavicon(const gfx::ImageSkia& icon) override {}
++  void UpdateWithVectorIcon(const gfx::VectorIcon* vector_icon) override {}
++  void UpdateWithMuteStatus(bool mute) override {}
++  void UpdateWithVolume(float volume) override {}
++  void UpdateDeviceSelectorVisibility(bool visible) override {}
++  void UpdateDeviceSelectorAvailability(bool has_devices) override {}
++
++ private:
++  void OnPlayPausePressed();
++  void OnPreviousTrackPressed();
++  void OnNextTrackPressed();
++  void OnSeek(double fraction);
++  void OnProgressTimer();
++  void UpdatePlayPauseButton();
++  void UpdateActionButtonsVisibility();
++  void UpdatePositionDisplay();
++
++  const std::string id_;
++  base::WeakPtr<media_message_center::MediaNotificationItem> item_;
++  base::ObserverList<global_media_controls::MediaItemUIObserver> observers_;
++
++  bool playing_ = false;
++  base::flat_set<media_session::mojom::MediaSessionAction> actions_;
++  media_session::MediaPosition position_;
++  base::RepeatingTimer progress_timer_;
++
++  raw_ptr<views::ImageView> artwork_view_ = nullptr;
++  raw_ptr<views::Label> title_label_ = nullptr;
++  raw_ptr<views::Label> artist_label_ = nullptr;
++  raw_ptr<views::Label> current_time_label_ = nullptr;
++  raw_ptr<views::Label> duration_label_ = nullptr;
++  raw_ptr<LumoMediaProgressView> progress_view_ = nullptr;
++  raw_ptr<views::ImageButton> previous_button_ = nullptr;
++  raw_ptr<views::ImageButton> play_pause_button_ = nullptr;
++  raw_ptr<views::ImageButton> next_button_ = nullptr;
++};
++
++}  // namespace lumo_sidebar
++
++#endif  // CHROME_BROWSER_UI_VIEWS_SIDE_PANEL_LUMO_LUMO_MEDIA_ITEM_VIEW_H_
+diff --git a/chrome/browser/ui/views/side_panel/lumo/lumo_media_panel_view.cc b/chrome/browser/ui/views/side_panel/lumo/lumo_media_panel_view.cc
+new file mode 100644
+index 0000000..49ddcbc
+--- /dev/null
++++ b/chrome/browser/ui/views/side_panel/lumo/lumo_media_panel_view.cc
+@@ -0,0 +1,114 @@
++// Copyright 2026 seasea1010
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/ui/views/side_panel/lumo/lumo_media_panel_view.h"
++
++#include <memory>
++#include <utility>
++
++#include "chrome/browser/ui/global_media_controls/media_notification_service.h"
++#include "chrome/browser/ui/global_media_controls/media_notification_service_factory.h"
++#include "chrome/browser/ui/views/side_panel/lumo/lumo_media_item_view.h"
++#include "chrome/grit/generated_resources.h"
++#include "components/global_media_controls/public/media_item_manager.h"
++#include "components/global_media_controls/public/media_item_ui.h"
++#include "ui/base/l10n/l10n_util.h"
++#include "ui/color/color_id.h"
++#include "ui/gfx/geometry/insets.h"
++#include "ui/gfx/text_constants.h"
++#include "ui/views/controls/label.h"
++#include "ui/views/layout/box_layout.h"
++
++namespace lumo_sidebar {
++
++LumoMediaPanelView::LumoMediaPanelView(Profile* profile) : profile_(profile) {
++  auto* layout = SetLayoutManager(std::make_unique<views::BoxLayout>(
++      views::BoxLayout::Orientation::kVertical,
++      gfx::Insets::TLBR(12, 12, 12, 12), 12));
++  layout->set_cross_axis_alignment(
++      views::BoxLayout::CrossAxisAlignment::kStretch);
++
++  empty_label_ = AddChildView(std::make_unique<views::Label>(
++      l10n_util::GetStringUTF16(IDS_LUMO_MEDIA_PANEL_EMPTY)));
++  empty_label_->SetEnabledColor(ui::kColorSysOnSurfaceVariant);
++  empty_label_->SetAutoColorReadabilityEnabled(false);
++  empty_label_->SetHorizontalAlignment(gfx::ALIGN_CENTER);
++
++  items_container_ = AddChildView(std::make_unique<views::View>());
++  items_container_->SetLayoutManager(std::make_unique<views::BoxLayout>(
++      views::BoxLayout::Orientation::kVertical, gfx::Insets(), 12));
++
++  // Become the dialog delegate of the profile's media item manager.
++  // The manager immediately hands over every active item through
++  // ShowMediaItem(), and keeps doing so while the panel exists.
++  if (MediaNotificationService* service =
++          MediaNotificationServiceFactory::GetForProfile(profile_)) {
++    item_manager_ = service->media_item_manager();
++  }
++  if (item_manager_) {
++    is_dialog_delegate_ = true;
++    item_manager_->SetDialogDelegate(this);
++  }
++}
++
++LumoMediaPanelView::~LumoMediaPanelView() {
++  if (item_manager_ && is_dialog_delegate_) {
++    item_manager_->SetDialogDelegate(nullptr);
++  }
++}
++
++global_media_controls::MediaItemUI* LumoMediaPanelView::ShowMediaItem(
++    const std::string& id,
++    base::WeakPtr<media_message_center::MediaNotificationItem> item) {
++  auto it = items_.find(id);
++  if (it != items_.end()) {
++    return it->second;
++  }
++  auto card = std::make_unique<LumoMediaItemView>(id, item);
++  LumoMediaItemView* card_ptr = card.get();
++  items_container_->AddChildView(std::move(card));
++  items_[id] = card_ptr;
++  UpdateEmptyState();
++  return card_ptr;
++}
++
++void LumoMediaPanelView::HideMediaItem(const std::string& id) {
++  auto it = items_.find(id);
++  if (it == items_.end()) {
++    return;
++  }
++  LumoMediaItemView* card = it->second;
++  items_.erase(it);
++  // Deleting a views::View removes it from its parent automatically.
++  delete card;
++  UpdateEmptyState();
++}
++
++void LumoMediaPanelView::RefreshMediaItem(
++    const std::string& id,
++    base::WeakPtr<media_message_center::MediaNotificationItem> item) {
++  auto it = items_.find(id);
++  if (it == items_.end()) {
++    ShowMediaItem(id, item);
++    return;
++  }
++  it->second->SetItem(item);
++}
++
++void LumoMediaPanelView::HideMediaDialog() {
++  // Another delegate (e.g. the toolbar media dialog) took over. The
++  // side panel framework destroys this view on its own schedule; just
++  // remember not to clear the manager's delegate in the destructor.
++  is_dialog_delegate_ = false;
++}
++
++void LumoMediaPanelView::Focus() {
++  RequestFocus();
++}
++
++void LumoMediaPanelView::UpdateEmptyState() {
++  empty_label_->SetVisible(items_.empty());
++}
++
++}  // namespace lumo_sidebar
+diff --git a/chrome/browser/ui/views/side_panel/lumo/lumo_media_panel_view.h b/chrome/browser/ui/views/side_panel/lumo/lumo_media_panel_view.h
+new file mode 100644
+index 0000000..99eff95
+--- /dev/null
++++ b/chrome/browser/ui/views/side_panel/lumo/lumo_media_panel_view.h
+@@ -0,0 +1,80 @@
++// Copyright 2026 seasea1010
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_VIEWS_SIDE_PANEL_LUMO_LUMO_MEDIA_PANEL_VIEW_H_
++#define CHROME_BROWSER_UI_VIEWS_SIDE_PANEL_LUMO_LUMO_MEDIA_PANEL_VIEW_H_
++
++#include <map>
++#include <string>
++
++#include "base/memory/raw_ptr.h"
++#include "base/memory/weak_ptr.h"
++#include "components/global_media_controls/public/media_dialog_delegate.h"
++#include "ui/views/view.h"
++
++class Profile;
++
++namespace global_media_controls {
++class MediaItemManager;
++class MediaItemUI;
++}  // namespace global_media_controls
++
++namespace media_message_center {
++class MediaNotificationItem;
++}  // namespace media_message_center
++
++namespace views {
++class Label;
++}  // namespace views
++
++namespace lumo_sidebar {
++
++class LumoMediaItemView;
++
++// The Lumo sidebar media panel (patch 0039): a Material Design list
++// of media cards, one per active media session, hosted in the side
++// panel. While the panel exists it is the MediaDialogDelegate of the
++// profile's MediaItemManager: the manager hands it every active
++// MediaNotificationItem and it answers with its own original card
++// view (LumoMediaItemView). Only the MediaSession data/action APIs
++// are used; the built-in media dialog UI is not reused.
++class LumoMediaPanelView
++    : public views::View,
++      public global_media_controls::MediaDialogDelegate {
++ public:
++  explicit LumoMediaPanelView(Profile* profile);
++  LumoMediaPanelView(const LumoMediaPanelView&) = delete;
++  LumoMediaPanelView& operator=(const LumoMediaPanelView&) = delete;
++  ~LumoMediaPanelView() override;
++
++  // global_media_controls::MediaDialogDelegate:
++  global_media_controls::MediaItemUI* ShowMediaItem(
++      const std::string& id,
++      base::WeakPtr<media_message_center::MediaNotificationItem> item)
++      override;
++  void HideMediaItem(const std::string& id) override;
++  void RefreshMediaItem(
++      const std::string& id,
++      base::WeakPtr<media_message_center::MediaNotificationItem> item)
++      override;
++  void HideMediaDialog() override;
++  void Focus() override;
++
++ private:
++  void UpdateEmptyState();
++
++  const raw_ptr<Profile> profile_;
++  raw_ptr<global_media_controls::MediaItemManager> item_manager_ = nullptr;
++  // False once the manager has replaced this panel with another
++  // delegate (HideMediaDialog), so the destructor does not clear a
++  // delegate that is no longer ours.
++  bool is_dialog_delegate_ = false;
++  raw_ptr<views::View> items_container_ = nullptr;
++  raw_ptr<views::Label> empty_label_ = nullptr;
++  std::map<std::string, raw_ptr<LumoMediaItemView>> items_;
++};
++
++}  // namespace lumo_sidebar
++
++#endif  // CHROME_BROWSER_UI_VIEWS_SIDE_PANEL_LUMO_LUMO_MEDIA_PANEL_VIEW_H_
+diff --git a/chrome/browser/ui/views/side_panel/lumo/lumo_sidebar_bar.cc b/chrome/browser/ui/views/side_panel/lumo/lumo_sidebar_bar.cc
+index 0b3da5c..a53d8f8 100644
+--- a/chrome/browser/ui/views/side_panel/lumo/lumo_sidebar_bar.cc
++++ b/chrome/browser/ui/views/side_panel/lumo/lumo_sidebar_bar.cc
+@@ -101,6 +101,7 @@ void LumoSidebarBar::BuildButtons() {
+   AddEntryButton(SidePanelEntryKey(SidePanelEntryId::kHistory));
+   AddEntryButton(SidePanelEntryKey(SidePanelEntryId::kReadingList));
+   AddEntryButton(SidePanelEntryKey(SidePanelEntryId::kLumoWebPanel));
++  AddEntryButton(SidePanelEntryKey(SidePanelEntryId::kLumoMediaPanel));
+ 
+   AddSeparator();
+ 
+diff --git a/chrome/browser/ui/views/side_panel/lumo/lumo_sidebar_entries.cc b/chrome/browser/ui/views/side_panel/lumo/lumo_sidebar_entries.cc
+index c56a794..131bce5 100644
+--- a/chrome/browser/ui/views/side_panel/lumo/lumo_sidebar_entries.cc
++++ b/chrome/browser/ui/views/side_panel/lumo/lumo_sidebar_entries.cc
+@@ -16,6 +16,7 @@
+ #include "chrome/browser/ui/side_panel/side_panel_entry_scope.h"
+ #include "chrome/browser/ui/side_panel/side_panel_native_view.h"
+ #include "chrome/browser/ui/side_panel/side_panel_registry.h"
++#include "chrome/browser/ui/views/side_panel/lumo/lumo_media_panel_view.h"
+ #include "chrome/browser/ui/views/side_panel/lumo/lumo_web_panel_view.h"
+ 
+ namespace lumo_sidebar {
+@@ -27,6 +28,11 @@ SidePanelNativeView CreateWebPanelView(Profile* profile,
+   return std::make_unique<LumoWebPanelView>(profile);
+ }
+ 
++SidePanelNativeView CreateMediaPanelView(Profile* profile,
++                                         SidePanelEntryScope& scope) {
++  return std::make_unique<LumoMediaPanelView>(profile);
++}
++
+ }  // namespace
+ 
+ void RegisterLumoSidebarEntries(BrowserWindowInterface* browser,
+@@ -37,6 +43,14 @@ void RegisterLumoSidebarEntries(BrowserWindowInterface* browser,
+       base::BindRepeating(&CreateWebPanelView, profile),
+       /*default_content_width_callback=*/base::NullCallback());
+   window_registry->Register(std::move(entry));
++
++  // Lumo (patch 0039): the media panel entry, a Material Design
++  // card list driven by the MediaSession APIs.
++  auto media_entry = std::make_unique<SidePanelEntry>(
++      SidePanelEntry::Key(SidePanelEntryId::kLumoMediaPanel),
++      base::BindRepeating(&CreateMediaPanelView, profile),
++      /*default_content_width_callback=*/base::NullCallback());
++  window_registry->Register(std::move(media_entry));
+ }
+ 
+ }  // namespace lumo_sidebar
+diff --git a/chrome/browser/ui/views/side_panel/lumo/lumo_sidebar_entries.h b/chrome/browser/ui/views/side_panel/lumo/lumo_sidebar_entries.h
+index ab9ce05..25c9228 100644
+--- a/chrome/browser/ui/views/side_panel/lumo/lumo_sidebar_entries.h
++++ b/chrome/browser/ui/views/side_panel/lumo/lumo_sidebar_entries.h
+@@ -10,7 +10,8 @@ class SidePanelRegistry;
+ 
+ namespace lumo_sidebar {
+ 
+-// Registers the Lumo sidebar entries (currently the web panel) with
++// Registers the Lumo sidebar entries (the web panel and the media
++// panel) with
+ // the window's side panel registry. Called from
+ // SidePanelHelper::PopulateGlobalEntries() while the kLumoSidebar
+ // feature is enabled (Lumo patch 0038).
