@@ -1136,9 +1136,11 @@ index 0000000..a48b008
 +
 +// WebUI message handler for the Lumo GitHub extension updater
 +// (patch 0048, task 36). Companion to ExtensionsHandler: it owns
-+// the three "lumoGithub*" messages the chrome://extensions page
++// the four "lumoGithub*" messages the chrome://extensions page
 +// sends (fetch a repository's latest release, add the extension,
-+// change one extension's update-check interval) and forwards them
++// change one extension's update-check interval, fetch one
++// extension's GitHub registration for its detail page) and
++// forwards them
 +// to lumo::github_updater::LumoGithubExtensionUpdater. It has its
 +// own WeakPtrFactory so a closed extensions page never receives a
 +// late callback.
@@ -1157,6 +1159,7 @@ index 0000000..a48b008
 +  void HandleFetchRelease(const base::ListValue& args);
 +  void HandleAddExtension(const base::ListValue& args);
 +  void HandleSetUpdateInterval(const base::ListValue& args);
++  void HandleGetInfo(const base::ListValue& args);
 +
 +  raw_ptr<Profile> profile_;
 +  base::WeakPtrFactory<LumoGithubExtensionsHandler> weak_factory_{this};
@@ -1213,6 +1216,10 @@ index 0000000..a48b009
 +      base::BindRepeating(
 +          &LumoGithubExtensionsHandler::HandleSetUpdateInterval,
 +          base::Unretained(this)));
++  web_ui()->RegisterMessageCallback(
++      "lumoGithubGetInfo",
++      base::BindRepeating(&LumoGithubExtensionsHandler::HandleGetInfo,
++                          base::Unretained(this)));
 +}
 +
 +void LumoGithubExtensionsHandler::HandleFetchRelease(
@@ -1283,70 +1290,95 @@ index 0000000..a48b009
 +  lumo::github_updater::GetForProfile(profile_)->SetUpdateInterval(
 +      extension_id, interval_hours);
 +}
++void LumoGithubExtensionsHandler::HandleGetInfo(
++    const base::ListValue& args) {
++  AllowJavascript();
++  const std::string& callback_id = args[0].GetString();
++  const std::string& extension_id = args[1].GetString();
++  auto* updater = lumo::github_updater::GetForProfile(profile_);
++  base::DictValue info = updater->GetWebUiInfo(extension_id);
++  // Empty when the extension is not GitHub-managed; the page
++  // treats a missing lumoGithubRepo as "no GitHub section".
++  ResolveJavascriptCallback(base::Value(callback_id),
++                            base::Value(std::move(info)));
++}
 +
 +}  // namespace extensions
 diff --git a/chrome/browser/ui/webui/extensions/BUILD.gn b/chrome/browser/ui/webui/extensions/BUILD.gn
-index 1111111..a48b010
+index a7470a2..0f0f471 100644
 --- a/chrome/browser/ui/webui/extensions/BUILD.gn
 +++ b/chrome/browser/ui/webui/extensions/BUILD.gn
-@@ -100,3 +100,5 @@
-     "extensions_ui.cc",
-     "extensions_ui.h",
-+    "lumo_github_extensions_handler.cc",
-+    "lumo_github_extensions_handler.h",
-   ]
+@@ -30,6 +30,8 @@ if (enable_extensions_core) {
+       "extensions_ui.h",
+       "extensions_ui_prefs.cc",
+       "extensions_ui_prefs.h",
++      "lumo_github_extensions_handler.cc",
++      "lumo_github_extensions_handler.h",
+     ]
+ 
+     public_deps = [
 diff --git a/chrome/browser/ui/webui/extensions/extensions_ui.cc b/chrome/browser/ui/webui/extensions/extensions_ui.cc
-index 2222222..a48b011
+index ff9e65c..85ed75e 100644
 --- a/chrome/browser/ui/webui/extensions/extensions_ui.cc
 +++ b/chrome/browser/ui/webui/extensions/extensions_ui.cc
-@@ -100,2 +100,3 @@
- #include "chrome/browser/ui/webui/extensions/extensions_ui.h"
+@@ -20,6 +20,7 @@
+ #include "chrome/browser/extensions/permissions_url_constants.h"
+ #include "chrome/browser/profiles/profile.h"
+ #include "chrome/browser/ui/ui_features.h"
 +#include "chrome/browser/ui/webui/extensions/lumo_github_extensions_handler.h"
- #include "chrome/browser/ui/webui/extensions/extension_info_generator.h"
-@@ -142,2 +143,7 @@
-       {"addExtensions", IDS_EXTENSIONS_MENU_ADD_EXTENSIONS},
+ #include "chrome/browser/ui/webui/favicon_source.h"
+ #include "chrome/browser/ui/webui/managed_ui_handler.h"
+ #include "chrome/browser/ui/webui/metrics_handler.h"
+@@ -174,6 +175,11 @@ content::WebUIDataSource* CreateAndAddExtensionsSource(Profile* profile,
+        IDS_EXTENSIONS_HOST_ACCESS_ALLOW_ON_ALL_SITES},
+       {"hostAllowedHosts", IDS_EXTENSIONS_ITEM_ALLOWED_HOSTS},
+       {"itemId", IDS_EXTENSIONS_ITEM_ID},
 +      {"lumoGithubAddButton", IDS_EXTENSIONS_LUMO_GITHUB_ADD_BUTTON},
 +      {"lumoGithubDialogTitle",
 +       IDS_EXTENSIONS_LUMO_GITHUB_DIALOG_TITLE},
 +      {"lumoGithubDetailTitle",
 +       IDS_EXTENSIONS_LUMO_GITHUB_DETAIL_TITLE},
-       {"allowFileAccess", IDS_EXTENSIONS_ALLOW_FILE_ACCESS},
-@@ -184,2 +190,5 @@
-   web_ui->AddMessageHandler(std::make_unique<ExtensionsHandler>());
+       {"itemInspectViews", IDS_EXTENSIONS_ITEM_INSPECT_VIEWS},
+       // NOTE: This text reads "<n> more". It's possible that it should be using
+       // a plural string instead. Unfortunately, this is non-trivial since we
+@@ -610,6 +616,9 @@ ExtensionsUI::ExtensionsUI(content::WebUI* web_ui)
+       "mv2DeprecationPanelDisabledSubtitle",
+       IDS_EXTENSIONS_MV2_DEPRECATION_PANEL_DISABLED_SUBTITLE);
+   web_ui->AddMessageHandler(std::move(plural_string_handler));
 +  // Lumo (patch 0048, task 36): the GitHub updater's messages.
 +  web_ui->AddMessageHandler(
 +      std::make_unique<LumoGithubExtensionsHandler>(profile));
  }
-diff --git a/chrome/browser/ui/webui/extensions/extension_info_generator.cc b/chrome/browser/ui/webui/extensions/extension_info_generator.cc
-index 3333333..a48b012
---- a/chrome/browser/ui/webui/extensions/extension_info_generator.cc
-+++ b/chrome/browser/ui/webui/extensions/extension_info_generator.cc
-@@ -100,2 +100,4 @@
- #include "chrome/browser/ui/webui/extensions/extension_info_generator.h"
+ 
+ ExtensionsUI::~ExtensionsUI() = default;
+diff --git a/chrome/browser/extensions/api/developer_private/extension_info_generator.cc b/chrome/browser/extensions/api/developer_private/extension_info_generator.cc
+index d941118..c02f836 100644
+--- a/chrome/browser/extensions/api/developer_private/extension_info_generator.cc
++++ b/chrome/browser/extensions/api/developer_private/extension_info_generator.cc
+@@ -29,6 +29,7 @@
+ #include "chrome/browser/extensions/extension_util.h"
+ #include "chrome/browser/extensions/shared_module_service_factory.h"
+ #include "chrome/browser/extensions/sync/account_extension_tracker.h"
 +#include "chrome/browser/lumo/lumo_github_extension_updater.h"
-+#include "chrome/browser/profiles/profile.h"
- #include "extensions/common/extension.h"
-@@ -142,3 +144,22 @@
-   dict.Set("id", extension.id());
--  dict.Set("name", extension.name());
+ #include "chrome/browser/profiles/profile.h"
+ #include "chrome/browser/ui/toolbar/toolbar_actions_model.h"
+ #include "chrome/browser/ui/webui/extensions/extension_icon_source.h"
+@@ -835,6 +836,18 @@ void ExtensionInfoGenerator::FillExtensionInfo(const Extension& extension,
+       management_policy->MustRemainInstalled(&extension, nullptr);
+ 
+   info.name = extension.name();
 +  // Lumo (patch 0048, task 36, requirement (c)): extensions
 +  // added from GitHub carry the " (Github)" origin suffix
-+  // after their name, and expose their registration to the
-+  // detail page (repository, tag, check interval).
-+  std::string lumo_name = extension.name();
++  // after their name.
 +  if (Profile* profile =
 +          Profile::FromBrowserContext(browser_context_)) {
 +    if (auto* updater =
 +            lumo::github_updater::GetForProfile(profile)) {
-+      base::DictValue github_info =
-+          updater->GetWebUiInfo(extension.id());
-+      if (!github_info.empty()) {
-+        lumo_name += " (Github)";
-+        for (const auto [key, value] : github_info) {
-+          dict.Set(key, value.Clone());
-+        }
++      if (updater->IsGithubManaged(extension.id())) {
++        info.name += " (Github)";
 +      }
 +    }
 +  }
-+  dict.Set("name", lumo_name);
-   dict.Set("version", extension.VersionString());
+   info.offline_enabled = OfflineEnabledInfo::IsOfflineEnabled(&extension);
+ 
+   // Options page.

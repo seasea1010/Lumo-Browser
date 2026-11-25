@@ -493,17 +493,18 @@ index 0000000..0000000
 +  padding: 24px;
 +}
 diff --git a/chrome/browser/ui/webui/new_tab_page/new_tab_page_ui.cc b/chrome/browser/ui/webui/new_tab_page/new_tab_page_ui.cc
-index 0000000..0000000 100644
-@@ -100,2 +100,3 @@
- #include "chrome/browser/ui/webui/new_tab_page/new_tab_page_handler.h"
-+#include "chrome/browser/ui/webui/side_panel/customize_chrome/lumo_ntp_customize_handler.h"
- #include "chrome/browser/ui/webui/new_tab_page/untrusted_source.h"
-@@ -140,3 +141,5 @@
- content::WebUIDataSource::Add(profile_,
-                                 CreateNewTabPageUiHtmlSource(profile_));
-+  AddWebUiMessageHandler(std::make_unique<LumoNtpCustomizeHandler>(
-+      profile_->GetPrefs()));
+index 94af8d9..c2df2e4 100644
+--- a/chrome/browser/ui/webui/new_tab_page/new_tab_page_ui.cc
++++ b/chrome/browser/ui/webui/new_tab_page/new_tab_page_ui.cc
+@@ -921,6 +921,8 @@ NewTabPageUI::NewTabPageUI(content::WebUI* web_ui)
  
+   auto* source = CreateAndAddNewTabPageUiHtmlSource(
+       profile_, session_allows_drag_and_drop);
++  web_ui->AddMessageHandler(std::make_unique<LumoNtpCustomizeHandler>(
++      profile_->GetPrefs()));
+ // TODO(b/502297163): Implement for Android.
+ #if BUILDFLAG(IS_ANDROID)
+   bool wallpaper_search_button_enabled = false;
 diff --git a/chrome/browser/resources/new_tab_page/new_tab_page.ts b/chrome/browser/resources/new_tab_page/new_tab_page.ts
 index 0000000..0000000 100644
 @@ -100,2 +100,3 @@

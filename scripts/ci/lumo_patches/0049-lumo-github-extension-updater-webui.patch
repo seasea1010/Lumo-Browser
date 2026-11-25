@@ -1,52 +1,11 @@
-diff --git a/chrome/browser/resources/extensions/extensions_browser_proxy.ts b/chrome/browser/resources/extensions/extensions_browser_proxy.ts
-index 4444444..a49b001
---- a/chrome/browser/resources/extensions/extensions_browser_proxy.ts
-+++ b/chrome/browser/resources/extensions/extensions_browser_proxy.ts
-@@ -100,3 +100,8 @@
- export interface ExtensionInfo {
-   id: string;
-+  // Lumo (patch 0049, task 36): present only for extensions
-+  // added from GitHub (patch 0048 fills these in).
-+  lumoGithubRepo?: string;
-+  lumoGithubTag?: string;
-+  lumoGithubIntervalHours?: number;
-   name: string;
-@@ -143,1 +148,6 @@
-+/** Lumo (patch 0049): a repository's latest GitHub release. */
-+export interface LumoGithubReleaseInfo {
-+  tag: string;
-+  assets: string[];
-+}
- export interface ExtensionsBrowserProxy {
-@@ -184,1 +194,6 @@
-+  // Lumo (patch 0049, task 36): GitHub extension updater.
-+  lumoGithubFetchRelease(repo: string): Promise<LumoGithubReleaseInfo>;
-+  lumoGithubAddExtension(
-+      repo: string, asset: string, intervalHours: number): Promise<string>;
-+  lumoGithubSetUpdateInterval(id: string, intervalHours: number): void;
-   loadUnpacked(): Promise<string>;
-@@ -225,3 +240,13 @@
-+  lumoGithubFetchRelease(repo: string) {
-+    return sendWithPromise('lumoGithubFetchRelease', repo);
-+  }
-+  lumoGithubAddExtension(repo: string, asset: string, intervalHours: number) {
-+    return sendWithPromise(
-+        'lumoGithubAddExtension', repo, asset, intervalHours);
-+  }
-+  lumoGithubSetUpdateInterval(id: string, intervalHours: number) {
-+    chrome.send('lumoGithubSetUpdateInterval', [id, intervalHours]);
-+  }
-   loadUnpacked() {
-     return sendWithPromise('loadUnpacked');
-   }
 diff --git a/chrome/browser/resources/extensions/toolbar.html.ts b/chrome/browser/resources/extensions/toolbar.html.ts
-index 5555555..a49b002
+index 9b70823..3dc6d81 100644
 --- a/chrome/browser/resources/extensions/toolbar.html.ts
 +++ b/chrome/browser/resources/extensions/toolbar.html.ts
-@@ -100,4 +100,12 @@
-       <cr-button id="packExtensions" @click="${this.onPackExtensionsClick_}">
-         ${this.i18n('packExtension')}
-       </cr-button>
+@@ -45,6 +45,14 @@ ${this.showPackDialog_ ? html`
+     <cr-button id="packExtensions" @click="${this.onPackClick_}">
+       $i18n{toolbarPack}
+     </cr-button>
 +      <!-- Lumo (patch 0049, task 36): shown only while
 +           developer mode is on (the same condition that
 +           reveals this drawer). -->
@@ -55,7 +14,9 @@ index 5555555..a49b002
 +        ${this.i18n('lumoGithubAddButton')}
 +      </cr-button>
 +      <extensions-github-dialog></extensions-github-dialog>
-       <cr-button id="updateNow" @click="${this.onUpdateNowClick_}">
+     <cr-button id="updateNow" @click="${this.onUpdateNowClick_}"
+         title="$i18n{toolbarUpdateNowTooltip}">
+       $i18n{toolbarUpdateNow}
 diff --git a/chrome/browser/resources/extensions/toolbar.ts b/chrome/browser/resources/extensions/toolbar.ts
 index 6666666..a49b003
 --- a/chrome/browser/resources/extensions/toolbar.ts
@@ -94,7 +55,7 @@ index 0000000..a49b004
 +import {CrLitElement} from '//resources/lit/v3_0/lit.rollup.js';
 +import type {PropertyValues} from '//resources/lit/v3_0/lit.rollup.js';
 +
-+import {ExtensionsBrowserProxyImpl} from './extensions_browser_proxy.js';
++import {Service} from './service.js';
 +import {getHtml} from './github_dialog.html.js';
 +
 +export interface ExtensionsGithubDialogElement {
@@ -153,7 +114,7 @@ index 0000000..a49b004
 +    this.busy_ = true;
 +    this.error_ = '';
 +    try {
-+      const info = await ExtensionsBrowserProxyImpl.getInstance()
++      const info = await Service.getInstance()
 +                       .lumoGithubFetchRelease(this.repo_.trim());
 +      this.tag_ = info.tag;
 +      this.assets_ = info.assets;
@@ -170,7 +131,7 @@ index 0000000..a49b004
 +    this.busy_ = true;
 +    this.error_ = '';
 +    try {
-+      await ExtensionsBrowserProxyImpl.getInstance().lumoGithubAddExtension(
++      await Service.getInstance().lumoGithubAddExtension(
 +          this.repo_.trim(), asset, intervalHours);
 +      this.open_ = false;
 +    } catch (e) {
@@ -284,71 +245,171 @@ index 0000000..a49b005
 +</div>` : ''}`;
 +}
 diff --git a/chrome/browser/resources/extensions/detail_view.html.ts b/chrome/browser/resources/extensions/detail_view.html.ts
-index 7777777..a49b006
+index e59c4f0..f6eaf05 100644
 --- a/chrome/browser/resources/extensions/detail_view.html.ts
 +++ b/chrome/browser/resources/extensions/detail_view.html.ts
-@@ -100,5 +100,40 @@
-     <div class="section">
-       <div class="section-header">${this.i18n('extensionId')}</div>
+@@ -239,6 +239,39 @@ this text can be found by Ctrl + F because it isn't hidden. -->
+       </div>
        <div class="section-content">${this.data.id}</div>
      </div>
-+    <!-- Lumo (patch 0049, task 36, requirement (a)): the
-+         update-check interval of a GitHub-managed extension
-+         is changed here, on its detail page. -->
-+    ${this.data.lumoGithubRepo ? html`
-+    <div class="section" id="lumoGithubSection">
-+      <div class="section-header">
++    ${this.lumoGithubInfo_?.lumoGithubRepo ? html`
++    <div class="section hr" id="lumoGithubSection">
++      <div class="section-title" role="heading" aria-level="2">
 +        ${this.i18n('lumoGithubDetailTitle')}</div>
 +      <div class="section-content">
-+        GitHub: ${this.data.lumoGithubRepo} / ${this.data.lumoGithubTag}
++        GitHub: ${this.lumoGithubInfo_.lumoGithubRepo} /
++        ${this.lumoGithubInfo_.lumoGithubTag}
 +      </div>
 +      <div class="section-content">
 +        <label for="lumoGithubInterval">更新確認の頻度</label>
 +        <select id="lumoGithubInterval"
 +            @change="${this.onLumoGithubIntervalChange_}">
 +          <option value="0"
-+              ?selected="${this.data.lumoGithubIntervalHours === 0}">
++              ?selected="${this.lumoGithubInfo_.lumoGithubIntervalHours === 0}">
 +            起動時のみ</option>
 +          <option value="6"
-+              ?selected="${this.data.lumoGithubIntervalHours === 6}">
++              ?selected="${this.lumoGithubInfo_.lumoGithubIntervalHours === 6}">
 +            6 時間ごと</option>
 +          <option value="12"
-+              ?selected="${this.data.lumoGithubIntervalHours === 12}">
++              ?selected="${this.lumoGithubInfo_.lumoGithubIntervalHours === 12}">
 +            12 時間ごと</option>
 +          <option value="24"
-+              ?selected="${this.data.lumoGithubIntervalHours === 24}">
++              ?selected="${this.lumoGithubInfo_.lumoGithubIntervalHours === 24}">
 +            24 時間ごと</option>
 +          <option value="72"
-+              ?selected="${this.data.lumoGithubIntervalHours === 72}">
++              ?selected="${this.lumoGithubInfo_.lumoGithubIntervalHours === 72}">
 +            3 日ごと</option>
 +          <option value="168"
-+              ?selected="${this.data.lumoGithubIntervalHours === 168}">
++              ?selected="${this.lumoGithubInfo_.lumoGithubIntervalHours === 168}">
 +            7 日ごと</option>
 +        </select>
 +      </div>
 +    </div>` : ''}
- 
+     ${this.inDevMode ? html`
+       <div class="section hr" id="inspectable-views">
+         <div class="section-title" role="heading" aria-level="2">
 diff --git a/chrome/browser/resources/extensions/detail_view.ts b/chrome/browser/resources/extensions/detail_view.ts
-index 8888888..a49b007
+index 0a80651..81c05db 100644
 --- a/chrome/browser/resources/extensions/detail_view.ts
 +++ b/chrome/browser/resources/extensions/detail_view.ts
-@@ -100,3 +100,10 @@
+@@ -15,6 +15,8 @@ import 'chrome://resources/cr_elements/cr_icon/cr_icon.js';
+ import './host_permissions_toggle_list.js';
+ import './icons.html.js';
+ import './runtime_host_permissions.js';
++import {Service} from './service.js';
++import type {LumoGithubInfo} from './service.js';
+ import '/strings.m.js';
+ import './toggle_row.js';
+ 
+@@ -133,6 +135,7 @@ export class ExtensionsDetailViewElement extends
+   accessor fromActivityLog: boolean = false;
+   protected accessor showSafetyCheck_: boolean = false;
+   protected accessor size_: string = '';
++  protected accessor lumoGithubInfo_: LumoGithubInfo|null = null;
+   protected accessor sortedViews_: chrome.developerPrivate.ExtensionView[] = [];
+   protected accessor webuiRoundedIconsEnabled_: boolean =
+       loadTimeData.getBoolean('webuiRoundedIconsEnabled');
+@@ -192,6 +195,19 @@ export class ExtensionsDetailViewElement extends
+     this.delegate.getExtensionSize(this.data.id).then(size => {
+       this.size_ = size;
+     });
++    // Lumo (patch 0049, task 36): fetch this extension's GitHub
++    // registration (if any) for the detail-page section.
++    this.lumoGithubInfo_ = null;
++    Service.getInstance().lumoGithubGetInfo(this.data.id).then(info => {
++      this.lumoGithubInfo_ = info;
++    });
++  }
++
 +  // Lumo (patch 0049, task 36, requirement (a)): persists a
 +  // new update-check interval for a GitHub-managed extension.
 +  protected onLumoGithubIntervalChange_(e: Event) {
 +    const hours = Number((e.target as HTMLSelectElement).value);
-+    ExtensionsBrowserProxyImpl.getInstance().lumoGithubSetUpdateInterval(
-+        this.data.id, hours);
-+  }
-   static get is() {
-     return 'extensions-detail-view';
++    Service.getInstance().lumoGithubSetUpdateInterval(this.data.id, hours);
    }
+ 
+   protected onActivityLogClick_() {
 diff --git a/chrome/browser/resources/extensions/BUILD.gn b/chrome/browser/resources/extensions/BUILD.gn
-index 9999999..a49b008
+index 2a7fa64..bb3988e 100644
 --- a/chrome/browser/resources/extensions/BUILD.gn
 +++ b/chrome/browser/resources/extensions/BUILD.gn
-@@ -100,2 +100,4 @@
-     "detail_view.ts",
+@@ -34,6 +34,8 @@ build_webui("build") {
+     "error_page.html.ts",
+     "error_page.ts",
+     "extensions.ts",
 +    "github_dialog.html.ts",
 +    "github_dialog.ts",
-     "error_page.ts",
+     "host_permissions_toggle_list.html.ts",
+     "host_permissions_toggle_list.ts",
+     "install_warnings_dialog.html.ts",
+diff --git a/chrome/browser/resources/extensions/service.ts b/chrome/browser/resources/extensions/service.ts
+index d4da144..b3d5a58 100644
+--- a/chrome/browser/resources/extensions/service.ts
++++ b/chrome/browser/resources/extensions/service.ts
+@@ -4,6 +4,7 @@
+ 
+ import type {ChromeEvent} from '/tools/typescript/definitions/chrome_event.js';
+ import {assert} from 'chrome://resources/js/assert.js';
++import {sendWithPromise} from 'chrome://resources/js/cr.js';
+ 
+ import type {ActivityLogDelegate} from './activity_log/activity_log_history.js';
+ import type {ActivityLogEventDelegate} from './activity_log/activity_log_stream.js';
+@@ -33,6 +34,12 @@ export interface ServiceInterface extends ActivityLogDelegate,
+       ChromeEvent<(info: chrome.developerPrivate.ProfileInfo) => void>;
+   getProfileConfiguration(): Promise<chrome.developerPrivate.ProfileInfo>;
+   getExtensionsInfo(): Promise<chrome.developerPrivate.ExtensionInfo[]>;
++  lumoGithubFetchRelease(repo: string): Promise<LumoGithubReleaseInfo>;
++  lumoGithubAddExtension(
++      repo: string, asset: string,
++      intervalHours: number): Promise<string>;
++  lumoGithubSetUpdateInterval(id: string, intervalHours: number): void;
++  lumoGithubGetInfo(id: string): Promise<LumoGithubInfo>;
+   getExtensionSize(id: string): Promise<string>;
+   dismissSafetyHubExtensionsMenuNotification(): void;
+   dismissMv2DeprecationNotice(): void;
+@@ -43,6 +50,19 @@ export interface ServiceInterface extends ActivityLogDelegate,
+   setProfileExtensionsPinnedByDefault(extensionsPinnedByDefault: boolean): void;
+ }
+ 
++/** Lumo (patch 0049): a repository's latest GitHub release. */
++export interface LumoGithubReleaseInfo {
++  tag: string;
++  assets: string[];
++}
++
++/** Lumo (patch 0049): a GitHub-managed extension's registration. */
++export interface LumoGithubInfo {
++  lumoGithubRepo?: string;
++  lumoGithubTag?: string;
++  lumoGithubIntervalHours?: number;
++}
++
+ // Throws the `error` if it was anything other than the extension no longer
+ // being in the system. The "no such extension found" error is always safe to
+ // catch because the `ExtensionsManagerElement` will navigate away from an
+@@ -402,6 +422,25 @@ export class Service implements ServiceInterface {
+     return this.loadUnpackedHelper_();
+   }
+ 
++  lumoGithubFetchRelease(repo: string): Promise<LumoGithubReleaseInfo> {
++    return sendWithPromise('lumoGithubFetchRelease', repo);
++  }
++
++  lumoGithubAddExtension(
++      repo: string, asset: string,
++      intervalHours: number): Promise<string> {
++    return sendWithPromise(
++        'lumoGithubAddExtension', repo, asset, intervalHours);
++  }
++
++  lumoGithubSetUpdateInterval(id: string, intervalHours: number): void {
++    chrome.send('lumoGithubSetUpdateInterval', [id, intervalHours]);
++  }
++
++  lumoGithubGetInfo(id: string): Promise<LumoGithubInfo> {
++    return sendWithPromise('lumoGithubGetInfo', id);
++  }
++
+   retryLoadUnpacked(retryGuid?: string): Promise<boolean> {
+     // Attempt to load an unpacked extension, optionally as another attempt at
+     // a previously-specified load.

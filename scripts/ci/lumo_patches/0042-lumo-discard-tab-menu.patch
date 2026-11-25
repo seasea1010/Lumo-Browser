@@ -123,13 +123,13 @@ index e03b98f..1110042 100644
        base::UmaHistogramCounts1000(
            "Tab.ContextMenu.SendTabToSelf.SelectedTabsCount",
 diff --git a/components/tabs/public/tab_context_menu_command.h b/components/tabs/public/tab_context_menu_command.h
-index 0ed448f..1110042 100644
+index 684e843..5e9527c 100644
 --- a/components/tabs/public/tab_context_menu_command.h
 +++ b/components/tabs/public/tab_context_menu_command.h
-@@ -100,6 +100,12 @@ enum TabContextMenuCommand {
-   CommandGlicSwitchToRecentConversation,
+@@ -40,6 +40,12 @@ enum TabContextMenuCommand {
    CommandGlicUnshare,
    CommandToggleFocusGroup,
+   CommandNewTabToLeft,
 +  // Lumo (patch 0042): discards the tab without closing it. Added
 +  // at the end so no existing command value changes. The
 +  // LINT.ThenChange histograms entry for TabContextMenuCommand
@@ -137,5 +137,5 @@ index 0ed448f..1110042 100644
 +  // Lumo is a private fork, so the presubmit note is recorded here.
 +  CommandDiscardTab,
  };
- 
  // LINT.ThenChange(//tools/metrics/histograms/metadata/tab/histograms.xml:TabContextMenuCommand)
+ 

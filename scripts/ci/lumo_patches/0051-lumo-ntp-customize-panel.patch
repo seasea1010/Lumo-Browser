@@ -180,17 +180,18 @@ index 0000000..0000000
 +  ResolveJavascriptCallback(args[0], base::Value(std::move(info)));
 +}
 diff --git a/chrome/browser/ui/webui/side_panel/customize_chrome/customize_chrome_ui.cc b/chrome/browser/ui/webui/side_panel/customize_chrome/customize_chrome_ui.cc
-index 0000000..0000000 100644
-@@ -100,2 +100,3 @@
- #include "chrome/browser/ui/webui/side_panel/customize_chrome/customize_chrome_page_handler.h"
-+#include "chrome/browser/ui/webui/side_panel/customize_chrome/lumo_ntp_customize_handler.h"
- #include "chrome/browser/ui/webui/side_panel/customize_chrome/customize_chrome_section.h"
-@@ -140,3 +141,5 @@
- content::WebUIDataSource* source = content::WebUIDataSource::CreateAndAdd(
-     profile_, chrome::kChromeUICustomizeChromeSidePanelHost);
-+  AddWebUiMessageHandler(std::make_unique<LumoNtpCustomizeHandler>(
+index 9cb5428..a3dd335 100644
+--- a/chrome/browser/ui/webui/side_panel/customize_chrome/customize_chrome_ui.cc
++++ b/chrome/browser/ui/webui/side_panel/customize_chrome/customize_chrome_ui.cc
+@@ -99,6 +99,8 @@ CustomizeChromeUI::CustomizeChromeUI(content::WebUI* web_ui)
+ #endif
+   content::WebUIDataSource* source = content::WebUIDataSource::CreateAndAdd(
+       profile_, chrome::kChromeUICustomizeChromeSidePanelHost);
++  web_ui->AddMessageHandler(std::make_unique<LumoNtpCustomizeHandler>(
 +      profile_->GetPrefs()));
  
+ // ThemeHandler used only by "Customize Toolbar".
+ #if !BUILDFLAG(IS_ANDROID)
 diff --git a/chrome/browser/resources/side_panel/customize_chrome/lumo_ntp_section.ts b/chrome/browser/resources/side_panel/customize_chrome/lumo_ntp_section.ts
 new file mode 100644
 index 0000000..0000000
