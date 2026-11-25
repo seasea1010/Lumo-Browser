@@ -47,8 +47,8 @@
 #
 # Build profile: AVX2 only (target machine: Intel Core i5-8350U, AVX2
 # confirmed). No SSE3 build is produced. The Thorium patches build
-# thorium.exe; build-final renames it to lumo.exe in the package.
-#
+# thorium.exe; Lumo patch 0045 renames it at the source level, so the
+ # build emits lumo.exe directly (task 40, build #33).
 # Status: the stage chain ran end to end in run #12 (2026-11-15)
 # and the build completed in build-4. build-final failed in #12 on
 # disk space (it extracted the whole ~20.7 GiB tree next to the
@@ -437,9 +437,9 @@ jobs:
           & 7z @xargs
           if ($LASTEXITCODE -ge 2) { throw "7z selective extraction failed: $LASTEXITCODE" }
           if ($LASTEXITCODE -eq 1) { Write-Host 'WARNING: 7z exited 1 (some files could not be extracted); the package verification below decides whether the tree is usable.' }
-          $exe = 'C:\lumo-package\lumo-build\src\out\thorium\thorium.exe'
+          $exe = 'C:\lumo-package\lumo-build\src\out\thorium\lumo.exe'
           if (-not (Test-Path $exe)) {
-            Write-Host 'thorium.exe not found after selective extraction; top of the archive listing:'
+            Write-Host 'lumo.exe not found after selective extraction; top of the archive listing:'
             7z l build-state\build-state.zip | Select-Object -First 40
             throw "Built binary not found: $exe"
           }
@@ -558,24 +558,6 @@ jobs:
           $bytes = ($files | Measure-Object Length -Sum).Sum
           Write-Host "Pruned tree: $($files.Count) files, $bytes bytes (salvage reference: 552 files / 641938482 bytes, minus setup.exe, setup.ex_ and the Thorium Shell companion files)."
 
-      - name: Rename thorium.exe to lumo.exe
-        shell: pwsh
-        run: |
-          $outDir = 'C:\lumo-package\lumo-build\src\out\thorium'
-          $exe = Join-Path $outDir 'thorium.exe'
-          if (-not (Test-Path $exe)) { throw "Built binary not found: $exe" }
-          # Thorium's patches name the binary thorium.exe; the
-          # portable package ships it as lumo.exe. The rename is
-          # VERIFIED: the run #12 salvage package with this rename
-          # launched on seasea1010's Windows PC (2026-11-15). The
-          # mini installer is NOT included, and setup.exe is
-          # pruned above: both would install the product as
-          # Thorium until Lumo rebranding patches exist (see
-          # PLAN.md).
-          Rename-Item $exe 'lumo.exe'
-          if (-not (Test-Path (Join-Path $outDir 'lumo.exe'))) { throw 'lumo.exe missing after rename' }
-          if (Test-Path (Join-Path $outDir 'thorium.exe')) { throw 'thorium.exe still present after rename' }
-
       - name: Sign lumo.exe (self-signed certificate)
         shell: pwsh
         env:
@@ -583,7 +565,7 @@ jobs:
           LUMO_SIGN_PASSWORD: ${{ secrets.LUMO_SIGN_PASSWORD }}
         run: |
           # Self-signing (task 18, decided by the owner on
-          # 2026-11-18): sign the renamed lumo.exe — and only
+          # 2026-11-18): sign lumo.exe — and only
           # lumo.exe — with a self-signed code signing
           # certificate whose subject is seasea1019 (the signing
           # identity is 1019 on purpose; every other name in
@@ -652,8 +634,8 @@ jobs:
           https://github.com/gorhill/uBlock
           https://github.com/gorhill/uBO-Scope
           '@ | Set-Content -Path (Join-Path $outDir 'README-LUMO.txt') -Encoding UTF8
-          if (-not (Test-Path (Join-Path $outDir 'lumo.exe'))) { throw 'lumo.exe missing after rename' }
-          if (Test-Path (Join-Path $outDir 'thorium.exe')) { throw 'thorium.exe still present after rename' }
+          if (-not (Test-Path (Join-Path $outDir 'lumo.exe'))) { throw 'lumo.exe missing in package tree' }
+          if (Test-Path (Join-Path $outDir 'thorium.exe')) { throw 'thorium.exe still present in package tree' }
           if (Test-Path (Join-Path $outDir 'setup.exe')) { throw 'setup.exe still present after prune' }
           # Core runtime files (the salvage package's assertions):
           # the browser cannot start without these. The locales
