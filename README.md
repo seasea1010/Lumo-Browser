@@ -25,7 +25,7 @@ Chrome と同じように拡張機能・Widevine・全コーデック・Google S
 - **標準搭載の拡張機能**：uBlock Origin、uBO Scope、Chrome Info Viewer を新規プロファイルに自動で入れます。
 - **chrome://tools**：ブラウザ内で使えるツール集のページです。
 - **メモリセーバー拡張段階**：操作していないタブを約4分で破棄する段階を追加しています。
-- ウィンドウ左上に「このブラウザーは試験的な開発段階です」と常時表示されます。
+- ウィンドウ右下に「このブラウザーは試験的な開発段階です」と常時表示されます。
 - ユーザーデータは `%LOCALAPPDATA%\Lumo_Browser\User Data` に保存され、Thorium や Chrome とは混ざりません。
 
 ## 対象とビルドの仕組み
@@ -65,6 +65,7 @@ Lumo 自身はプロプライエタリ（All Rights Reserved）です。使用�
 | ファイル | 内容 |
 |---|---|
 | `README.md` | このファイル |
+| `README.en.md` | 英語版 README |
 | `BUILDING.md` | ビルド手順（日本語） |
 | `PLAN.md` | 未決定事項とリスクの一覧 |
 | `LICENSE.md` | ライセンス（Lumo 独自部分は All Rights Reserved） |
