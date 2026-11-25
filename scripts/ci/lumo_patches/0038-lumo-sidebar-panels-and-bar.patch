@@ -10,18 +10,18 @@ index ed48aa3..23ccb21 100644
  
  #define TOOLBAR_PINNABLE_ACTION_IDS \
 diff --git a/chrome/browser/ui/browser_actions.cc b/chrome/browser/ui/browser_actions.cc
-index 0f7a326..a259089 100644
+index 027ebc7..7f46411 100644
 --- a/chrome/browser/ui/browser_actions.cc
 +++ b/chrome/browser/ui/browser_actions.cc
-@@ -12,6 +12,7 @@
- 
+@@ -13,6 +13,7 @@
  #include "base/check_deref.h"
  #include "base/check_op.h"
+ #include "base/command_line.h"
 +#include "base/feature_list.h"
  #include "base/functional/bind.h"
  #include "base/functional/callback_helpers.h"
  #include "base/metrics/histogram_functions.h"
-@@ -508,6 +509,19 @@ void BrowserActions::InitializeSidePanelActions() {
+@@ -510,6 +511,19 @@ void BrowserActions::InitializeSidePanelActions() {
              .Build());
    }
  
