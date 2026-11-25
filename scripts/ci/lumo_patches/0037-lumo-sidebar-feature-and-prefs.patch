@@ -54,13 +54,14 @@ diff --git a/chrome/browser/ui/browser_ui_prefs.cc b/chrome/browser/ui/browser_u
 index 00057bf..2ceccdc 100644
 --- a/chrome/browser/ui/browser_ui_prefs.cc
 +++ b/chrome/browser/ui/browser_ui_prefs.cc
-@@ -100,12 +100,45 @@
+@@ -9,4 +9,5 @@
+ 
  #include "base/numerics/safe_conversions.h"
- 
 +#include "base/values.h"
-+
  #include "build/branding_buildflags.h"
- 
+ #include "build/build_config.h"
+@@ -110,4 +111,28 @@
+ #endif  // !BUILDFLAG(IS_ANDROID)
  }
  
 +namespace {
@@ -88,7 +89,7 @@ index 00057bf..2ceccdc 100644
 +}  // namespace
 +
  void RegisterBrowserUserPrefs(user_prefs::PrefRegistrySyncable* registry) {
- 
+@@ -141,4 +141,11 @@
    registry->RegisterBooleanPref(prefs::kPinSplitTabButton, false,
                                  pref_registration_flags);
  
