@@ -177,7 +177,7 @@ jobs:
           # storage, or download fails HERE, loudly, instead of
           # resuming a quietly incomplete tree (stage.py only
           # verifies the zip it wrote exists and is non-empty).
-          # Exit 1 is a warning only — the same tolerance          
+          # Exit 1 is a warning only — the same tolerance
           # checkpoint() applies when writing; exit >= 2 is fatal.
           7z t build-state/${{ env.BUILD_STATE_ZIP }}
           if ($LASTEXITCODE -ge 2) { throw "Checkpoint integrity check failed (7z t exit $LASTEXITCODE): build-state/${{ env.BUILD_STATE_ZIP }} is corrupt or truncated; refusing to resume from it." }
@@ -205,7 +205,7 @@ jobs:
         run: |
           set +e
           python scripts/ci/stage.py \
-           --build-root "$BUILD_ROOT" \
+            --build-root "$BUILD_ROOT" \
             --repo-root "$GITHUB_WORKSPACE" \
             --state-zip "$GITHUB_WORKSPACE/${{ env.BUILD_STATE_ZIP }}" \
             --job-started-at "$LUMO_JOB_STARTED_AT" \
