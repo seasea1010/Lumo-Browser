@@ -3,7 +3,7 @@ index 5b321cb..a40d871 100644
 --- a/chrome/app/generated_resources.grd
 +++ b/chrome/app/generated_resources.grd
 @@ -19133,6 +19133,30 @@ Please help our engineers fix this problem. Tell us what happened right before y
-     <message name="IDS_LUMO_DEV_STAGE_LABEL" desc="Label shown at the top-left of every Lumo browser window stating that the browser is in an experimental development stage.">
+     <message name="IDS_LUMO_DEV_STAGE_LABEL" desc="Label shown at the bottom-right of every Lumo browser window stating that the browser is in an experimental development stage.">
        このブラウザーは試験的な開発段階です
      </message>
 +    <message name="IDS_LUMO_WELCOME_TITLE" desc="Title of the first screen of the Lumo first-run welcome flow.">
