@@ -5316,11 +5316,7 @@ _LUMO_RESUME_FIXUP_REPLACEMENTS = (
         _TAB_CC_REL,
         b"  mouse_hovered_ = true;\n"
         b"  controller_->ShowHover(this, TabStyle::ShowHoverStyle::kSubtle);",
-        b"  mouse_hovered_ = true;\n"
-        b"  if (base::FeatureList::IsEnabled(features::kLumoHoverShowCloseButton)) {\n"
-        b"    UpdateIconVisibility();\n"
-        b"  }\n"
-        b"  controller_->ShowHover(this, TabStyle::ShowHoverStyle::kSubtle);",
+        b'  mouse_hovered_ = true;\n  // Lumo (patch 0041): this tab just became hovered, so recompute\n  // the close-button visibility; UpdateIconVisibility() shows the\n  // close button on a hovered inactive tab when the experiment is\n  // on (it stays hidden when the experiment is off).\n  if (base::FeatureList::IsEnabled(features::kLumoHoverShowCloseButton)) {\n    UpdateIconVisibility();\n  }\n  controller_->ShowHover(this, TabStyle::ShowHoverStyle::kSubtle);',
         "hover start recomputes close-button visibility "
         "(patch 0041, task 42)",
     ),
@@ -5328,11 +5324,7 @@ _LUMO_RESUME_FIXUP_REPLACEMENTS = (
         _TAB_CC_REL,
         b"  mouse_hovered_ = false;\n"
         b"  controller_->HideHover(this, TabStyle::HideHoverStyle::kGradual);",
-        b"  mouse_hovered_ = false;\n"
-        b"  if (base::FeatureList::IsEnabled(features::kLumoHoverShowCloseButton)) {\n"
-        b"    UpdateIconVisibility();\n"
-        b"  }\n"
-        b"  controller_->HideHover(this, TabStyle::HideHoverStyle::kGradual);",
+        b'  mouse_hovered_ = false;\n  // Lumo (patch 0041): the hover has ended, so recompute the\n  // close-button visibility; a hover-shown close button on an\n  // inactive tab hides again.\n  if (base::FeatureList::IsEnabled(features::kLumoHoverShowCloseButton)) {\n    UpdateIconVisibility();\n  }\n  controller_->HideHover(this, TabStyle::HideHoverStyle::kGradual);',
         "hover end recomputes close-button visibility "
         "(patch 0041, task 42)",
     ),
@@ -5341,14 +5333,7 @@ _LUMO_RESUME_FIXUP_REPLACEMENTS = (
         b"BASE_FEATURE(kLumoDoubleClickCloseTab, base::FEATURE_DISABLED_BY_DEFAULT);\n"
         b"\n"
         b"// Lumo Labs experiment (Lumo patch 0012, task 15): when enabled,",
-        b"BASE_FEATURE(kLumoDoubleClickCloseTab, base::FEATURE_DISABLED_BY_DEFAULT);\n"
-        b"\n"
-        b"// Lumo (Lumo patch 0041, task 42): show the close button on a\n"
-        b"// hovered inactive tab. Enabled by default; turning the Labs\n"
-        b"// experiment / flag off restores the stock Chromium behaviour.\n"
-        b"BASE_FEATURE(kLumoHoverShowCloseButton, base::FEATURE_ENABLED_BY_DEFAULT);\n"
-        b"\n"
-        b"// Lumo Labs experiment (Lumo patch 0012, task 15): when enabled,",
+        b'BASE_FEATURE(kLumoDoubleClickCloseTab, base::FEATURE_DISABLED_BY_DEFAULT);\n\n// Lumo (Lumo patch 0041, task 42): show the close button on a\n// hovered inactive tab. Enabled by default; turning the Labs\n// experiment / flag off restores the stock Chromium behaviour.\nBASE_FEATURE(kLumoHoverShowCloseButton, base::FEATURE_ENABLED_BY_DEFAULT);\n\nBASE_FEATURE(kLumoSidebar, base::FEATURE_DISABLED_BY_DEFAULT);\n\nBASE_FEATURE(kLumoNtpCustomize, base::FEATURE_ENABLED_BY_DEFAULT);\n\n// Lumo Labs experiment (Lumo patch 0012, task 15): when enabled,',
         "BASE_FEATURE(kLumoHoverShowCloseButton, enabled by default) "
         "(patch 0041, task 42)",
     ),
@@ -5357,19 +5342,14 @@ _LUMO_RESUME_FIXUP_REPLACEMENTS = (
         b"BASE_DECLARE_FEATURE(kLumoDoubleClickCloseTab);\n"
         b"\n"
         b"// Lumo Labs experiment (Lumo patch 0012): shows the app-menu item",
-        b"BASE_DECLARE_FEATURE(kLumoDoubleClickCloseTab);\n"
-        b"\n"
-        b"// Lumo experiment (Lumo patch 0041): Show Close Button on Hovered Inactive Tabs.\n"
-        b"BASE_DECLARE_FEATURE(kLumoHoverShowCloseButton);\n"
-        b"\n"
-        b"// Lumo Labs experiment (Lumo patch 0012): shows the app-menu item",
+        b'BASE_DECLARE_FEATURE(kLumoDoubleClickCloseTab);\n\n// Lumo experiment (Lumo patch 0041): Show Close Button on Hovered Inactive Tabs.\nBASE_DECLARE_FEATURE(kLumoHoverShowCloseButton);\n\n// Lumo Labs experiment (Lumo patches 0037/0038): Floorp-style\n// sidebar with a vertical icon bar and a left-docked side panel.\nBASE_DECLARE_FEATURE(kLumoSidebar);\n\n// Lumo NTP customization (Lumo patches 0050-0052, task 38): the\n// "Lumo \xe3\x82\x92\xe3\x82\xab\xe3\x82\xb9\xe3\x82\xbf\xe3\x83\x9e\xe3\x82\xa4\xe3\x82\xba" section in the standard Customize Chrome\n// side panel plus the customized rendering of the new tab page.\nBASE_DECLARE_FEATURE(kLumoNtpCustomize);\n\n// Lumo Labs experiment (Lumo patch 0012): shows the app-menu item',
         "BASE_DECLARE_FEATURE(kLumoHoverShowCloseButton) "
         "(patch 0041, task 42)",
     ),
     (
         _TAB_CONTEXT_MENU_COMMAND_REL,
         b"  CommandToggleFocusGroup,\n};",
-        b"  CommandToggleFocusGroup,\n  CommandDiscardTab,\n};",
+        b'  CommandToggleFocusGroup,\n  // Lumo (patch 0042): discards the tab without closing it. Added\n  // at the end so no existing command value changes. The\n  // LINT.ThenChange histograms entry for TabContextMenuCommand\n  // must gain a matching value before this is submitted upstream;\n  // Lumo is a private fork, so the presubmit note is recorded here.\n  CommandDiscardTab,\n};',
         "CommandDiscardTab appended to TabContextMenuCommand "
         "(patch 0042, task 43)",
     ),
@@ -5427,17 +5407,8 @@ _LUMO_RESUME_FIXUP_REPLACEMENTS = (
     ),
     (
         _GENERATED_RESOURCES_GRD_REL,
-        ("    <message name=\"IDS_LUMO_DEV_STAGE_LABEL\" desc=\"Label shown at the bottom-right of every Lumo browser window stating that the browser is in an experimental development stage.\">\n"
-         "      このブラウザーは試験的な開発段階です\n"
-         "    </message>\n"
-         "    <message name=\"IDS_CHROMELABS_RELAUNCH_BUTTON_LABEL\"").encode(),
-        ("    <message name=\"IDS_LUMO_DEV_STAGE_LABEL\" desc=\"Label shown at the bottom-right of every Lumo browser window stating that the browser is in an experimental development stage.\">\n"
-         "      このブラウザーは試験的な開発段階です\n"
-         "    </message>\n"
-         "    <message name=\"IDS_LUMO_TAB_CXMENU_DISCARD_TAB\" desc=\"Tab context menu item that discards the tab's contents without closing the tab (Lumo patch 0042).\">\n"
-         "      タブを閉じずに非アクティブ化\n"
-         "    </message>\n"
-         "    <message name=\"IDS_CHROMELABS_RELAUNCH_BUTTON_LABEL\"").encode(),
+        b'    <message name="IDS_LUMO_DEV_STAGE_LABEL" desc="Label shown at the bottom-right of every Lumo browser window stating that the browser is in an experimental development stage.">\n      \xe3\x81\x93\xe3\x81\xae\xe3\x83\x96\xe3\x83\xa9\xe3\x82\xa6\xe3\x82\xb6\xe3\x83\xbc\xe3\x81\xaf\xe8\xa9\xa6\xe9\xa8\x93\xe7\x9a\x84\xe3\x81\xaa\xe9\x96\x8b\xe7\x99\xba\xe6\xae\xb5\xe9\x9a\x8e\xe3\x81\xa7\xe3\x81\x99\n    </message>\n    <message name="IDS_LUMO_WELCOME_TITLE" desc="Title of the first screen of the Lumo first-run welcome flow.">',
+        b'    <message name="IDS_LUMO_DEV_STAGE_LABEL" desc="Label shown at the bottom-right of every Lumo browser window stating that the browser is in an experimental development stage.">\n      \xe3\x81\x93\xe3\x81\xae\xe3\x83\x96\xe3\x83\xa9\xe3\x82\xa6\xe3\x82\xb6\xe3\x83\xbc\xe3\x81\xaf\xe8\xa9\xa6\xe9\xa8\x93\xe7\x9a\x84\xe3\x81\xaa\xe9\x96\x8b\xe7\x99\xba\xe6\xae\xb5\xe9\x9a\x8e\xe3\x81\xa7\xe3\x81\x99\n    </message>\n    <message name="IDS_LUMO_TAB_CXMENU_DISCARD_TAB" desc="Tab context menu item that discards the tab\'s contents without closing the tab (Lumo patch 0042).">\n      \xe3\x82\xbf\xe3\x83\x96\xe3\x82\x92\xe9\x96\x89\xe3\x81\x98\xe3\x81\x9a\xe3\x81\xab\xe9\x9d\x9e\xe3\x82\xa2\xe3\x82\xaf\xe3\x83\x86\xe3\x82\xa3\xe3\x83\x96\xe5\x8c\x96\n    </message>\n    <message name="IDS_LUMO_WELCOME_TITLE" desc="Title of the first screen of the Lumo first-run welcome flow.">',
         "IDS_LUMO_TAB_CXMENU_DISCARD_TAB string (patch 0042, task 43)",
     ),
     # --- Build #33 fixups (tasks 35/40/41) ---
@@ -5631,9 +5602,7 @@ _LUMO_RESUME_FIXUP_REPLACEMENTS = (
         _CHROME_BROWSER_MAIN_WIN_REL,
         b'constexpr wchar_t kLumoUnlockTokenFileName[] = L"lumo-unlock-token";\n'
         b"constexpr int kLumoLockMaxAttempts = 3;\n",
-        b'constexpr wchar_t kLumoUnlockTokenFileName[] = L"lumo-unlock-token";\n'
-        b'constexpr wchar_t kLumoUnlockKindFileName[] = L"lumo-unlock-kind";\n'
-        b"constexpr int kLumoLockMaxAttempts = 3;\n",
+        b'constexpr wchar_t kLumoUnlockTokenFileName[] = L"lumo-unlock-token";\n// Lumo (patch 0046): alongside the unlock token, the KIND of the\n// password that unlocked ("owner" for the primary password,\n// "friend" for the second one) is persisted in this small file,\n// so the launch notification (task 41) can report which password\n// a copy was unlocked with. The password itself is never stored.\n// Profiles unlocked before patch 0046 have no such file; the\n// notification then simply omits the kind.\nconstexpr wchar_t kLumoUnlockKindFileName[] = L"lumo-unlock-kind";\nconstexpr int kLumoLockMaxAttempts = 3;\n',
         "unlock kind file name (patch 0046, extends 0019)",
     ),
     # --- Build #33 fixups (tasks 28/36/38, generated from the patch hunks) ---
@@ -5750,8 +5719,8 @@ _LUMO_RESUME_FIXUP_REPLACEMENTS = (
      b'  AddSettingsPageUIHandler(std::make_unique<AboutHandler>(profile));\n  // Lumo: UI font page handler (Lumo patch 0047).\n  AddSettingsPageUIHandler(\n      std::make_unique<LumoFontHandler>(profile));\n  // Lumo: state snapshot page (Lumo patch 0022).\n  AddSettingsPageUIHandler(\n      std::make_unique<LumoMonitorHandler>(profile));\n',
      'chrome/browser/ui/webui/settings/settings_ui.cc (patch 0047)'),
     (_GENERATED_RESOURCES_GRD_REL,
-     b'    <message name="IDS_LUMO_SIDEBAR_EXPAND" desc="Tooltip of the button that expands the collapsed Lumo sidebar icon bar.">\n      \xe3\x82\xb5\xe3\x82\xa4\xe3\x83\x89\xe3\x83\x90\xe3\x83\xbc\xe3\x82\x92\xe5\xb1\x95\xe9\x96\x8b\xe3\x81\x99\xe3\x82\x8b\n    </message>\n    <message name="IDS_LUMO_LAUNCH_THORIUM_PROFILE" desc="App menu item that launches Lumo with the original Thorium user profile data directory.">\n',
-     b'    <message name="IDS_LUMO_SIDEBAR_EXPAND" desc="Tooltip of the button that expands the collapsed Lumo sidebar icon bar.">\n      \xe3\x82\xb5\xe3\x82\xa4\xe3\x83\x89\xe3\x83\x90\xe3\x83\xbc\xe3\x82\x92\xe5\xb1\x95\xe9\x96\x8b\xe3\x81\x99\xe3\x82\x8b\n    </message>\n    <message name="IDS_EXTENSIONS_LUMO_GITHUB_ADD_BUTTON" desc="Toolbar button on chrome://extensions, shown only in developer mode, that adds an extension which auto-updates from a GitHub repository.">\n      GitHub \xe3\x81\x8b\xe3\x82\x89\xe8\x87\xaa\xe5\x8b\x95\xe6\x9b\xb4\xe6\x96\xb0\xe3\x81\x99\xe3\x82\x8b\xe6\x8b\xa1\xe5\xbc\xb5\xe3\x82\x92\xe8\xbf\xbd\xe5\x8a\xa0\xe3\x81\x99\xe3\x82\x8b\n    </message>\n    <message name="IDS_EXTENSIONS_LUMO_GITHUB_DIALOG_TITLE" desc="Title of the dialog that adds an auto-updating extension from a GitHub repository.">\n      GitHub \xe3\x81\x8b\xe3\x82\x89\xe6\x8b\xa1\xe5\xbc\xb5\xe3\x82\x92\xe8\xbf\xbd\xe5\x8a\xa0\n    </message>\n    <message name="IDS_EXTENSIONS_LUMO_GITHUB_DETAIL_TITLE" desc="Heading of the GitHub auto-update section on an extension\'s detail page on chrome://extensions.">\n      GitHub \xe8\x87\xaa\xe5\x8b\x95\xe6\x9b\xb4\xe6\x96\xb0 (Lumo)\n    </message>\n    <message name="IDS_LUMO_GITHUB_NOTIFY_UPDATED_TITLE" desc="Title of the notification shown when a GitHub-managed extension was auto-updated.">\n      \xe6\x8b\xa1\xe5\xbc\xb5\xe6\xa9\x9f\xe8\x83\xbd\xe3\x82\x92\xe6\x9b\xb4\xe6\x96\xb0\xe3\x81\x97\xe3\x81\xbe\xe3\x81\x97\xe3\x81\x9f\n    </message>\n    <message name="IDS_LUMO_GITHUB_NOTIFY_UPDATED_BODY" desc="Body of the notification shown when a GitHub-managed extension was auto-updated.">\n      <ph name="EXTENSION_NAME">$1<ex>GitHub \xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e\xe5\x8c\x96</ex></ph> \xe3\x82\x92 GitHub \xe3\x81\xae Release <ph name="TAG">$2<ex>v1.2.3</ex></ph> \xe3\x81\xab\xe6\x9b\xb4\xe6\x96\xb0\xe3\x81\x97\xe3\x81\xbe\xe3\x81\x97\xe3\x81\x9f\xe3\x80\x82\n    </message>\n    <message name="IDS_LUMO_GITHUB_NOTIFY_FAILED_TITLE" desc="Title of the notification shown when a GitHub-managed extension could not be updated.">\n      \xe6\x8b\xa1\xe5\xbc\xb5\xe6\xa9\x9f\xe8\x83\xbd\xe3\x82\x92\xe6\x9b\xb4\xe6\x96\xb0\xe3\x81\xa7\xe3\x81\x8d\xe3\x81\xbe\xe3\x81\x9b\xe3\x82\x93\xe3\x81\xa7\xe3\x81\x97\xe3\x81\x9f\n    </message>\n    <message name="IDS_LUMO_GITHUB_NOTIFY_FAILED_BODY" desc="Body of the notification shown when a GitHub-managed extension failed verification or installation; the installed version is left untouched.">\n      <ph name="EXTENSION_NAME">$1<ex>GitHub \xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e\xe5\x8c\x96</ex></ph> \xe3\x81\xae\xe6\x9b\xb4\xe6\x96\xb0\xe3\x82\x92\xe7\xa2\xba\xe8\xaa\x8d\xe3\x81\xa7\xe3\x81\x8d\xe3\x81\xbe\xe3\x81\x9b\xe3\x82\x93\xe3\x81\xa7\xe3\x81\x97\xe3\x81\x9f\xef\xbc\x88<ph name="DETAIL">$2<ex>not newer</ex></ph>\xef\xbc\x89\xe3\x80\x82\xe7\x8f\xbe\xe5\x9c\xa8\xe3\x81\xae\xe3\x83\x90\xe3\x83\xbc\xe3\x82\xb8\xe3\x83\xa7\xe3\x83\xb3\xe3\x81\xae\xe3\x81\xbe\xe3\x81\xbe\xe3\x81\xab\xe3\x81\x97\xe3\x81\xa6\xe3\x81\x84\xe3\x81\xbe\xe3\x81\x99\xe3\x80\x82\n    </message>\n    <message name="IDS_LUMO_LAUNCH_THORIUM_PROFILE" desc="App menu item that launches Lumo with the original Thorium user profile data directory.">\n',
+     b'    <message name="IDS_LUMO_SIDEBAR_EXPAND" desc="Tooltip of the button that expands the collapsed Lumo sidebar icon bar.">\n      \xe3\x82\xb5\xe3\x82\xa4\xe3\x83\x89\xe3\x83\x90\xe3\x83\xbc\xe3\x82\x92\xe5\xb1\x95\xe9\x96\x8b\xe3\x81\x99\xe3\x82\x8b\n    </message>\n    <message name="IDS_LUMO_SIDEBAR_MEDIA_TITLE" desc="Title of the Lumo sidebar media panel, which controls the currently playing media.">\n',
+     b'    <message name="IDS_LUMO_SIDEBAR_EXPAND" desc="Tooltip of the button that expands the collapsed Lumo sidebar icon bar.">\n      \xe3\x82\xb5\xe3\x82\xa4\xe3\x83\x89\xe3\x83\x90\xe3\x83\xbc\xe3\x82\x92\xe5\xb1\x95\xe9\x96\x8b\xe3\x81\x99\xe3\x82\x8b\n    </message>\n    <message name="IDS_EXTENSIONS_LUMO_GITHUB_ADD_BUTTON" desc="Toolbar button on chrome://extensions, shown only in developer mode, that adds an extension which auto-updates from a GitHub repository.">\n      GitHub \xe3\x81\x8b\xe3\x82\x89\xe8\x87\xaa\xe5\x8b\x95\xe6\x9b\xb4\xe6\x96\xb0\xe3\x81\x99\xe3\x82\x8b\xe6\x8b\xa1\xe5\xbc\xb5\xe3\x82\x92\xe8\xbf\xbd\xe5\x8a\xa0\xe3\x81\x99\xe3\x82\x8b\n    </message>\n    <message name="IDS_EXTENSIONS_LUMO_GITHUB_DIALOG_TITLE" desc="Title of the dialog that adds an auto-updating extension from a GitHub repository.">\n      GitHub \xe3\x81\x8b\xe3\x82\x89\xe6\x8b\xa1\xe5\xbc\xb5\xe3\x82\x92\xe8\xbf\xbd\xe5\x8a\xa0\n    </message>\n    <message name="IDS_EXTENSIONS_LUMO_GITHUB_DETAIL_TITLE" desc="Heading of the GitHub auto-update section on an extension\'s detail page on chrome://extensions.">\n      GitHub \xe8\x87\xaa\xe5\x8b\x95\xe6\x9b\xb4\xe6\x96\xb0 (Lumo)\n    </message>\n    <message name="IDS_LUMO_GITHUB_NOTIFY_UPDATED_TITLE" desc="Title of the notification shown when a GitHub-managed extension was auto-updated.">\n      \xe6\x8b\xa1\xe5\xbc\xb5\xe6\xa9\x9f\xe8\x83\xbd\xe3\x82\x92\xe6\x9b\xb4\xe6\x96\xb0\xe3\x81\x97\xe3\x81\xbe\xe3\x81\x97\xe3\x81\x9f\n    </message>\n    <message name="IDS_LUMO_GITHUB_NOTIFY_UPDATED_BODY" desc="Body of the notification shown when a GitHub-managed extension was auto-updated.">\n      <ph name="EXTENSION_NAME">$1<ex>GitHub \xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e\xe5\x8c\x96</ex></ph> \xe3\x82\x92 GitHub \xe3\x81\xae Release <ph name="TAG">$2<ex>v1.2.3</ex></ph> \xe3\x81\xab\xe6\x9b\xb4\xe6\x96\xb0\xe3\x81\x97\xe3\x81\xbe\xe3\x81\x97\xe3\x81\x9f\xe3\x80\x82\n    </message>\n    <message name="IDS_LUMO_GITHUB_NOTIFY_FAILED_TITLE" desc="Title of the notification shown when a GitHub-managed extension could not be updated.">\n      \xe6\x8b\xa1\xe5\xbc\xb5\xe6\xa9\x9f\xe8\x83\xbd\xe3\x82\x92\xe6\x9b\xb4\xe6\x96\xb0\xe3\x81\xa7\xe3\x81\x8d\xe3\x81\xbe\xe3\x81\x9b\xe3\x82\x93\xe3\x81\xa7\xe3\x81\x97\xe3\x81\x9f\n    </message>\n    <message name="IDS_LUMO_GITHUB_NOTIFY_FAILED_BODY" desc="Body of the notification shown when a GitHub-managed extension failed verification or installation; the installed version is left untouched.">\n      <ph name="EXTENSION_NAME">$1<ex>GitHub \xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e\xe5\x8c\x96</ex></ph> \xe3\x81\xae\xe6\x9b\xb4\xe6\x96\xb0\xe3\x82\x92\xe7\xa2\xba\xe8\xaa\x8d\xe3\x81\xa7\xe3\x81\x8d\xe3\x81\xbe\xe3\x81\x9b\xe3\x82\x93\xe3\x81\xa7\xe3\x81\x97\xe3\x81\x9f\xef\xbc\x88<ph name="DETAIL">$2<ex>not newer</ex></ph>\xef\xbc\x89\xe3\x80\x82\xe7\x8f\xbe\xe5\x9c\xa8\xe3\x81\xae\xe3\x83\x90\xe3\x83\xbc\xe3\x82\xb8\xe3\x83\xa7\xe3\x83\xb3\xe3\x81\xae\xe3\x81\xbe\xe3\x81\xbe\xe3\x81\xab\xe3\x81\x97\xe3\x81\xa6\xe3\x81\x84\xe3\x81\xbe\xe3\x81\x99\xe3\x80\x82\n    </message>\n    <message name="IDS_CHROMELABS_LUMO_NTP_CUSTOMIZE_NAME" desc="Name of the Lumo Labs experiment shown in the Labs bubble.">\n      \xe6\x96\xb0\xe8\xa6\x8f\xe3\x82\xbf\xe3\x83\x96\xe3\x81\xae\xe3\x82\xab\xe3\x82\xb9\xe3\x82\xbf\xe3\x83\x9e\xe3\x82\xa4\xe3\x82\xba (Lumo)\n    </message>\n    <message name="IDS_CHROMELABS_LUMO_NTP_CUSTOMIZE_DESCRIPTION" desc="Description of the Lumo Labs experiment shown in the Labs bubble.">\n      \xe6\x96\xb0\xe8\xa6\x8f\xe3\x82\xbf\xe3\x83\x96\xe3\x83\x9a\xe3\x83\xbc\xe3\x82\xb8\xe3\x81\xae\xe8\x83\x8c\xe6\x99\xaf\xe3\x83\xbb\xe6\x99\x82\xe8\xa8\x88\xe3\x83\xbb\xe6\x8c\xa8\xe6\x8b\xb6\xe6\x96\x87\xe3\x83\xbb\xe6\xa4\x9c\xe7\xb4\xa2\xe3\x83\x90\xe3\x83\xbc\xe3\x83\xbb\xe3\x82\xb7\xe3\x83\xa7\xe3\x83\xbc\xe3\x83\x88\xe3\x82\xab\xe3\x83\x83\xe3\x83\x88\xe3\x83\xbb\xe3\x82\xa6\xe3\x82\xa3\xe3\x82\xb8\xe3\x82\xa7\xe3\x83\x83\xe3\x83\x88\xe3\x83\xbb\xe3\x83\xac\xe3\x82\xa4\xe3\x82\xa2\xe3\x82\xa6\xe3\x83\x88\xe3\x83\xbb\xe3\x83\x86\xe3\x83\xbc\xe3\x83\x9e\xe3\x82\x92\xe3\x80\x81\xe6\xa8\x99\xe6\xba\x96\xe3\x81\xae\xe3\x82\xab\xe3\x82\xb9\xe3\x82\xbf\xe3\x83\x9e\xe3\x82\xa4\xe3\x82\xba\xe3\x83\x91\xe3\x83\x8d\xe3\x83\xab\xe5\x86\x85\xe3\x81\xae\xe3\x80\x8cLumo \xe3\x82\x92\xe3\x82\xab\xe3\x82\xb9\xe3\x82\xbf\xe3\x83\x9e\xe3\x82\xa4\xe3\x82\xba\xe3\x80\x8d\xe3\x81\x8b\xe3\x82\x89\xe7\xb4\xb0\xe3\x81\x8b\xe3\x81\x8f\xe5\xa4\x89\xe6\x9b\xb4\xe3\x81\xa7\xe3\x81\x8d\xe3\x82\x8b\xe3\x82\x88\xe3\x81\x86\xe3\x81\xab\xe3\x81\x97\xe3\x81\xbe\xe3\x81\x99\xef\xbc\x88Lumo \xe3\x83\x91\xe3\x83\x83\xe3\x83\x81 0050\xe3\x80\x9c0052\xef\xbc\x89\xe3\x80\x82\n    </message>\n    <message name="IDS_LUMO_NTP_CUSTOMIZE_TITLE" desc="Title of the Lumo section in the standard Customize Chrome side panel.">\n      Lumo \xe3\x82\x92\xe3\x82\xab\xe3\x82\xb9\xe3\x82\xbf\xe3\x83\x9e\xe3\x82\xa4\xe3\x82\xba\n    </message>\n    <message name="IDS_LUMO_SIDEBAR_MEDIA_TITLE" desc="Title of the Lumo sidebar media panel, which controls the currently playing media.">\n',
      'chrome/app/generated_resources.grd (patch 0048)'),
     (_PREF_NAMES_REL,
      b'// The pref name is "default_apps" for backwards compatibility. This pref used\n// to control both apps and extensions, and before that just apps.\ninline constexpr char kPreinstalledExtensions[] = "default_apps";\n\n// Lumo sidebar (patches 0037/0038): the URL currently shown in the\n',

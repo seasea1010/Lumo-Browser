@@ -84,8 +84,8 @@ index 0000000..0000000 100644
 diff --git a/chrome/app/generated_resources.grd b/chrome/app/generated_resources.grd
 index 0000000..0000000 100644
 @@ -100,4 +100,13 @@
-     <message name="IDS_LUMO_SIDEBAR_EXPAND" desc="Tooltip of the button that expands the collapsed Lumo sidebar icon bar.">
-       サイドバーを展開する
+     <message name="IDS_LUMO_GITHUB_NOTIFY_FAILED_BODY" desc="Body of the notification shown when a GitHub-managed extension failed verification or installation; the installed version is left untouched.">
+       <ph name="EXTENSION_NAME">$1<ex>GitHub 日本語化</ex></ph> の更新を確認できませんでした（<ph name="DETAIL">$2<ex>not newer</ex></ph>）。現在のバージョンのままにしています。
      </message>
 +    <message name="IDS_CHROMELABS_LUMO_NTP_CUSTOMIZE_NAME" desc="Name of the Lumo Labs experiment shown in the Labs bubble.">
 +      新規タブのカスタマイズ (Lumo)
@@ -96,7 +96,7 @@ index 0000000..0000000 100644
 +    <message name="IDS_LUMO_NTP_CUSTOMIZE_TITLE" desc="Title of the Lumo section in the standard Customize Chrome side panel.">
 +      Lumo をカスタマイズ
 +    </message>
-     <message name="IDS_LUMO_LAUNCH_THORIUM_PROFILE" desc="App menu item that launches Lumo with the original Thorium user profile data directory.">
+     <message name="IDS_LUMO_SIDEBAR_MEDIA_TITLE" desc="Title of the Lumo sidebar media panel, which controls the currently playing media.">
 diff --git a/chrome/browser/ui/browser_ui_prefs.cc b/chrome/browser/ui/browser_ui_prefs.cc
 index 0000000..0000000 100644
 @@ -100,4 +100,169 @@

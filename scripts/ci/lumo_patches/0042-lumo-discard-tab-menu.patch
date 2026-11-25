@@ -9,9 +9,9 @@ index 5b321cb..1110042 100644
 +    <message name="IDS_LUMO_TAB_CXMENU_DISCARD_TAB" desc="Tab context menu item that discards the tab's contents without closing the tab (Lumo patch 0042).">
 +      タブを閉じずに非アクティブ化
 +    </message>
-     <message name="IDS_CHROMELABS_RELAUNCH_BUTTON_LABEL"
-              desc="Label on the button in the footer of the Thorium Labs bubble which will relaunch the browser.">
-       Relaunch
+     <message name="IDS_LUMO_WELCOME_TITLE" desc="Title of the first screen of the Lumo first-run welcome flow.">
+       Lumo Browserへようこそ！
+     </message>
 diff --git a/chrome/browser/ui/tabs/tab_menu_model.cc b/chrome/browser/ui/tabs/tab_menu_model.cc
 index 17ab4e6..1110042 100644
 --- a/chrome/browser/ui/tabs/tab_menu_model.cc

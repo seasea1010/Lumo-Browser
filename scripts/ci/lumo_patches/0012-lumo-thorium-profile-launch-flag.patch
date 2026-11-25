@@ -12,7 +12,7 @@ index 5bd9413..7b020ff 100644
 +    <message name="IDS_CHROMELABS_LUMO_LAUNCH_THORIUM_PROFILE_DESCRIPTION" desc="Description of the Lumo Labs experiment that shows the Thorium-profile launch menu item.">
 +      アプリメニューに「もともとのThoriumのユーザープロファイルデータの保存場所から起動」を追加します。誤って押してしまうのを防ぐため、既定では表示されません。
 +    </message>
-     <message name="IDS_LUMO_DEV_STAGE_LABEL" desc="Label shown at the top-left of every Lumo browser window stating that the browser is in an experimental development stage.">
+     <message name="IDS_LUMO_DEV_STAGE_LABEL" desc="Label shown at the bottom-right of every Lumo browser window stating that the browser is in an experimental development stage.">
        このブラウザーは試験的な開発段階です
      </message>
 diff --git a/chrome/browser/thorium_flag_entries.h b/chrome/browser/thorium_flag_entries.h

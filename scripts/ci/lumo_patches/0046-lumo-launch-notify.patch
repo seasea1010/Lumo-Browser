@@ -23,11 +23,11 @@ index e8d7d43..0000000 100644
  #include "chrome/browser/lumo/lumo_debugger_reporter.h"
  #include "chrome/browser/media/router/chrome_media_router_factory.h"
  #include "chrome/browser/media/webrtc/media_capture_devices_dispatcher.h"
-@@ -146,6 +147,12 @@
+@@ -146,7 +147,12 @@
    // debugger app (--lumo-debugger-endpoint), report the startup
    // event and start the session's tab reports. No-op otherwise.
    lumo::debugger::StartSession();
-+
+ 
 +  // Lumo (patch 0046): one launch notification ping per launch
 +  // (task 41). Fire-and-forget on a background thread; no-op
 +  // unless this build carries a distribution id and signing key.

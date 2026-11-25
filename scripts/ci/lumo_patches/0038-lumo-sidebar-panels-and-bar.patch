@@ -55,13 +55,12 @@ diff --git a/chrome/browser/ui/views/frame/browser_view.cc b/chrome/browser/ui/v
 index 7c8572b..1907b08 100644
 --- a/chrome/browser/ui/views/frame/browser_view.cc
 +++ b/chrome/browser/ui/views/frame/browser_view.cc
-@@ -100,12 +100,41 @@
+@@ -100,2 +100,4 @@
 +#include "chrome/browser/ui/views/side_panel/lumo/lumo_sidebar_bar.h"
 +
  #include "chrome/browser/ui/views/side_panel/side_panel.h"
- 
  #include "chrome/browser/ui/views/side_panel/side_panel_animation_content_view.h"
- 
+@@ -100,3 +100,14 @@
    lumo_dev_stage_label_ = AddChildView(std::move(lumo_dev_stage_label));
  
 +  // Lumo: Floorp-style sidebar icon bar (patch 0038). Created only
@@ -76,7 +75,7 @@ index 7c8572b..1907b08 100644
 +  }
 +
  #if BUILDFLAG(IS_WIN)
- 
+@@ -100,4 +100,20 @@
      startup_layout_state_ = StartupLayoutState::kDeferring;
    }
  
@@ -96,7 +95,7 @@ index 7c8572b..1907b08 100644
 +                                 bar_width, contents_bounds.height());
 +  }
 +
-   // Lumo: keep the development-stage label pinned to the top-left
+   // Lumo: keep the development-stage label pinned to the bottom-right
 diff --git a/chrome/browser/ui/views/frame/browser_view.h b/chrome/browser/ui/views/frame/browser_view.h
 index bf00259..f89f690 100644
 --- a/chrome/browser/ui/views/frame/browser_view.h
