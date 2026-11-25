@@ -1265,7 +1265,12 @@ def _fetch_chromium_file(tag, rel_path):
             request = urllib.request.Request(
                 url, headers={"User-Agent": "lumo-ci-stage"}
             )
-            with urllib.request.urlopen(request) as response:
+            # A hung mirror must fail fast instead of stalling
+            # setup until the job budget expires: without a
+            # timeout, urlopen can block forever on a dead
+            # connection (this VM's own fixture fetch stalled
+            # the same way). 60s is generous for a source file.
+            with urllib.request.urlopen(request, timeout=60) as response:
                 body = response.read()
         except (OSError, urllib.error.URLError) as error:
             log(f"  mirror {name} failed for {rel_path}: {error}")
@@ -1305,17 +1310,44 @@ def fetch_missing_series_files(thorium_root, chromium_src, tag):
     log(f"\nFetching {len(wanted)} patch-target files the tarballs "
         f"do not ship (Chromium mirrors, tag {tag})...")
     fetched = 0
+    failed = []
     for rel_path in wanted:
         dest = chromium_src / rel_path
         if dest.exists():
             continue
         body = _fetch_chromium_file(tag, rel_path)
         if body is None:
-            log(f"  not fetchable at {tag}: {rel_path}")
+            failed.append(rel_path)
             continue
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(body)
         fetched += 1
+    if failed:
+        # Build #35 lost 4 files this way: both mirrors answered
+        # with transient errors (googlesource 503, github 429) and
+        # the filter then dropped the patches that needed them --
+        # including one patch a later patch depends on, which
+        # failed the whole setup. One retry pass after a pause
+        # costs little and usually outlasts the rate limiting.
+        log(f"  {len(failed)} files failed to fetch; retrying once "
+            "after a 30s pause (mirror rate limiting is usually "
+            "transient)...")
+        time.sleep(30)
+        still_failed = []
+        for rel_path in failed:
+            dest = chromium_src / rel_path
+            if dest.exists():
+                continue
+            body = _fetch_chromium_file(tag, rel_path)
+            if body is None:
+                still_failed.append(rel_path)
+                continue
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(body)
+            fetched += 1
+        for rel_path in still_failed:
+            log(f"  not fetchable at {tag}: {rel_path}")
+        failed = still_failed
     log(f"Fetched {fetched}/{len(wanted)} missing patch-target files.")
     return fetched
 
@@ -1371,6 +1403,13 @@ def _fetch_test_fonts_archive(chromium_src, tag):
     """
     pin = _test_fonts_gcs_object(tag)
     if pin is None:
+        # The DEPS fetch inside can hit the same transient mirror
+        # errors as build #35; one retry after a pause.
+        log("  test_fonts DEPS fetch failed; retrying once after "
+            "a 30s pause...")
+        time.sleep(30)
+        pin = _test_fonts_gcs_object(tag)
+    if pin is None:
         raise StageError(
             "Could not parse the test_fonts GCS entry from DEPS "
             f"at tag {tag}."
@@ -1379,16 +1418,26 @@ def _fetch_test_fonts_archive(chromium_src, tag):
     url = f"https://storage.googleapis.com/{bucket}/{object_name}"
     log(f"Downloading the test_fonts archive ({size} bytes, "
         "pinned in DEPS)...")
-    try:
-        request = urllib.request.Request(
-            url, headers={"User-Agent": "lumo-ci-stage"}
-        )
-        with urllib.request.urlopen(request) as response:
-            blob = response.read()
-    except (OSError, urllib.error.URLError) as error:
+    blob = None
+    last_error = None
+    for attempt in (1, 2):
+        try:
+            request = urllib.request.Request(
+                url, headers={"User-Agent": "lumo-ci-stage"}
+            )
+            with urllib.request.urlopen(request) as response:
+                blob = response.read()
+            break
+        except (OSError, urllib.error.URLError) as error:
+            last_error = error
+            if attempt == 1:
+                log("  test_fonts archive download failed "
+                    f"({error}); retrying once after a 30s pause...")
+                time.sleep(30)
+    if blob is None:
         raise StageError(
-            f"test_fonts archive download failed: {error}"
-        ) from error
+            f"test_fonts archive download failed: {last_error}"
+        ) from last_error
     if len(blob) != size:
         raise StageError(
             f"test_fonts archive size mismatch: got {len(blob)} "
@@ -1450,6 +1499,16 @@ def fetch_missing_test_fonts(chromium_src, tag):
             tag, "third_party/test_fonts/BUILD.gn"
         )
         if body is None:
+            # Same transient-mirror class as build #35's series
+            # fetch (googlesource 503 / github 429): one retry
+            # after a pause before giving up.
+            log("  test_fonts BUILD.gn fetch failed; retrying once "
+                "after a 30s pause...")
+            time.sleep(30)
+            body = _fetch_chromium_file(
+                tag, "third_party/test_fonts/BUILD.gn"
+            )
+        if body is None:
             raise StageError(
                 "third_party/test_fonts/BUILD.gn is absent from "
                 "the tarball tree and could not be fetched from "
@@ -1475,6 +1534,7 @@ def fetch_missing_test_fonts(chromium_src, tag):
         f"do not ship (tag {tag})...")
     fetched = 0
     needs_archive = False
+    failed = []
     for rel_path in missing:
         if rel_path.startswith("test_fonts/"):
             needs_archive = True
@@ -1483,13 +1543,38 @@ def fetch_missing_test_fonts(chromium_src, tag):
             tag, f"third_party/test_fonts/{rel_path}"
         )
         if body is None:
-            raise StageError(
-                f"test_fonts file no mirror has at {tag}: {rel_path}"
-            )
+            failed.append(rel_path)
+            continue
         dest = fonts_root / rel_path
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(body)
         fetched += 1
+    if failed:
+        # Build #35 lost series files to transient mirror 503/429s;
+        # the same can hit these fetches. One retry pass after a
+        # pause costs little and usually outlasts the rate limiting.
+        log(f"  {len(failed)} test_fonts files failed to fetch; "
+            "retrying once after a 30s pause...")
+        time.sleep(30)
+        still_failed = []
+        for rel_path in failed:
+            dest = fonts_root / rel_path
+            if dest.is_file():
+                continue
+            body = _fetch_chromium_file(
+                tag, f"third_party/test_fonts/{rel_path}"
+            )
+            if body is None:
+                still_failed.append(rel_path)
+                continue
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(body)
+            fetched += 1
+        if still_failed:
+            raise StageError(
+                f"test_fonts file no mirror has at {tag}: "
+                f"{still_failed[0]}"
+            )
     if needs_archive:
         fetched += _fetch_test_fonts_archive(chromium_src, tag)
     still_missing = [
@@ -1547,6 +1632,153 @@ def filter_unappliable_series(thorium_root, chromium_src):
         )
         log(f"Patch series filtered: dropped {len(dropped)} "
             "unappliable entries (see warnings above).")
+    return dropped
+
+
+def verify_series_sequentially(thorium_root, chromium_src):
+    """Drop series entries that fail when applied in series order.
+
+    Build #35 failed because the presence filter above dropped
+    other/android-extensions-support.patch (its Android targets
+    were left unfetched by transient mirror 503/429s) while the
+    next entry, other/enable-extension-in-incognito.patch, assumes
+    that patch's edits in six files -- so it failed `git apply`
+    in setup.py and killed the whole build. The presence filter
+    only checks that each entry's targets exist in the pristine
+    tree; it cannot see that a later entry's pre-image depends on
+    an earlier entry. A whole-series chain check (2026-11-25) found
+    this is the general shape: 141 files are touched by two or
+    more entries, so any dropped entry can strand a later one.
+
+    This pass simulates Thorium's own apply_series.py in a scratch
+    overlay holding copies of just the files the series touches:
+    entries are checked in order with `git apply --check` against
+    the evolving overlay state (same forward-check, then
+    reverse-check for already-applied, then fail logic as
+    apply_series.py), and any entry that fails is dropped from the
+    series file with a loud log line. The real tree is never
+    touched; setup.py then applies the surviving series. Runs
+    after the Lumo series overrides so it sees the final series.
+    Fail-open: any unexpected error here leaves the series
+    unchanged (and loudly logged) rather than breaking setup.
+    Returns the list of dropped entry rel paths.
+    """
+    series_path = thorium_root / "patch_scripts" / "series" / "series"
+    try:
+        return _verify_series_sequentially_inner(
+            thorium_root, chromium_src, series_path
+        )
+    except Exception as error:  # noqa: BLE001 - fail open by design
+        log(f"WARNING: sequential series check failed ({error}); "
+            "leaving the series unchanged. A broken entry may "
+            "still fail setup.py, as before this check.")
+        return []
+
+
+def _verify_series_sequentially_inner(thorium_root, chromium_src,
+                                      series_path):
+    records = _analyze_series(thorium_root, chromium_src)
+    entries = []
+    overlay_targets = []
+    seen_targets = set()
+    for record in records:
+        if record["conditional"] or record["rel"] is None:
+            continue
+        patch_path = thorium_root / record["rel"]
+        entries.append(
+            (record["raw"], record["apply_root"], record["rel"],
+             patch_path)
+        )
+        if not patch_path.is_file():
+            continue
+        modified, _created = _series_patch_targets(
+            patch_path.read_text(encoding="utf-8", errors="ignore")
+        )
+        for path in modified:
+            full = (path if record["apply_root"] == "."
+                    else f"{record['apply_root']}/{path}")
+            if full not in seen_targets:
+                seen_targets.add(full)
+                overlay_targets.append(full)
+    if not entries:
+        return []
+    git = find_executable("git")
+    dropped = []
+    kept_lines = []
+    with tempfile.TemporaryDirectory(prefix="lumo-series-check-") as temp:
+        overlay = Path(temp) / "tree"
+        overlay.mkdir(parents=True)
+        for full in overlay_targets:
+            src = chromium_src / full
+            if src.is_file():
+                dest = overlay / full
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(src, dest)
+        subprocess.run(
+            [git, "init", "--quiet"], cwd=overlay,
+            capture_output=True, check=True,
+        )
+
+        def git_apply(patch, apply_root, check, reverse=False):
+            cmd = [git, "-C", str(overlay), "apply"]
+            if check:
+                cmd.append("--check")
+            if reverse:
+                cmd.append("--reverse")
+            if apply_root != ".":
+                cmd.append(f"--directory={apply_root}")
+            cmd.append(str(patch))
+            return subprocess.run(
+                cmd, capture_output=True, text=True, timeout=300,
+            )
+
+        for raw, apply_root, rel, patch_path in entries:
+            if not patch_path.is_file():
+                log(f"WARNING: series entry {rel} has no patch file "
+                    "in the Thorium clone; keeping it (setup.py "
+                    "will report it).")
+                kept_lines.append(raw)
+                continue
+            apply_dir = (overlay if apply_root == "."
+                         else overlay / apply_root)
+            apply_dir.mkdir(parents=True, exist_ok=True)
+            check = git_apply(patch_path, apply_root, check=True)
+            if check.returncode == 0:
+                applied = git_apply(patch_path, apply_root, check=False)
+                if applied.returncode == 0:
+                    kept_lines.append(raw)
+                    continue
+                reason = ((applied.stderr or applied.stdout)
+                          .strip().splitlines() or ["apply failed"])
+                log(f"WARNING: dropping Thorium series entry {rel}: "
+                    f"it passed --check but failed to apply ({reason[0]}).")
+                dropped.append(rel)
+                continue
+            reverse = git_apply(patch_path, apply_root, check=True,
+                                reverse=True)
+            if reverse.returncode == 0:
+                log(f"Series entry {rel} is already applied in the "
+                    "overlay; keeping it.")
+                kept_lines.append(raw)
+                continue
+            reason = ((check.stderr or check.stdout)
+                      .strip().splitlines() or ["--check failed"])
+            log(f"WARNING: dropping Thorium series entry {rel}: it "
+                "does not apply after the earlier kept entries "
+                f"({reason[0]}). Keeping it would fail setup.py.")
+            dropped.append(rel)
+    if dropped:
+        # write_bytes, never write_text: same CRLF reasoning as the
+        # presence filter above.
+        series_path.write_bytes(
+            ("\n".join(kept_lines) + "\n").encode("utf-8")
+        )
+        log(f"Sequential series check: dropped {len(dropped)} "
+            "entries that cannot apply in order (see warnings "
+            "above).")
+    else:
+        log("Sequential series check: all kept entries apply in "
+            "order.")
     return dropped
 
 
@@ -4192,6 +4424,7 @@ def phase_setup(args, ctx, deadline):
     fetch_missing_test_fonts(chromium_src, args.chromium_tag)
     filter_unappliable_series(thorium_root, chromium_src)
     apply_lumo_series_overrides(thorium_root)
+    verify_series_sequentially(thorium_root, chromium_src)
     log(f"\nApplying Thorium setup for profile --{args.profile} "
         "(overlays, patch series, GRD rebase).")
     run_checked(
