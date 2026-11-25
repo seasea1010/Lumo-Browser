@@ -10,22 +10,21 @@ index ed48aa3..23ccb21 100644
  
  #define TOOLBAR_PINNABLE_ACTION_IDS \
 diff --git a/chrome/browser/ui/browser_actions.cc b/chrome/browser/ui/browser_actions.cc
-index 33b43f9..766e40b 100644
+index 0f7a326..a259089 100644
 --- a/chrome/browser/ui/browser_actions.cc
 +++ b/chrome/browser/ui/browser_actions.cc
-@@ -100,5 +100,7 @@
+@@ -12,6 +12,7 @@
+ 
+ #include "base/check_deref.h"
  #include "base/check_op.h"
- 
 +#include "base/feature_list.h"
-+
  #include "base/functional/bind.h"
- 
-   if (HistorySidePanelCoordinator::IsSupported()) {
-@@ -145,4 +147,17 @@
-                         kActionSidePanelShowHistory, bwi, true)
+ #include "base/functional/callback_helpers.h"
+ #include "base/metrics/histogram_functions.h"
+@@ -508,6 +509,19 @@ void BrowserActions::InitializeSidePanelActions() {
              .Build());
    }
-+
+ 
 +  // Lumo (patch 0038): action item for the sidebar web panel. The
 +  // entry itself is registered in SidePanelHelper only while the
 +  // kLumoSidebar feature is enabled.
@@ -38,7 +37,10 @@ index 33b43f9..766e40b 100644
 +                        kActionSidePanelShowLumoWebPanel, bwi, true)
 +            .Build());
 +  }
- 
++
+   ui::Accelerator reading_mode_accelerator;
+   std::u16string reading_mode_shortcut;
+   if (GetAcceleratorForCommandId(IDC_SHOW_READING_MODE_KEYBOARD,
 diff --git a/chrome/browser/ui/side_panel/side_panel_entry_id.h b/chrome/browser/ui/side_panel/side_panel_entry_id.h
 index 3b85738..a23b1dd 100644
 --- a/chrome/browser/ui/side_panel/side_panel_entry_id.h
@@ -670,16 +672,18 @@ index 0000000..f098df2
 +
 +#endif  // CHROME_BROWSER_UI_VIEWS_SIDE_PANEL_LUMO_LUMO_WEB_PANEL_VIEW_H_
 diff --git a/chrome/browser/ui/views/side_panel/side_panel.cc b/chrome/browser/ui/views/side_panel/side_panel.cc
-index 716609d..c6e72b5 100644
+index 48d9dd0..9b880cc 100644
 --- a/chrome/browser/ui/views/side_panel/side_panel.cc
 +++ b/chrome/browser/ui/views/side_panel/side_panel.cc
-@@ -100,9 +100,16 @@
+@@ -8,6 +8,7 @@
+ #include <memory>
+ 
  #include "base/callback_list.h"
- 
 +#include "base/feature_list.h"
-+
  #include "base/functional/bind.h"
- 
+ #include "base/i18n/number_formatting.h"
+ #include "base/i18n/rtl.h"
+@@ -94,6 +95,11 @@ gfx::Insets GetBorderInsets() {
  SidePanel::HorizontalAlignment GetHorizontalAlignment(
      PrefService* pref_service,
      std::optional<SidePanelEntryId> entry_id) {
@@ -690,25 +694,28 @@ index 716609d..c6e72b5 100644
 +
    const base::DictValue& overrides =
        pref_service->GetDict(prefs::kSidePanelAlignmentOverrides);
+   std::optional<bool> override_value =
 diff --git a/chrome/browser/ui/views/side_panel/side_panel_helper.cc b/chrome/browser/ui/views/side_panel/side_panel_helper.cc
-index 4e86729..2992ae3 100644
+index e1e7ccb..b150320 100644
 --- a/chrome/browser/ui/views/side_panel/side_panel_helper.cc
 +++ b/chrome/browser/ui/views/side_panel/side_panel_helper.cc
-@@ -100,9 +100,13 @@
+@@ -4,6 +4,7 @@
+ 
  #include "chrome/browser/ui/views/side_panel/side_panel_helper.h"
  
 +#include "base/feature_list.h"
-+
  #include "chrome/browser/history_clusters/history_clusters_service_factory.h"
- 
+ #include "chrome/browser/profiles/profile.h"
+ #include "chrome/browser/ui/browser_actions.h"
+@@ -16,6 +17,7 @@
+ #include "chrome/browser/ui/views/side_panel/comments/comments_side_panel_coordinator.h"
+ #include "chrome/browser/ui/views/side_panel/history/history_side_panel_coordinator.h"
  #include "chrome/browser/ui/views/side_panel/history_clusters/history_clusters_side_panel_coordinator.h"
- 
 +#include "chrome/browser/ui/views/side_panel/lumo/lumo_sidebar_entries.h"
-+
  #include "chrome/browser/ui/views/side_panel/reading_list/reading_list_side_panel_coordinator.h"
- 
-   // Add comments.
-@@ -149,4 +153,9 @@
+ #include "chrome/browser/ui/views/side_panel/tabs_from_other_devices/tabs_from_other_devices_side_panel_coordinator.h"
+ #include "chrome/browser/ui/webui_browser/webui_browser.h"
+@@ -66,6 +68,11 @@ void SidePanelHelper::PopulateGlobalEntries(
      CommentsSidePanelCoordinator::From(browser)->CreateAndRegisterEntry(
          window_registry);
    }
@@ -718,3 +725,5 @@ index 4e86729..2992ae3 100644
 +    lumo_sidebar::RegisterLumoSidebarEntries(browser, window_registry);
 +  }
  }
+ 
+ // static
