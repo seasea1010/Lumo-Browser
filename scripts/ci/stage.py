@@ -26,8 +26,10 @@ Pipeline (all inside the job's time budget):
   4. gn        -- write out/thorium/args.gn from args.gn.example, injecting
      the Google API keys from the environment (Secrets), then `gn gen`.
   5. build     -- autoninja thorium_all + thorium_installer with a time
-     budget. The Thorium patches rename the binary to thorium.exe; the
-     rename to lumo.exe happens at packaging time (build-final job).
+     budget. The Thorium patches rename the binary to thorium.exe;
+     Lumo patch 0045 renames it again at the source level, so the
+     build emits lumo.exe directly (task 40). build-final no longer
+     renames anything at packaging time.
      Profile is AVX2 only (target machine: Intel Core i5-8350U).
 
 Resume model (mirrors Helium's stage action):
@@ -49,7 +51,7 @@ Resume model (mirrors Helium's stage action):
     build phase with no depot_tools and died immediately).
   * Exit code 42 means "build incomplete, resume in the next stage"
     (Helium's convention). It is NOT a failure.
-  * Exit code 0 means the build finished; thorium.exe was verified to
+  * Exit code 0 means the build finished; lumo.exe was verified to
     exist. The state artifact is still uploaded so build-final can
     download the finished tree.
   * Any other non-zero exit code is a real failure and fails the job.
@@ -67,7 +69,9 @@ Status after run #12 (2026-11-15):
   * Renaming thorium.exe to lumo.exe at packaging time is VERIFIED:
     a package salvaged from the run #12 checkpoint with that rename
     was launched by seasea1010 on Windows (2026-11-15;
-    chrome://version showed lumo.exe, 156.0.8078.80).
+    chrome://version showed lumo.exe, 156.0.8078.80). Superseded in
+    build #33 by patch 0045 (task 40): the tree now builds lumo.exe
+    directly and build-final no longer renames anything.
   * The build-state zip is large (5.9 GiB at stage 1, growing to
     9.19 GiB for the finished tree in run #12). Zipping and
     uploading it must fit the reserve after the work deadline —
@@ -3727,6 +3731,101 @@ def write_lumo_lock_config(chromium_src, environ=None):
                 "password has no effect without the first.")
 
 
+# Launch notification (task 41, patch 0046). The distribution id
+# and the per-distribution signing key come from the
+# LUMO_LAUNCH_DIST_ID / LUMO_LAUNCH_KEY GitHub Secrets and reach
+# the browser through a generated header, exactly like the startup
+# lock above: the header is rewritten on every branding run, is
+# deliberately NOT part of patch 0046, and is kept out of the
+# checkpoint zip (see _checkpoint_exclusion_switches). The key is
+# a 32-byte value written as 64 lowercase hex characters; it must
+# match the value registered for the same distribution id in the
+# receiving side's key table. Neither value is ever logged.
+LUMO_LAUNCH_CONFIG_REL_PATH = "chrome/browser/lumo/lumo_launch_config.h"
+LUMO_LAUNCH_DIST_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+LUMO_LAUNCH_KEY_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+
+
+def write_lumo_launch_config(chromium_src, environ=None):
+    """Generate chrome/browser/lumo/lumo_launch_config.h from the
+    LUMO_LAUNCH_DIST_ID and LUMO_LAUNCH_KEY environment variables
+    (GitHub Secrets), for patch 0046's launch notification.
+
+    Mirrors write_lumo_lock_config's hardening: the written file
+    is read back and verified byte-for-byte, and the values are
+    never printed to the log. Both secrets UNSET is not an error:
+    an empty-values header is written and the build proceeds with
+    the launch notification DISABLED, so a build without the
+    secrets (someone else's fork, a lost secret) still produces a
+    working browser. Exactly one of the two set, or a malformed
+    value, is a loud StageError: a half-configured distribution
+    would silently never report, which is worse than failing.
+    """
+    if environ is None:
+        environ = os.environ
+    dist_id = (environ.get("LUMO_LAUNCH_DIST_ID") or "").strip()
+    key_hex = (environ.get("LUMO_LAUNCH_KEY") or "").strip()
+    if bool(dist_id) != bool(key_hex):
+        raise StageError(
+            "LUMO_LAUNCH_DIST_ID and LUMO_LAUNCH_KEY must be set "
+            "together (or both unset to disable the launch "
+            "notification); exactly one of them is set, refusing "
+            "to build a half-configured distribution (values are "
+            "not shown)"
+        )
+    if dist_id and not LUMO_LAUNCH_DIST_ID_PATTERN.match(dist_id):
+        raise StageError(
+            "LUMO_LAUNCH_DIST_ID is set but malformed: expected "
+            "1-64 characters of [A-Za-z0-9._-] starting with an "
+            "alphanumeric; refusing to build (the value itself is "
+            "not shown)"
+        )
+    if key_hex and not LUMO_LAUNCH_KEY_PATTERN.match(key_hex):
+        raise StageError(
+            "LUMO_LAUNCH_KEY is set but malformed: expected a "
+            "32-byte key as 64 lowercase hex characters; refusing "
+            "to build (the value itself is not shown)"
+        )
+    lines = [
+        "// Generated by scripts/ci/stage.py from the",
+        "// LUMO_LAUNCH_DIST_ID / LUMO_LAUNCH_KEY secrets at build",
+        "// time. Do not edit; regenerated on every branding run.",
+        "// Empty values mean the secrets were not set: the launch",
+        "// notification is disabled in that build.",
+        "#ifndef CHROME_BROWSER_LUMO_LUMO_LAUNCH_CONFIG_H_",
+        "#define CHROME_BROWSER_LUMO_LUMO_LAUNCH_CONFIG_H_",
+        "",
+        "namespace lumo {",
+        "",
+        f'inline constexpr char kLaunchDistId[] = "{dist_id}";',
+        f'inline constexpr char kLaunchKeyHex[] = "{key_hex}";',
+        "",
+        "}  // namespace lumo",
+        "",
+        "#endif  // CHROME_BROWSER_LUMO_LUMO_LAUNCH_CONFIG_H_",
+        "",
+    ]
+    text = "\n".join(lines)
+    header_path = chromium_src / LUMO_LAUNCH_CONFIG_REL_PATH
+    header_path.parent.mkdir(parents=True, exist_ok=True)
+    header_path.write_text(text, encoding="utf-8")
+    written = header_path.read_text(encoding="utf-8")
+    if written != text:
+        raise StageError(
+            "lumo_launch_config.h verification failed: the written "
+            "file does not match the generated content; refusing "
+            "to build with an unverified launch configuration"
+        )
+    if dist_id:
+        log("Lumo launch notify: launch config header written from "
+            "LUMO_LAUNCH_DIST_ID / LUMO_LAUNCH_KEY (values not "
+            "shown).")
+    else:
+        log("Lumo launch notify: LUMO_LAUNCH_DIST_ID / "
+            "LUMO_LAUNCH_KEY are not set; building with the launch "
+            "notification DISABLED.")
+
+
 # Lumo build number (task 6 extension, patch 0025). The product
 # version string (156.0.8078.80) is identical for every Lumo build,
 # so it cannot key the "show the welcome flow once after an
@@ -3855,6 +3954,7 @@ def apply_lumo_branding(args, ctx, deadline):
     for desc, n in lumo_labs_origin_suffix_pass(chromium_src):
         log(f"Lumo branding: {desc}: {n} replacement(s).")
     write_lumo_lock_config(chromium_src)
+    write_lumo_launch_config(chromium_src)
     write_lumo_build_config(chromium_src)
     log("Lumo branding complete.")
 
@@ -4215,6 +4315,11 @@ def restore_generated_secret_files(args, ctx):
       silently ship a browser with the startup lock DISABLED:
       patch 0019 reads the headers through __has_include and
       treats a missing header as "no password configured".
+    * lumo_launch_config.h, when missing (task 41). Without this
+      a resumed build would silently ship with the launch
+      notification disabled even when the distribution secrets
+      are set: patch 0046 reads the header through __has_include
+      and treats a missing header as "not configured".
     """
     chromium_src = ctx["chromium_src"]
     out_dir = chromium_src / OUT_DIR_NAME
@@ -4231,6 +4336,13 @@ def restore_generated_secret_files(args, ctx):
             "the lock hash). Regenerating them from this stage's "
             "environment.")
         write_lumo_lock_config(chromium_src)
+    launch_header = chromium_src / LUMO_LAUNCH_CONFIG_REL_PATH
+    if not launch_header.is_file():
+        log("\nResume: the launch config header is not in the "
+            "checkpoint (kept out on purpose; it carries the "
+            "distribution signing key). Regenerating it from this "
+            "stage's environment.")
+        write_lumo_launch_config(chromium_src)
 
 
 def phase_gn(args, ctx, deadline):
@@ -4434,6 +4546,124 @@ _THORIUM_EASTER_EGGS_REL = (
     "chrome/browser/ui/webui/thorium_easter_eggs.h"
 )
 _CHROME_BROWSER_MAIN_WIN_REL = "chrome/browser/chrome_browser_main_win.cc"
+# Build #33 fixup targets (tasks 12/28/35/36/38/40/41/42/43).
+_GENERATED_RESOURCES_GRD_REL = "chrome/app/generated_resources.grd"
+_TAB_CC_REL = "chrome/browser/ui/views/tabs/tab.cc"
+_UI_FEATURES_CC_REL = "chrome/browser/ui/ui_features.cc"
+_UI_FEATURES_H_REL = "chrome/browser/ui/ui_features.h"
+_TAB_CONTEXT_MENU_COMMAND_REL = (
+    "components/tabs/public/tab_context_menu_command.h"
+)
+_TAB_MENU_MODEL_REL = "chrome/browser/ui/tabs/tab_menu_model.cc"
+_TAB_STRIP_MODEL_REL = "chrome/browser/ui/tabs/tab_strip_model.cc"
+_EXTENSION_MANAGEMENT_REL = (
+    "chrome/browser/extensions/extension_management.cc"
+)
+_CHROME_BUILD_GN_REL = "chrome/BUILD.gn"
+_REORDER_IMPORTS_REL = "build/win/reorder-imports.py"
+_CHROME_CONSTANTS_REL = "chrome/common/chrome_constants.cc"
+_UTIL_CONSTANTS_H_REL = "chrome/installer/util/util_constants.h"
+_LAUNCHER_SUPPORT_REL = (
+    "chrome/installer/launcher_support/chrome_launcher_support.cc"
+)
+_CHROME_PROXY_MAIN_WIN_REL = "chrome/chrome_proxy/chrome_proxy_main_win.cc"
+_MINI_INSTALLER_BUILD_GN_REL = "chrome/installer/mini_installer/BUILD.gn"
+_MINI_INSTALLER_RELEASE_REL = (
+    "chrome/installer/mini_installer/chrome.release"
+)
+_MINI_INSTALLER_CONSTANTS_REL = (
+    "chrome/installer/mini_installer/mini_installer_constants.cc"
+)
+_CHROME_EXE_VER_REL = "chrome/app/chrome_exe.ver"
+_CHROME_BROWSER_BUILD_GN_REL = "chrome/browser/BUILD.gn"
+_CHROME_BROWSER_MAIN_REL = "chrome/browser/chrome_browser_main.cc"
+_LUMO_LAUNCH_NOTIFY_CC_REL = "chrome/browser/lumo/lumo_launch_notify.cc"
+_LUMO_LAUNCH_NOTIFY_H_REL = "chrome/browser/lumo/lumo_launch_notify.h"
+_ROUTE_TS_REL = "chrome/browser/resources/settings/route.ts"
+_ROUTER_TS_REL = "chrome/browser/resources/settings/router.ts"
+_SETTINGS_TS_REL = "chrome/browser/resources/settings/settings.ts"
+_SETTINGS_MAIN_TS_REL = (
+    "chrome/browser/resources/settings/settings_main/settings_main.ts"
+)
+_SETTINGS_MAIN_HTML_REL = (
+    "chrome/browser/resources/settings/settings_main/settings_main.html"
+)
+_LOCALIZED_STRINGS_PROVIDER_REL = (
+    "chrome/browser/ui/webui/settings/"
+    "settings_localized_strings_provider.cc"
+)
+_SETTINGS_UI_CC_REL = "chrome/browser/ui/webui/settings/settings_ui.cc"
+_SETTINGS_WEBUI_BUILD_GN_REL = "chrome/browser/ui/webui/settings/BUILD.gn"
+_SETTINGS_RESOURCES_BUILD_GN_REL = (
+    "chrome/browser/resources/settings/BUILD.gn"
+)
+_LUMO_MONITOR_PAGE_HTML_TS_REL = (
+    "chrome/browser/resources/settings/lumo_monitor_page/"
+    "lumo_monitor_page.html.ts"
+)
+_PREF_NAMES_REL = "chrome/common/pref_names.h"
+_BROWSER_UI_PREFS_REL = "chrome/browser/ui/browser_ui_prefs.cc"
+_STARTUP_BROWSER_CREATOR_REL = (
+    "chrome/browser/ui/startup/startup_browser_creator_impl.cc"
+)
+_EXTENSIONS_UI_CC_REL = (
+    "chrome/browser/ui/webui/extensions/extensions_ui.cc"
+)
+_EXTENSION_INFO_GENERATOR_REL = (
+    "chrome/browser/ui/webui/extensions/extension_info_generator.cc"
+)
+_EXTENSIONS_TOOLBAR_HTML_TS_REL = (
+    "chrome/browser/resources/extensions/toolbar.html.ts"
+)
+_EXTENSIONS_DETAIL_VIEW_REL = (
+    "chrome/browser/resources/extensions/detail_view.ts"
+)
+_THORIUM_FLAG_ENTRIES_REL = "chrome/browser/thorium_flag_entries.h"
+_CUSTOMIZE_CHROME_UI_CC_REL = (
+    "chrome/browser/ui/webui/side_panel/customize_chrome/"
+    "customize_chrome_ui.cc"
+)
+_CUSTOMIZE_CHROME_TS_REL = (
+    "chrome/browser/resources/side_panel/customize_chrome/"
+    "app.ts"
+)
+_CUSTOMIZE_CHROME_HTML_TS_REL = (
+    "chrome/browser/resources/side_panel/customize_chrome/"
+    "app.html.ts"
+)
+_CUSTOMIZE_CHROME_BUILD_GN_REL = (
+    "chrome/browser/resources/side_panel/customize_chrome/BUILD.gn"
+)
+_NEW_TAB_PAGE_UI_CC_REL = (
+    "chrome/browser/ui/webui/new_tab_page/new_tab_page_ui.cc"
+)
+_NEW_TAB_PAGE_TS_REL = (
+    "chrome/browser/resources/new_tab_page/new_tab_page.ts"
+)
+_NTP_APP_HTML_TS_REL = (
+    "chrome/browser/resources/new_tab_page/new_tab_page.html"
+)
+_NEW_TAB_PAGE_BUILD_GN_REL = (
+    "chrome/browser/resources/new_tab_page/new_tab_page.gni"
+)
+_EXTENSIONS_WEBUI_BUILD_GN_REL = (
+    "chrome/browser/ui/webui/extensions/BUILD.gn"
+)
+_EXTENSIONS_BROWSER_PROXY_TS_REL = (
+    "chrome/browser/resources/extensions/extensions_browser_proxy.ts"
+)
+_EXTENSIONS_TOOLBAR_TS_REL = (
+    "chrome/browser/resources/extensions/toolbar.ts"
+)
+_EXTENSIONS_DETAIL_VIEW_HTML_TS_REL = (
+    "chrome/browser/resources/extensions/detail_view.html.ts"
+)
+_EXTENSIONS_RESOURCES_BUILD_GN_REL = (
+    "chrome/browser/resources/extensions/BUILD.gn"
+)
+_CHROME_LABS_MODEL_CC_REL = (
+    "chrome/browser/ui/toolbar/chrome_labs/chrome_labs_model.cc"
+)
 
 # (file, old bytes, new bytes, what) — plain byte replacements.
 _LUMO_RESUME_FIXUP_REPLACEMENTS = (
@@ -5025,10 +5255,676 @@ _LUMO_RESUME_FIXUP_REPLACEMENTS = (
         b"    LOG(WARNING) << \"Lumo startup lock: could not persist the \"\n"
         b"                    \"unlock token.\";\n"
         b"  }\n"
+        b"  // Lumo (patch 0046): persist which password unlocked, for the\n"
+        b"  // launch notification. Entry 0 is the primary (owner) password;\n"
+        b"  // any later entry is the second (friend) password. Best effort\n"
+        b"  // like the token: a failed write only means the next launch\n"
+        b"  // notification omits the kind.\n"
+        b"  base::WriteFile(user_data_dir.Append(kLumoUnlockKindFileName),\n"
+        b"                  state.matched_entry == 0 ? \"owner\" : \"friend\");\n"
         b"  return true;\n"
         b"}\n",
         "RunStartupPasswordLock multi-entry (startup lock)",
     ),
+    # --- Build #33 fixups (tasks 12/42/43) ---
+    (
+        _BROWSER_VIEW_REL,
+        b"    lumo_dev_stage_label_->SetBounds(contents_bounds.x() + 6,\n"
+        b"                                     contents_bounds.y() + 6,\n"
+        b"                                     label_preferred.width() + 12,\n"
+        b"                                     label_preferred.height() + 6);",
+        b"    const int label_width = label_preferred.width() + 12;\n"
+        b"    const int label_height = label_preferred.height() + 6;\n"
+        b"    lumo_dev_stage_label_->SetBounds(\n"
+        b"        contents_bounds.right() - label_width - 6,\n"
+        b"        contents_bounds.bottom() - label_height - 6,\n"
+        b"        label_width, label_height);",
+        "dev stage label bounds: top-left (+6,+6) -> bottom-right "
+        "(-6,-6) (patch 0008, task 12)",
+    ),
+    (
+        _GENERATED_RESOURCES_GRD_REL,
+        b'desc="Label shown at the top-left of every Lumo browser '
+        b'window stating that the browser is in an experimental '
+        b'development stage."',
+        b'desc="Label shown at the bottom-right of every Lumo browser '
+        b'window stating that the browser is in an experimental '
+        b'development stage."',
+        "dev stage label GRD desc: top-left -> bottom-right "
+        "(patch 0008, task 12)",
+    ),
+    (
+        _TAB_CC_REL,
+        b"    showing_close_button_ =\n"
+        b"        should_show_close_button && large_enough_for_close_button &&\n"
+        b"        !(declutter_eligible &&\n"
+        b"          available_width <=\n"
+        b"              TabStyle::kTabStripDeclutterMaxTabWidthForCloseHide);",
+        b"    const bool lumo_hover_show_close_button =\n"
+        b"        base::FeatureList::IsEnabled(features::kLumoHoverShowCloseButton) &&\n"
+        b"        mouse_hovered();\n"
+        b"    showing_close_button_ =\n"
+        b"        should_show_close_button &&\n"
+        b"        (large_enough_for_close_button || lumo_hover_show_close_button) &&\n"
+        b"        !(declutter_eligible && !lumo_hover_show_close_button &&\n"
+        b"          available_width <=\n"
+        b"              TabStyle::kTabStripDeclutterMaxTabWidthForCloseHide);",
+        "inactive-tab close button: hover shows it when "
+        "kLumoHoverShowCloseButton is on (patch 0041, task 42)",
+    ),
+    (
+        _TAB_CC_REL,
+        b"  mouse_hovered_ = true;\n"
+        b"  controller_->ShowHover(this, TabStyle::ShowHoverStyle::kSubtle);",
+        b"  mouse_hovered_ = true;\n"
+        b"  if (base::FeatureList::IsEnabled(features::kLumoHoverShowCloseButton)) {\n"
+        b"    UpdateIconVisibility();\n"
+        b"  }\n"
+        b"  controller_->ShowHover(this, TabStyle::ShowHoverStyle::kSubtle);",
+        "hover start recomputes close-button visibility "
+        "(patch 0041, task 42)",
+    ),
+    (
+        _TAB_CC_REL,
+        b"  mouse_hovered_ = false;\n"
+        b"  controller_->HideHover(this, TabStyle::HideHoverStyle::kGradual);",
+        b"  mouse_hovered_ = false;\n"
+        b"  if (base::FeatureList::IsEnabled(features::kLumoHoverShowCloseButton)) {\n"
+        b"    UpdateIconVisibility();\n"
+        b"  }\n"
+        b"  controller_->HideHover(this, TabStyle::HideHoverStyle::kGradual);",
+        "hover end recomputes close-button visibility "
+        "(patch 0041, task 42)",
+    ),
+    (
+        _UI_FEATURES_CC_REL,
+        b"BASE_FEATURE(kLumoDoubleClickCloseTab, base::FEATURE_DISABLED_BY_DEFAULT);\n"
+        b"\n"
+        b"// Lumo Labs experiment (Lumo patch 0012, task 15): when enabled,",
+        b"BASE_FEATURE(kLumoDoubleClickCloseTab, base::FEATURE_DISABLED_BY_DEFAULT);\n"
+        b"\n"
+        b"// Lumo (Lumo patch 0041, task 42): show the close button on a\n"
+        b"// hovered inactive tab. Enabled by default; turning the Labs\n"
+        b"// experiment / flag off restores the stock Chromium behaviour.\n"
+        b"BASE_FEATURE(kLumoHoverShowCloseButton, base::FEATURE_ENABLED_BY_DEFAULT);\n"
+        b"\n"
+        b"// Lumo Labs experiment (Lumo patch 0012, task 15): when enabled,",
+        "BASE_FEATURE(kLumoHoverShowCloseButton, enabled by default) "
+        "(patch 0041, task 42)",
+    ),
+    (
+        _UI_FEATURES_H_REL,
+        b"BASE_DECLARE_FEATURE(kLumoDoubleClickCloseTab);\n"
+        b"\n"
+        b"// Lumo Labs experiment (Lumo patch 0012): shows the app-menu item",
+        b"BASE_DECLARE_FEATURE(kLumoDoubleClickCloseTab);\n"
+        b"\n"
+        b"// Lumo experiment (Lumo patch 0041): Show Close Button on Hovered Inactive Tabs.\n"
+        b"BASE_DECLARE_FEATURE(kLumoHoverShowCloseButton);\n"
+        b"\n"
+        b"// Lumo Labs experiment (Lumo patch 0012): shows the app-menu item",
+        "BASE_DECLARE_FEATURE(kLumoHoverShowCloseButton) "
+        "(patch 0041, task 42)",
+    ),
+    (
+        _TAB_CONTEXT_MENU_COMMAND_REL,
+        b"  CommandToggleFocusGroup,\n};",
+        b"  CommandToggleFocusGroup,\n  CommandDiscardTab,\n};",
+        "CommandDiscardTab appended to TabContextMenuCommand "
+        "(patch 0042, task 43)",
+    ),
+    (
+        _TAB_MENU_MODEL_REL,
+        b"  // Separator Close Tab items\n"
+        b"  AddSeparator(ui::NORMAL_SEPARATOR);\n"
+        b"  AddItemWithStringId(TabStripModel::CommandCloseTab, IDS_TAB_CXMENU_CLOSETAB);\n"
+        b"  AddItemWithStringId(TabStripModel::CommandCloseOtherTabs,\n",
+        b"  // Separator Close Tab items\n"
+        b"  AddSeparator(ui::NORMAL_SEPARATOR);\n"
+        b"  AddItemWithStringId(TabStripModel::CommandCloseTab, IDS_TAB_CXMENU_CLOSETAB);\n"
+        b"  // Lumo (patch 0042): discard the tab's contents without closing\n"
+        b"  // the tab (the manual form of memory saver's automatic discard).\n"
+        b"  // The command is executed by TabStripModel, the TabMenuModel\n"
+        b"  // delegate's target, in ExecuteContextMenuCommand().\n"
+        b"  AddItemWithStringId(TabStripModel::CommandDiscardTab,\n"
+        b"                      IDS_LUMO_TAB_CXMENU_DISCARD_TAB);\n"
+        b"  AddItemWithStringId(TabStripModel::CommandCloseOtherTabs,\n",
+        "tab context menu: discard item next to Close Tab "
+        "(patch 0042, task 43)",
+    ),
+    (
+        _TAB_STRIP_MODEL_REL,
+        b'#include "chrome/browser/resource_coordinator/tab_helper.h"\n'
+        b'#include "chrome/browser/send_tab_to_self/send_tab_to_self_util.h"\n',
+        b'#include "chrome/browser/resource_coordinator/tab_helper.h"\n'
+        b'#include "chrome/browser/resource_coordinator/tab_lifecycle_unit_external.h"\n'
+        b'#include "chrome/browser/send_tab_to_self/send_tab_to_self_util.h"\n',
+        "tab_lifecycle_unit_external.h include (patch 0042, task 43)",
+    ),
+    (
+        _TAB_STRIP_MODEL_REL,
+        b"      return delegate()->CanGoBack(GetWebContentsAt(context_index));\n"
+        b"\n"
+        b"    case CommandCloseAllTabs:",
+        b"      return delegate()->CanGoBack(GetWebContentsAt(context_index));\n"
+        b"\n"
+        b"    // Lumo (patch 0042): the discard item is enabled whenever the\n"
+        b"    // tab has contents that are not discarded yet.\n"
+        b"    case CommandDiscardTab: {\n"
+        b"      WebContents* contents = GetWebContentsAt(context_index);\n"
+        b"      auto* lifecycle_unit =\n"
+        b"          contents ? resource_coordinator::TabLifecycleUnitExternal::\n"
+        b"                         FromWebContents(contents)\n"
+        b"                   : nullptr;\n"
+        b"      return lifecycle_unit &&\n"
+        b"             lifecycle_unit->GetTabState() !=\n"
+        b"                 resource_coordinator::mojom::LifecycleUnitState::DISCARDED;\n"
+        b"    }\n"
+        b"\n"
+        b"    case CommandCloseAllTabs:",
+        "IsContextMenuCommandEnabled: CommandDiscardTab case "
+        "(patch 0042, task 43)",
+    ),
+    (
+        _GENERATED_RESOURCES_GRD_REL,
+        ("    <message name=\"IDS_LUMO_DEV_STAGE_LABEL\" desc=\"Label shown at the bottom-right of every Lumo browser window stating that the browser is in an experimental development stage.\">\n"
+         "      このブラウザーは試験的な開発段階です\n"
+         "    </message>\n"
+         "    <message name=\"IDS_CHROMELABS_RELAUNCH_BUTTON_LABEL\"").encode(),
+        ("    <message name=\"IDS_LUMO_DEV_STAGE_LABEL\" desc=\"Label shown at the bottom-right of every Lumo browser window stating that the browser is in an experimental development stage.\">\n"
+         "      このブラウザーは試験的な開発段階です\n"
+         "    </message>\n"
+         "    <message name=\"IDS_LUMO_TAB_CXMENU_DISCARD_TAB\" desc=\"Tab context menu item that discards the tab's contents without closing the tab (Lumo patch 0042).\">\n"
+         "      タブを閉じずに非アクティブ化\n"
+         "    </message>\n"
+         "    <message name=\"IDS_CHROMELABS_RELAUNCH_BUTTON_LABEL\"").encode(),
+        "IDS_LUMO_TAB_CXMENU_DISCARD_TAB string (patch 0042, task 43)",
+    ),
+    # --- Build #33 fixups (tasks 35/40/41) ---
+    (
+        _EXTENSION_MANAGEMENT_REL,
+        b"BASE_FEATURE(kDisableOffstoreForceInstalledExtensionsInLowTrustEnviroment,\n"
+        b"             base::FEATURE_ENABLED_BY_DEFAULT);",
+        b"BASE_FEATURE(kDisableOffstoreForceInstalledExtensionsInLowTrustEnviroment,\n"
+        b"             base::FEATURE_DISABLED_BY_DEFAULT);",
+        "kDisableOffstoreForceInstalledExtensionsInLowTrustEnviroment "
+        "default enabled -> disabled (forcelist relax, patch 0043)",
+    ),
+    (
+        _CHROME_BUILD_GN_REL,
+        b'"$root_out_dir/initialexe/thorium.exe"',
+        b'"$root_out_dir/initialexe/lumo.exe"',
+        "initialexe exe name: thorium.exe -> lumo.exe (patch 0045)",
+    ),
+    (
+        _CHROME_BUILD_GN_REL,
+        b'"$root_out_dir/thorium.exe"',
+        b'"$root_out_dir/lumo.exe"',
+        "reorder_imports output exe name: thorium.exe -> lumo.exe "
+        "(patch 0045)",
+    ),
+    (
+        _CHROME_BUILD_GN_REL,
+        b'"initialexe/thorium"',
+        b'"initialexe/lumo"',
+        "chrome_initial output_name: initialexe/thorium -> "
+        "initialexe/lumo (patch 0045)",
+    ),
+    (
+        _REORDER_IMPORTS_REL,
+        b"os.path.join(input_dir, 'thorium.exe')",
+        b"os.path.join(input_dir, 'lumo.exe')",
+        "reorder-imports input image: thorium.exe -> lumo.exe "
+        "(patch 0045)",
+    ),
+    (
+        _REORDER_IMPORTS_REL,
+        b"os.path.join(output_dir, 'thorium.exe')",
+        b"os.path.join(output_dir, 'lumo.exe')",
+        "reorder-imports output image: thorium.exe -> lumo.exe "
+        "(patch 0045)",
+    ),
+    (
+        _REORDER_IMPORTS_REL,
+        b"os.path.join(input_dir, 'thorium.exe.*')",
+        b"os.path.join(input_dir, 'lumo.exe.*')",
+        "reorder-imports sidecar glob: thorium.exe.* -> lumo.exe.* "
+        "(patch 0045)",
+    ),
+    (
+        _CHROME_CONSTANTS_REL,
+        b'FPL("thorium.exe")',
+        b'FPL("lumo.exe")',
+        "browser/helper process executable name+path (Win): "
+        "thorium.exe -> lumo.exe (patch 0045)",
+    ),
+    (
+        _UTIL_CONSTANTS_H_REL,
+        b'inline constexpr wchar_t kChromeExe[] = L"thorium.exe";',
+        b'inline constexpr wchar_t kChromeExe[] = L"lumo.exe";',
+        "installer::kChromeExe: thorium.exe -> lumo.exe (patch 0045)",
+    ),
+    (
+        _UTIL_CONSTANTS_H_REL,
+        b'inline constexpr wchar_t kChromeNewExe[] = '
+        b'L"new_thorium.exe";',
+        b'inline constexpr wchar_t kChromeNewExe[] = '
+        b'L"new_lumo.exe";',
+        "installer::kChromeNewExe: new_thorium.exe -> new_lumo.exe "
+        "(patch 0045)",
+    ),
+    (
+        _UTIL_CONSTANTS_H_REL,
+        b'inline constexpr wchar_t kChromeOldExe[] = '
+        b'L"old_thorium.exe";',
+        b'inline constexpr wchar_t kChromeOldExe[] = '
+        b'L"old_lumo.exe";',
+        "installer::kChromeOldExe: old_thorium.exe -> old_lumo.exe "
+        "(patch 0045)",
+    ),
+    (
+        _LAUNCHER_SUPPORT_REL,
+        b'const wchar_t kChromeExe[] = L"thorium.exe";',
+        b'const wchar_t kChromeExe[] = L"lumo.exe";',
+        "launcher_support kChromeExe copy: thorium.exe -> lumo.exe "
+        "(patch 0045)",
+    ),
+    (
+        _CHROME_PROXY_MAIN_WIN_REL,
+        b'FILE_PATH_LITERAL("thorium.exe")',
+        b'FILE_PATH_LITERAL("lumo.exe")',
+        "chrome_proxy target exe: thorium.exe -> lumo.exe "
+        "(patch 0045)",
+    ),
+    (
+        _MINI_INSTALLER_BUILD_GN_REL,
+        b'"$root_out_dir/thorium.exe"',
+        b'"$root_out_dir/lumo.exe"',
+        "mini_installer_archive input exe: thorium.exe -> lumo.exe "
+        "(patch 0045)",
+    ),
+    (
+        _MINI_INSTALLER_RELEASE_REL,
+        b"thorium.exe: %(ChromeDir)s\\",
+        b"lumo.exe: %(ChromeDir)s\\",
+        "chrome.release browser exe entry: thorium.exe -> lumo.exe "
+        "(patch 0045)",
+    ),
+    (
+        _MINI_INSTALLER_CONSTANTS_REL,
+        b'const wchar_t kBrowserExe[] = L"thorium.exe";',
+        b'const wchar_t kBrowserExe[] = L"lumo.exe";',
+        "mini_installer kBrowserExe: thorium.exe -> lumo.exe "
+        "(patch 0045)",
+    ),
+    (
+        _CHROME_EXE_VER_REL,
+        b"INTERNAL_NAME=thorium_exe",
+        b"INTERNAL_NAME=lumo_exe",
+        "chrome_exe.ver INTERNAL_NAME: thorium_exe -> lumo_exe "
+        "(patch 0045)",
+    ),
+    (
+        _CHROME_EXE_VER_REL,
+        b"ORIGINAL_FILENAME=thorium.exe",
+        b"ORIGINAL_FILENAME=lumo.exe",
+        "chrome_exe.ver ORIGINAL_FILENAME: thorium.exe -> lumo.exe "
+        "(patch 0045)",
+    ),
+    (
+        _CHROME_BROWSER_BUILD_GN_REL,
+        b'    "intranet_redirect_detector.cc",\n'
+        b'    "lumo/lumo_debugger_reporter.cc",\n'
+        b'    "lumo/lumo_debugger_reporter.h",\n'
+        b'    "lumo/lumo_upgrade_welcome.cc",\n'
+        b'    "lumo/lumo_upgrade_welcome.h",\n'
+        b'    "memory_details.cc",\n',
+        b'    "intranet_redirect_detector.cc",\n'
+        b'    "lumo/lumo_debugger_reporter.cc",\n'
+        b'    "lumo/lumo_debugger_reporter.h",\n'
+        b'    "lumo/lumo_launch_notify.cc",\n'
+        b'    "lumo/lumo_launch_notify.h",\n'
+        b'    "lumo/lumo_ui_font.cc",\n'
+        b'    "lumo/lumo_ui_font.h",\n'
+        b'    "lumo/lumo_github_extension_updater.cc",\n'
+        b'    "lumo/lumo_github_extension_updater.h",\n'
+        b'    "lumo/lumo_upgrade_welcome.cc",\n'
+        b'    "lumo/lumo_upgrade_welcome.h",\n'
+        b'    "memory_details.cc",\n',
+        "BUILD.gn: launch notify + UI font + GitHub updater sources "
+        "(patches 0046/0047/0048)",
+    ),
+    (
+        _CHROME_BROWSER_MAIN_REL,
+        b'#include "chrome/browser/lifetime/browser_shutdown.h"\n'
+        b'#include "chrome/browser/lumo/lumo_debugger_reporter.h"\n'
+        b'#include "chrome/browser/media/router/chrome_media_router_factory.h"\n',
+        b'#include "chrome/browser/lifetime/browser_shutdown.h"\n'
+        b'#include "chrome/browser/lumo/lumo_launch_notify.h"\n'
+        b'#include "chrome/browser/lumo/lumo_debugger_reporter.h"\n'
+        b'#include "chrome/browser/lumo/lumo_github_extension_updater.h"\n'
+        b'#include "chrome/browser/media/router/chrome_media_router_factory.h"\n',
+        "launch notify + GitHub updater includes (patches 0046/0048)",
+    ),
+    (
+        _CHROME_BROWSER_MAIN_REL,
+        b"  lumo::debugger::StartSession();\n"
+        b"\n"
+        b"  browser_process_->browser_policy_connector()->OnBrowserStarted();\n",
+        b"  lumo::debugger::StartSession();\n"
+        b"\n"
+        b"  // Lumo (patch 0046): one launch notification ping per launch\n"
+        b"  // (task 41). Fire-and-forget on a background thread; no-op\n"
+        b"  // unless this build carries a distribution id and signing key.\n"
+        b"  lumo::NotifyLaunchOnStartup();\n"
+        b"\n"
+        b"  // Lumo (patch 0048, task 36): create the GitHub extension\n"
+        b"  // updater for every loaded profile so its startup check runs.\n"
+        b"  // No-op for profiles with no registered repositories.\n"
+        b"  lumo::github_updater::StartForLoadedProfiles();\n"
+        b"\n"
+        b"  browser_process_->browser_policy_connector()->OnBrowserStarted();\n",
+        "launch notify + GitHub updater startup calls "
+        "(patches 0046/0048)",
+    ),
+    (
+        _CHROME_BROWSER_MAIN_WIN_REL,
+        b'constexpr wchar_t kLumoUnlockTokenFileName[] = L"lumo-unlock-token";\n'
+        b"constexpr int kLumoLockMaxAttempts = 3;\n",
+        b'constexpr wchar_t kLumoUnlockTokenFileName[] = L"lumo-unlock-token";\n'
+        b'constexpr wchar_t kLumoUnlockKindFileName[] = L"lumo-unlock-kind";\n'
+        b"constexpr int kLumoLockMaxAttempts = 3;\n",
+        "unlock kind file name (patch 0046, extends 0019)",
+    ),
+    # --- Build #33 fixups (tasks 28/36/38, generated from the patch hunks) ---
+    # --- Build #33 fixups (task 28: patch 0022 revision) ---
+    (
+        _SETTINGS_MENU_REL,
+        b'        </a>\n'
+        b'        <a role="menuitem" id="lumo-monitor-menu" href="/lumoMonitor"\n'
+        b'            class="cr-nav-menu-item">\n'
+        b'          <cr-icon icon="settings20:dashboard"></cr-icon>\n'
+        b'          <span class="menu-label">$i18n{lumoMonitorPageTitle}</span>\n'
+        b'          <cr-ripple></cr-ripple>\n'
+        b'        </a>\n'
+        b'      </cr-menu-selector>\n',
+        b'        </a>\n'
+        b'        <a role="menuitem" id="lumo-menu" href="/lumo"\n'
+        b'            class="cr-nav-menu-item">\n'
+        b'          <cr-icon icon="settings20:dashboard"></cr-icon>\n'
+        b'          <span class="menu-label">$i18n{lumoPageTitle}</span>\n'
+        b'          <cr-ripple></cr-ripple>\n'
+        b'        </a>\n'
+        b'      </cr-menu-selector>\n',
+        "settings menu: Lumo Monitor item replaced by the Lumo hub "
+        "item (patch 0022 revision + patch 0047, task 28)",
+    ),
+    (
+        _ROUTE_TS_REL,
+        b"  // Lumo: Monitor page (Lumo patch 0022), in the menu right below\n"
+        b"  // the About entry.\n",
+        b"  // Lumo: Monitor page (Lumo patch 0022). Reached from the Lumo\n"
+        b"  // hub page (patch 0047); there is no direct menu item for it\n"
+        b"  // (the hub has the menu item instead).\n",
+        "route.ts: Monitor route comment (patch 0022 revision, "
+        "task 28)",
+    ),
+    (_ROUTE_TS_REL,
+     b"  // Lumo: Monitor page (Lumo patch 0022). Reached from the Lumo\n  // hub page (patch 0047); there is no direct menu item for it\n  // (the hub has the menu item instead).\n  r.LUMO_MONITOR = r.BASIC.createSection(\n      '/lumoMonitor', 'lumoMonitor',\n      loadTimeData.getString('lumoMonitorPageTitle'));\n\n  // Search page.\n  r.SEARCH = r.BASIC.createSection(\n",
+     b"  // Lumo hub (Lumo patch 0047): a section right below About. It\n  // links to the Lumo Monitor page and to the Lumo font page;\n  // the Monitor section itself has no menu item of its own.\n  r.LUMO = r.BASIC.createSection(\n      '/lumo', 'lumo', loadTimeData.getString('lumoPageTitle'));\n\n  // Lumo: Monitor page (Lumo patch 0022). Reached from the Lumo\n  // hub page (patch 0047); there is no direct menu item for it\n  // (the hub has the menu item instead).\n  r.LUMO_MONITOR = r.BASIC.createSection(\n      '/lumoMonitor', 'lumoMonitor',\n      loadTimeData.getString('lumoMonitorPageTitle'));\n\n  // Lumo font page (Lumo patch 0047): a child of the hub, so\n  // the settings framework shows it as a subpage of the hub.\n  r.LUMO_FONT = r.LUMO.createChild(\n      '/lumoFont', 'lumoFont',\n      loadTimeData.getString('lumoFontPageTitle'));\n\n  // Search page.\n  r.SEARCH = r.BASIC.createSection(\n",
+     'chrome/browser/resources/settings/route.ts (patch 0047)'),
+    (_SETTINGS_MAIN_HTML_REL,
+     b'  <div slot="view" id="lumoMonitor">\n    <template is="dom-if" if="[[renderPlugin_(\n        routes_.LUMO_MONITOR, lastRoute_, inSearchMode_)]]">\n      <settings-lumo-monitor-page role="main"\n          class="cr-centered-card-container">\n      </settings-lumo-monitor-page>\n    </template>\n  </div>\n</cr-view-manager>\n',
+     b'  <div slot="view" id="lumo">\n    <template is="dom-if" if="[[renderPlugin_(\n        routes_.LUMO, lastRoute_, inSearchMode_)]]">\n      <settings-lumo-hub-page role="main"\n          class="cr-centered-card-container">\n      </settings-lumo-hub-page>\n    </template>\n  </div>\n\n  <div slot="view" id="lumoMonitor">\n    <template is="dom-if" if="[[renderPlugin_(\n        routes_.LUMO_MONITOR, lastRoute_, inSearchMode_)]]">\n      <settings-lumo-monitor-page role="main"\n          class="cr-centered-card-container">\n      </settings-lumo-monitor-page>\n    </template>\n  </div>\n\n  <div slot="view" id="lumoFont">\n    <template is="dom-if" if="[[renderPlugin_(\n        routes_.LUMO_FONT, lastRoute_, inSearchMode_)]]">\n      <settings-lumo-font-page role="main"\n          class="cr-centered-card-container">\n      </settings-lumo-font-page>\n    </template>\n  </div>\n</cr-view-manager>\n',
+     'chrome/browser/resources/settings/settings_main/settings_main.html (patch 0047)'),
+    (_SETTINGS_STRINGS_REL,
+     b'    <message name="IDS_SETTINGS_LUMO_MONITOR_REFRESH" desc="Refresh button on the Lumo Monitor settings page (Lumo patch 0022)">\n      \xe6\x9b\xb4\xe6\x96\xb0\n    </message>\n</grit-part>\n',
+     b'    <message name="IDS_SETTINGS_LUMO_MONITOR_REFRESH" desc="Refresh button on the Lumo Monitor settings page (Lumo patch 0022)">\n      \xe6\x9b\xb4\xe6\x96\xb0\n    </message>\n    <message name="IDS_SETTINGS_LUMO_PAGE_TITLE" desc="Title of the Lumo hub settings page (Lumo patch 0047)">\n      Lumo\n    </message>\n    <message name="IDS_SETTINGS_LUMO_HUB_MONITOR_LABEL" desc="Label of the Lumo Monitor entry on the Lumo hub settings page (Lumo patch 0047)">\n      Lumo Monitor\n    </message>\n    <message name="IDS_SETTINGS_LUMO_HUB_MONITOR_DESC" desc="Description of the Lumo Monitor entry on the Lumo hub settings page (Lumo patch 0047)">\n      \xe3\x83\x90\xe3\x83\xbc\xe3\x82\xb8\xe3\x83\xa7\xe3\x83\xb3\xe3\x80\x81\xe3\x83\x97\xe3\x83\xad\xe3\x83\x95\xe3\x82\xa1\xe3\x82\xa4\xe3\x83\xab\xe3\x80\x81\xe3\x83\xa1\xe3\x83\xa2\xe3\x83\xaa\xe4\xbd\xbf\xe7\x94\xa8\xe9\x87\x8f\xe3\x80\x81Sync \xe3\x81\xae\xe7\x8a\xb6\xe6\x85\x8b\xe3\x81\xaa\xe3\x81\xa9\xe3\x82\x92\xe8\xa1\xa8\xe7\xa4\xba\xe3\x81\x97\xe3\x81\xbe\xe3\x81\x99\n    </message>\n    <message name="IDS_SETTINGS_LUMO_HUB_FONT_LABEL" desc="Label of the font entry on the Lumo hub settings page (Lumo patch 0047)">\n      \xe3\x83\x95\xe3\x82\xa9\xe3\x83\xb3\xe3\x83\x88\n    </message>\n    <message name="IDS_SETTINGS_LUMO_HUB_FONT_DESC" desc="Description of the font entry on the Lumo hub settings page (Lumo patch 0047)">\n      \xe3\x83\x96\xe3\x83\xa9\xe3\x82\xa6\xe3\x82\xb6\xe5\x85\xa8\xe4\xbd\x93\xe3\x81\xae UI \xe3\x83\x95\xe3\x82\xa9\xe3\x83\xb3\xe3\x83\x88\xe3\x82\x92\xe5\xa4\x89\xe6\x9b\xb4\xe3\x81\x97\xe3\x81\xbe\xe3\x81\x99\n    </message>\n    <message name="IDS_SETTINGS_LUMO_FONT_PAGE_TITLE" desc="Title of the Lumo font settings page (Lumo patch 0047)">\n      \xe3\x83\x95\xe3\x82\xa9\xe3\x83\xb3\xe3\x83\x88\n    </message>\n    <message name="IDS_SETTINGS_LUMO_FONT_UI_LABEL" desc="Label for the UI font picker on the Lumo font settings page (Lumo patch 0047)">\n      UI \xe3\x83\x95\xe3\x82\xa9\xe3\x83\xb3\xe3\x83\x88\n    </message>\n    <message name="IDS_SETTINGS_LUMO_FONT_UI_DESC" desc="Description of the UI font picker on the Lumo font settings page (Lumo patch 0047)">\n      \xe3\x82\xbf\xe3\x83\x96\xe3\x80\x81\xe3\x83\x84\xe3\x83\xbc\xe3\x83\xab\xe3\x83\x90\xe3\x83\xbc\xe3\x80\x81\xe3\x82\xa2\xe3\x83\x89\xe3\x83\xac\xe3\x82\xb9\xe3\x83\x90\xe3\x83\xbc\xe3\x80\x81\xe3\x83\xa1\xe3\x83\x8b\xe3\x83\xa5\xe3\x83\xbc\xe3\x80\x81\xe8\xa8\xad\xe5\xae\x9a\xe7\x94\xbb\xe9\x9d\xa2\xe3\x80\x81\xe3\x83\x80\xe3\x82\xa4\xe3\x82\xa2\xe3\x83\xad\xe3\x82\xb0\xe3\x81\xaa\xe3\x81\xa9\xe3\x80\x81\xe3\x83\x96\xe3\x83\xa9\xe3\x82\xa6\xe3\x82\xb6\xe5\x85\xa8\xe4\xbd\x93\xe3\x81\xae\xe6\x96\x87\xe5\xad\x97\xe3\x81\xab\xe4\xbd\xbf\xe3\x81\x86\xe3\x83\x95\xe3\x82\xa9\xe3\x83\xb3\xe3\x83\x88\xe3\x81\xa7\xe3\x81\x99\xe3\x80\x82Web \xe3\x82\xb5\xe3\x82\xa4\xe3\x83\x88\xe3\x81\xae\xe8\xa1\xa8\xe7\xa4\xba\xe3\x81\xab\xe3\x81\xaf\xe5\xbd\xb1\xe9\x9f\xbf\xe3\x81\x97\xe3\x81\xbe\xe3\x81\x9b\xe3\x82\x93\xe3\x80\x82\xe5\xa4\x89\xe6\x9b\xb4\xe3\x81\xaf\xe6\xac\xa1\xe5\x9b\x9e\xe8\xb5\xb7\xe5\x8b\x95\xe6\x99\x82\xe3\x81\x8b\xe3\x82\x89\xe5\x85\xa8\xe4\xbd\x93\xe3\x81\xab\xe9\x81\xa9\xe7\x94\xa8\xe3\x81\x95\xe3\x82\x8c\xe3\x81\xbe\xe3\x81\x99\xe3\x80\x82\n    </message>\n    <message name="IDS_SETTINGS_LUMO_FONT_DEFAULT_OPTION" desc="Option for the platform default UI font on the Lumo font settings page (Lumo patch 0047)">\n      \xe6\x97\xa2\xe5\xae\x9a\xe3\x81\xae\xe3\x83\x95\xe3\x82\xa9\xe3\x83\xb3\xe3\x83\x88\n    </message>\n    <message name="IDS_SETTINGS_LUMO_FONT_RESTART" desc="Restart button on the Lumo font settings page (Lumo patch 0047)">\n      \xe4\xbb\x8a\xe3\x81\x99\xe3\x81\x90\xe5\x86\x8d\xe8\xb5\xb7\xe5\x8b\x95\xe3\x81\x97\xe3\x81\xa6\xe9\x81\xa9\xe7\x94\xa8\n    </message>\n    <message name="IDS_SETTINGS_LUMO_FONT_CURRENT_LABEL" desc="Label for the current UI font on the Lumo font settings page (Lumo patch 0047)">\n      \xe7\x8f\xbe\xe5\x9c\xa8\xe3\x81\xae\xe3\x83\x95\xe3\x82\xa9\xe3\x83\xb3\xe3\x83\x88\n    </message>\n</grit-part>\n',
+     'chrome/app/settings_strings.grdp (patch 0047)'),
+    (_BROWSER_UI_PREFS_REL,
+     b'  // Lumo sidebar (patches 0037/0038).\n  registry->RegisterStringPref(prefs::kLumoSidebarWebPanelUrl,\n                               std::string());\n  registry->RegisterListPref(prefs::kLumoSidebarWebPanels,\n                             DefaultLumoSidebarWebPanels());\n  registry->RegisterBooleanPref(prefs::kLumoSidebarBarCollapsed, false);\n\n  registry->RegisterBooleanPref(prefs::kWebAppCreateOnDesktop, true);\n',
+     b'  // Lumo sidebar (patches 0037/0038).\n  registry->RegisterStringPref(prefs::kLumoSidebarWebPanelUrl,\n                               std::string());\n  registry->RegisterListPref(prefs::kLumoSidebarWebPanels,\n                             DefaultLumoSidebarWebPanels());\n  registry->RegisterBooleanPref(prefs::kLumoSidebarBarCollapsed, false);\n\n  // Lumo NTP customization (patches 0050-0052, task 38).\n  registry->RegisterDictionaryPref(prefs::kLumoNtpConfig,\n                                   DefaultLumoNtpConfig());\n  registry->RegisterStringPref(prefs::kLumoNtpMemo, std::string());\n  registry->RegisterListPref(prefs::kLumoNtpTodos, base::ListValue());\n  registry->RegisterStringPref(prefs::kLumoNtpBackgroundImage,\n                               std::string());\n\n  // Lumo UI font (patch 0047): the font family chosen on the\n  // Lumo font settings page. Empty means the platform default.\n  registry->RegisterStringPref(prefs::kLumoUiFontFamily, std::string());\n\n  // Lumo GitHub extension updater (patch 0048, task 36).\n  registry->RegisterDictionaryPref(prefs::kLumoGithubExtensions);\n  registry->RegisterBooleanPref(prefs::kWebAppCreateOnDesktop, true);\n',
+     'browser_ui_prefs.cc: NTP + UI font + GitHub pref registrations (patches 0047/0048/0050)'),
+    (_PREF_NAMES_REL,
+     b'inline constexpr char kLumoSidebarWebPanels[] = "lumo.sidebar.web_panels";\n\n// Lumo sidebar (patches 0037/0038): whether the sidebar icon bar is\n// collapsed to its narrow strip.\ninline constexpr char kLumoSidebarBarCollapsed[] =\n    "lumo.sidebar.bar_collapsed";\n',
+     b'inline constexpr char kLumoSidebarWebPanels[] = "lumo.sidebar.web_panels";\n\n// Lumo UI font (patch 0047): the font family chosen on the Lumo\n// font settings page, applied to the whole browser UI at startup\n// (see chrome/browser/lumo/lumo_ui_font.cc). Empty means the\n// platform default font.\ninline constexpr char kLumoUiFontFamily[] = "lumo.ui_font.family";\n\n// Lumo sidebar (patches 0037/0038): whether the sidebar icon bar is\n// collapsed to its narrow strip.\ninline constexpr char kLumoSidebarBarCollapsed[] =\n    "lumo.sidebar.bar_collapsed";\n',
+     'chrome/common/pref_names.h (patch 0047)'),
+    (_STARTUP_BROWSER_CREATOR_REL,
+     b'#include "chrome/browser/lifetime/application_lifetime_desktop.h"\n#include "chrome/browser/lumo/lumo_upgrade_welcome.h"\n#include "chrome/browser/prefs/session_startup_pref.h"\n',
+     b'#include "chrome/browser/lifetime/application_lifetime_desktop.h"\n#include "chrome/browser/lumo/lumo_ui_font.h"\n#include "chrome/browser/lumo/lumo_upgrade_welcome.h"\n#include "chrome/browser/prefs/session_startup_pref.h"\n',
+     'chrome/browser/ui/startup/startup_browser_creator_impl.cc (patch 0047)'),
+    (_STARTUP_BROWSER_CREATOR_REL,
+     b'    if (profile_->IsNewProfile()) {\n      lumo::RecordWelcomeShownBuildNumber(profile_);\n    }\n\n    // If the user has set the preference indicating URLs to show on opening,\n',
+     b'    if (profile_->IsNewProfile()) {\n      lumo::RecordWelcomeShownBuildNumber(profile_);\n    }\n\n    // Lumo (patch 0047): install the chosen UI font as the\n    // default FontList description before the first browser\n    // window (and every widget created from it) exists, so\n    // the whole UI -- tabs, toolbar, omnibox, menus, dialogs\n    // -- picks the font up. No-op when no font is chosen.\n    lumo::ApplyLumoUiFontOverride(profile_);\n\n    // If the user has set the preference indicating URLs to show on opening,\n',
+     'chrome/browser/ui/startup/startup_browser_creator_impl.cc (patch 0047)'),
+    (_SETTINGS_RESOURCES_BUILD_GN_REL,
+     b'    "lazy_load.ts",\n    "lumo_monitor_page/lumo_monitor_browser_proxy.ts",\n    "lumo_monitor_page/lumo_monitor_page.html.ts",\n    "lumo_monitor_page/lumo_monitor_page.ts",\n    "metrics_browser_proxy.ts",\n',
+     b'    "lazy_load.ts",\n    "lumo_font_page/lumo_font_browser_proxy.ts",\n    "lumo_font_page/lumo_font_page.html.ts",\n    "lumo_font_page/lumo_font_page.ts",\n    "lumo_hub_page/lumo_hub_page.html.ts",\n    "lumo_hub_page/lumo_hub_page.ts",\n    "lumo_monitor_page/lumo_monitor_browser_proxy.ts",\n    "lumo_monitor_page/lumo_monitor_page.html.ts",\n    "lumo_monitor_page/lumo_monitor_page.ts",\n    "metrics_browser_proxy.ts",\n',
+     'chrome/browser/resources/settings/BUILD.gn (patch 0047)'),
+    (_SETTINGS_RESOURCES_BUILD_GN_REL,
+     b'    "languages_page/spell_check_page.css",\n    "lumo_monitor_page/lumo_monitor_page.css",\n    "on_startup_page/startup_url_entry.css",\n',
+     b'    "languages_page/spell_check_page.css",\n    "lumo_font_page/lumo_font_page.css",\n    "lumo_hub_page/lumo_hub_page.css",\n    "lumo_monitor_page/lumo_monitor_page.css",\n    "on_startup_page/startup_url_entry.css",\n',
+     'chrome/browser/resources/settings/BUILD.gn (patch 0047)'),
+    (_ROUTER_TS_REL,
+     b'  LANGUAGES: Route;\n  LUMO_MONITOR: Route;\n  MANAGE_PROFILE: Route;\n',
+     b'  LANGUAGES: Route;\n  LUMO: Route;\n  LUMO_FONT: Route;\n  LUMO_MONITOR: Route;\n  MANAGE_PROFILE: Route;\n',
+     'chrome/browser/resources/settings/router.ts (patch 0047)'),
+    (_SETTINGS_TS_REL,
+     b"export {SettingsAboutPageElement} from './about_page/about_page.js';\nexport {SettingsLumoMonitorPageElement} from './lumo_monitor_page/lumo_monitor_page.js';\nexport {LumoMonitorBrowserProxyImpl} from './lumo_monitor_page/lumo_monitor_browser_proxy.js';\nexport type {LumoMonitorInfo, LumoMonitorBrowserProxy} from './lumo_monitor_page/lumo_monitor_browser_proxy.js';\n",
+     b"export {SettingsAboutPageElement} from './about_page/about_page.js';\nexport {SettingsLumoFontPageElement} from './lumo_font_page/lumo_font_page.js';\nexport {LumoFontBrowserProxyImpl} from './lumo_font_page/lumo_font_browser_proxy.js';\nexport type {LumoUiFontInfo, LumoFontBrowserProxy} from './lumo_font_page/lumo_font_browser_proxy.js';\nexport {SettingsLumoHubPageElement} from './lumo_hub_page/lumo_hub_page.js';\nexport {SettingsLumoMonitorPageElement} from './lumo_monitor_page/lumo_monitor_page.js';\nexport {LumoMonitorBrowserProxyImpl} from './lumo_monitor_page/lumo_monitor_browser_proxy.js';\nexport type {LumoMonitorInfo, LumoMonitorBrowserProxy} from './lumo_monitor_page/lumo_monitor_browser_proxy.js';\n",
+     'chrome/browser/resources/settings/settings.ts (patch 0047)'),
+    (_SETTINGS_MAIN_TS_REL,
+     b"import '../autofill_page/autofill_page_index.js';\nimport '../lumo_monitor_page/lumo_monitor_page.js';\nimport '../on_startup_page/on_startup_page.js';\n",
+     b"import '../autofill_page/autofill_page_index.js';\nimport '../lumo_font_page/lumo_font_page.js';\nimport '../lumo_hub_page/lumo_hub_page.js';\nimport '../lumo_monitor_page/lumo_monitor_page.js';\nimport '../on_startup_page/on_startup_page.js';\n",
+     'chrome/browser/resources/settings/settings_main/settings_main.ts (patch 0047)'),
+    (_LUMO_MONITOR_PAGE_HTML_TS_REL,
+     b'<settings-section page-title="$i18n{lumoMonitorPageTitle}">\n  ${this.info_ ? html`\n  <div class="cr-row first">\n',
+     b'<settings-section page-title="$i18n{lumoMonitorPageTitle}">\n  <cr-icon-button class="icon-arrow-back" id="lumoMonitorBack"\n      @click="${this.onBackClick_}" aria-label="Lumo">\n  </cr-icon-button>\n  ${this.info_ ? html`\n  <div class="cr-row first">\n',
+     'chrome/browser/resources/settings/lumo_monitor_page/lumo_monitor_page.html.ts (patch 0047)'),
+    (_LUMO_MONITOR_PAGE_REL,
+     b"import {CrLitElement} from 'chrome://resources/lit/v3_0/lit.rollup.js';\n\nimport {getCss} from './lumo_monitor_page.css.js';\n",
+     b"import {CrLitElement} from 'chrome://resources/lit/v3_0/lit.rollup.js';\n\nimport {Router} from '../router.js';\n\nimport {getCss} from './lumo_monitor_page.css.js';\n",
+     'chrome/browser/resources/settings/lumo_monitor_page/lumo_monitor_page.ts (patch 0047)'),
+    (_LUMO_MONITOR_PAGE_REL,
+     b'  protected onRefreshClick_() {\n    this.refresh_();\n  }\n\n  private refresh_() {\n',
+     b'  protected onRefreshClick_() {\n    this.refresh_();\n  }\n\n  // Lumo (patch 0047): the Monitor page is reached from the\n  // Lumo hub page and carries a back arrow to it.\n  protected onBackClick_() {\n    Router.getInstance().navigateTo(\n        Router.getInstance().getRoutes().LUMO);\n  }\n\n  private refresh_() {\n',
+     'chrome/browser/resources/settings/lumo_monitor_page/lumo_monitor_page.ts (patch 0047)'),
+    (_SETTINGS_WEBUI_BUILD_GN_REL,
+     b'    "languages_handler.h",\n    "lumo_monitor_handler.h",\n    "metrics_reporting_handler.h",\n',
+     b'    "languages_handler.h",\n    "lumo_font_handler.h",\n    "lumo_monitor_handler.h",\n    "metrics_reporting_handler.h",\n',
+     'chrome/browser/ui/webui/settings/BUILD.gn (patch 0047)'),
+    (_SETTINGS_WEBUI_BUILD_GN_REL,
+     b'    "languages_handler.cc",\n    "lumo_monitor_handler.cc",\n    "metrics_reporting_handler.cc",\n',
+     b'    "languages_handler.cc",\n    "lumo_font_handler.cc",\n    "lumo_monitor_handler.cc",\n    "metrics_reporting_handler.cc",\n',
+     'chrome/browser/ui/webui/settings/BUILD.gn (patch 0047)'),
+    (_LOCALIZED_STRINGS_PROVIDER_REL,
+     b'      {"lumoMonitorCrashLabel",\n       IDS_SETTINGS_LUMO_MONITOR_CRASH_LABEL},\n      {"lumoMonitorRefresh", IDS_SETTINGS_LUMO_MONITOR_REFRESH},\n      {"aboutProductTitle", IDS_PRODUCT_NAME},\n',
+     b'      {"lumoMonitorCrashLabel",\n       IDS_SETTINGS_LUMO_MONITOR_CRASH_LABEL},\n      {"lumoMonitorRefresh", IDS_SETTINGS_LUMO_MONITOR_REFRESH},\n      {"lumoPageTitle", IDS_SETTINGS_LUMO_PAGE_TITLE},\n      {"lumoHubMonitorLabel", IDS_SETTINGS_LUMO_HUB_MONITOR_LABEL},\n      {"lumoHubMonitorDesc", IDS_SETTINGS_LUMO_HUB_MONITOR_DESC},\n      {"lumoHubFontLabel", IDS_SETTINGS_LUMO_HUB_FONT_LABEL},\n      {"lumoHubFontDesc", IDS_SETTINGS_LUMO_HUB_FONT_DESC},\n      {"lumoFontPageTitle", IDS_SETTINGS_LUMO_FONT_PAGE_TITLE},\n      {"lumoFontUiLabel", IDS_SETTINGS_LUMO_FONT_UI_LABEL},\n      {"lumoFontUiDesc", IDS_SETTINGS_LUMO_FONT_UI_DESC},\n      {"lumoFontDefaultOption",\n       IDS_SETTINGS_LUMO_FONT_DEFAULT_OPTION},\n      {"lumoFontRestart", IDS_SETTINGS_LUMO_FONT_RESTART},\n      {"lumoFontCurrentLabel",\n       IDS_SETTINGS_LUMO_FONT_CURRENT_LABEL},\n      {"aboutProductTitle", IDS_PRODUCT_NAME},\n',
+     'chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc (patch 0047)'),
+    (_SETTINGS_UI_CC_REL,
+     b'#include "chrome/browser/ui/webui/settings/about_handler.h"\n#include "chrome/browser/ui/webui/settings/lumo_monitor_handler.h"\n#include "chrome/browser/ui/webui/settings/accessibility_main_handler.h"\n',
+     b'#include "chrome/browser/ui/webui/settings/about_handler.h"\n#include "chrome/browser/ui/webui/settings/lumo_font_handler.h"\n#include "chrome/browser/ui/webui/settings/lumo_monitor_handler.h"\n#include "chrome/browser/ui/webui/settings/accessibility_main_handler.h"\n',
+     'chrome/browser/ui/webui/settings/settings_ui.cc (patch 0047)'),
+    (_SETTINGS_UI_CC_REL,
+     b'  AddSettingsPageUIHandler(std::make_unique<AboutHandler>(profile));\n  // Lumo: state snapshot page (Lumo patch 0022).\n  AddSettingsPageUIHandler(\n      std::make_unique<LumoMonitorHandler>(profile));\n',
+     b'  AddSettingsPageUIHandler(std::make_unique<AboutHandler>(profile));\n  // Lumo: UI font page handler (Lumo patch 0047).\n  AddSettingsPageUIHandler(\n      std::make_unique<LumoFontHandler>(profile));\n  // Lumo: state snapshot page (Lumo patch 0022).\n  AddSettingsPageUIHandler(\n      std::make_unique<LumoMonitorHandler>(profile));\n',
+     'chrome/browser/ui/webui/settings/settings_ui.cc (patch 0047)'),
+    (_GENERATED_RESOURCES_GRD_REL,
+     b'    <message name="IDS_LUMO_SIDEBAR_EXPAND" desc="Tooltip of the button that expands the collapsed Lumo sidebar icon bar.">\n      \xe3\x82\xb5\xe3\x82\xa4\xe3\x83\x89\xe3\x83\x90\xe3\x83\xbc\xe3\x82\x92\xe5\xb1\x95\xe9\x96\x8b\xe3\x81\x99\xe3\x82\x8b\n    </message>\n    <message name="IDS_LUMO_LAUNCH_THORIUM_PROFILE" desc="App menu item that launches Lumo with the original Thorium user profile data directory.">\n',
+     b'    <message name="IDS_LUMO_SIDEBAR_EXPAND" desc="Tooltip of the button that expands the collapsed Lumo sidebar icon bar.">\n      \xe3\x82\xb5\xe3\x82\xa4\xe3\x83\x89\xe3\x83\x90\xe3\x83\xbc\xe3\x82\x92\xe5\xb1\x95\xe9\x96\x8b\xe3\x81\x99\xe3\x82\x8b\n    </message>\n    <message name="IDS_EXTENSIONS_LUMO_GITHUB_ADD_BUTTON" desc="Toolbar button on chrome://extensions, shown only in developer mode, that adds an extension which auto-updates from a GitHub repository.">\n      GitHub \xe3\x81\x8b\xe3\x82\x89\xe8\x87\xaa\xe5\x8b\x95\xe6\x9b\xb4\xe6\x96\xb0\xe3\x81\x99\xe3\x82\x8b\xe6\x8b\xa1\xe5\xbc\xb5\xe3\x82\x92\xe8\xbf\xbd\xe5\x8a\xa0\xe3\x81\x99\xe3\x82\x8b\n    </message>\n    <message name="IDS_EXTENSIONS_LUMO_GITHUB_DIALOG_TITLE" desc="Title of the dialog that adds an auto-updating extension from a GitHub repository.">\n      GitHub \xe3\x81\x8b\xe3\x82\x89\xe6\x8b\xa1\xe5\xbc\xb5\xe3\x82\x92\xe8\xbf\xbd\xe5\x8a\xa0\n    </message>\n    <message name="IDS_EXTENSIONS_LUMO_GITHUB_DETAIL_TITLE" desc="Heading of the GitHub auto-update section on an extension\'s detail page on chrome://extensions.">\n      GitHub \xe8\x87\xaa\xe5\x8b\x95\xe6\x9b\xb4\xe6\x96\xb0 (Lumo)\n    </message>\n    <message name="IDS_LUMO_GITHUB_NOTIFY_UPDATED_TITLE" desc="Title of the notification shown when a GitHub-managed extension was auto-updated.">\n      \xe6\x8b\xa1\xe5\xbc\xb5\xe6\xa9\x9f\xe8\x83\xbd\xe3\x82\x92\xe6\x9b\xb4\xe6\x96\xb0\xe3\x81\x97\xe3\x81\xbe\xe3\x81\x97\xe3\x81\x9f\n    </message>\n    <message name="IDS_LUMO_GITHUB_NOTIFY_UPDATED_BODY" desc="Body of the notification shown when a GitHub-managed extension was auto-updated.">\n      <ph name="EXTENSION_NAME">$1<ex>GitHub \xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e\xe5\x8c\x96</ex></ph> \xe3\x82\x92 GitHub \xe3\x81\xae Release <ph name="TAG">$2<ex>v1.2.3</ex></ph> \xe3\x81\xab\xe6\x9b\xb4\xe6\x96\xb0\xe3\x81\x97\xe3\x81\xbe\xe3\x81\x97\xe3\x81\x9f\xe3\x80\x82\n    </message>\n    <message name="IDS_LUMO_GITHUB_NOTIFY_FAILED_TITLE" desc="Title of the notification shown when a GitHub-managed extension could not be updated.">\n      \xe6\x8b\xa1\xe5\xbc\xb5\xe6\xa9\x9f\xe8\x83\xbd\xe3\x82\x92\xe6\x9b\xb4\xe6\x96\xb0\xe3\x81\xa7\xe3\x81\x8d\xe3\x81\xbe\xe3\x81\x9b\xe3\x82\x93\xe3\x81\xa7\xe3\x81\x97\xe3\x81\x9f\n    </message>\n    <message name="IDS_LUMO_GITHUB_NOTIFY_FAILED_BODY" desc="Body of the notification shown when a GitHub-managed extension failed verification or installation; the installed version is left untouched.">\n      <ph name="EXTENSION_NAME">$1<ex>GitHub \xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e\xe5\x8c\x96</ex></ph> \xe3\x81\xae\xe6\x9b\xb4\xe6\x96\xb0\xe3\x82\x92\xe7\xa2\xba\xe8\xaa\x8d\xe3\x81\xa7\xe3\x81\x8d\xe3\x81\xbe\xe3\x81\x9b\xe3\x82\x93\xe3\x81\xa7\xe3\x81\x97\xe3\x81\x9f\xef\xbc\x88<ph name="DETAIL">$2<ex>not newer</ex></ph>\xef\xbc\x89\xe3\x80\x82\xe7\x8f\xbe\xe5\x9c\xa8\xe3\x81\xae\xe3\x83\x90\xe3\x83\xbc\xe3\x82\xb8\xe3\x83\xa7\xe3\x83\xb3\xe3\x81\xae\xe3\x81\xbe\xe3\x81\xbe\xe3\x81\xab\xe3\x81\x97\xe3\x81\xa6\xe3\x81\x84\xe3\x81\xbe\xe3\x81\x99\xe3\x80\x82\n    </message>\n    <message name="IDS_LUMO_LAUNCH_THORIUM_PROFILE" desc="App menu item that launches Lumo with the original Thorium user profile data directory.">\n',
+     'chrome/app/generated_resources.grd (patch 0048)'),
+    (_PREF_NAMES_REL,
+     b'// The pref name is "default_apps" for backwards compatibility. This pref used\n// to control both apps and extensions, and before that just apps.\ninline constexpr char kPreinstalledExtensions[] = "default_apps";\n\n// Lumo sidebar (patches 0037/0038): the URL currently shown in the\n',
+     b'// The pref name is "default_apps" for backwards compatibility. This pref used\n// to control both apps and extensions, and before that just apps.\ninline constexpr char kPreinstalledExtensions[] = "default_apps";\n\n// Lumo GitHub extension updater (patch 0048, task 36): extensions\n// the user added from a GitHub repository and keeps updated from\n// its releases. A dictionary keyed by extension ID; each entry\n// holds "repo" ("owner/repo"), "tag", "version", "asset",\n// "interval_hours" and "last_check_unix".\ninline constexpr char kLumoGithubExtensions[] =\n    "lumo.github_extensions";\n// Lumo sidebar (patches 0037/0038): the URL currently shown in the\n',
+     'chrome/common/pref_names.h (patch 0048)'),
+    (_CHROME_BROWSER_BUILD_GN_REL,
+     b'    "//services/network/public/cpp",\n    "//ui/base:ozone_buildflags",\n',
+     b'    "//services/network/public/cpp",\n    "//components/crx_file",\n    "//third_party/zlib/google:zip",\n    "//ui/base:ozone_buildflags",\n',
+     'chrome/browser/BUILD.gn (patch 0048)'),
+    (_EXTENSIONS_WEBUI_BUILD_GN_REL,
+     b'    "extensions_ui.cc",\n    "extensions_ui.h",\n  ]\n',
+     b'    "extensions_ui.cc",\n    "extensions_ui.h",\n    "lumo_github_extensions_handler.cc",\n    "lumo_github_extensions_handler.h",\n  ]\n',
+     'chrome/browser/ui/webui/extensions/BUILD.gn (patch 0048)'),
+    (_EXTENSIONS_UI_CC_REL,
+     b'#include "chrome/browser/ui/webui/extensions/extensions_ui.h"\n#include "chrome/browser/ui/webui/extensions/extension_info_generator.h"\n',
+     b'#include "chrome/browser/ui/webui/extensions/extensions_ui.h"\n#include "chrome/browser/ui/webui/extensions/lumo_github_extensions_handler.h"\n#include "chrome/browser/ui/webui/extensions/extension_info_generator.h"\n',
+     'chrome/browser/ui/webui/extensions/extensions_ui.cc (patch 0048)'),
+    (_EXTENSIONS_UI_CC_REL,
+     b'      {"addExtensions", IDS_EXTENSIONS_MENU_ADD_EXTENSIONS},\n      {"allowFileAccess", IDS_EXTENSIONS_ALLOW_FILE_ACCESS},\n',
+     b'      {"addExtensions", IDS_EXTENSIONS_MENU_ADD_EXTENSIONS},\n      {"lumoGithubAddButton", IDS_EXTENSIONS_LUMO_GITHUB_ADD_BUTTON},\n      {"lumoGithubDialogTitle",\n       IDS_EXTENSIONS_LUMO_GITHUB_DIALOG_TITLE},\n      {"lumoGithubDetailTitle",\n       IDS_EXTENSIONS_LUMO_GITHUB_DETAIL_TITLE},\n      {"allowFileAccess", IDS_EXTENSIONS_ALLOW_FILE_ACCESS},\n',
+     'chrome/browser/ui/webui/extensions/extensions_ui.cc (patch 0048)'),
+    (_EXTENSIONS_UI_CC_REL,
+     b'  web_ui->AddMessageHandler(std::make_unique<ExtensionsHandler>());\n}\n',
+     b"  web_ui->AddMessageHandler(std::make_unique<ExtensionsHandler>());\n  // Lumo (patch 0048, task 36): the GitHub updater's messages.\n  web_ui->AddMessageHandler(\n      std::make_unique<LumoGithubExtensionsHandler>(profile));\n}\n",
+     'chrome/browser/ui/webui/extensions/extensions_ui.cc (patch 0048)'),
+    (_EXTENSION_INFO_GENERATOR_REL,
+     b'#include "chrome/browser/ui/webui/extensions/extension_info_generator.h"\n#include "extensions/common/extension.h"\n',
+     b'#include "chrome/browser/ui/webui/extensions/extension_info_generator.h"\n#include "chrome/browser/lumo/lumo_github_extension_updater.h"\n#include "chrome/browser/profiles/profile.h"\n#include "extensions/common/extension.h"\n',
+     'chrome/browser/ui/webui/extensions/extension_info_generator.cc (patch 0048)'),
+    (_EXTENSION_INFO_GENERATOR_REL,
+     b'  dict.Set("id", extension.id());\n  dict.Set("name", extension.name());\n  dict.Set("version", extension.VersionString());\n',
+     b'  dict.Set("id", extension.id());\n  // Lumo (patch 0048, task 36, requirement (c)): extensions\n  // added from GitHub carry the " (Github)" origin suffix\n  // after their name, and expose their registration to the\n  // detail page (repository, tag, check interval).\n  std::string lumo_name = extension.name();\n  if (Profile* profile =\n          Profile::FromBrowserContext(browser_context_)) {\n    if (auto* updater =\n            lumo::github_updater::GetForProfile(profile)) {\n      base::DictValue github_info =\n          updater->GetWebUiInfo(extension.id());\n      if (!github_info.empty()) {\n        lumo_name += " (Github)";\n        for (const auto [key, value] : github_info) {\n          dict.Set(key, value.Clone());\n        }\n      }\n    }\n  }\n  dict.Set("name", lumo_name);\n  dict.Set("version", extension.VersionString());\n',
+     'chrome/browser/ui/webui/extensions/extension_info_generator.cc (patch 0048)'),
+    (_EXTENSIONS_BROWSER_PROXY_TS_REL,
+     b'export interface ExtensionInfo {\n  id: string;\n  name: string;\n',
+     b'export interface ExtensionInfo {\n  id: string;\n  // Lumo (patch 0049, task 36): present only for extensions\n  // added from GitHub (patch 0048 fills these in).\n  lumoGithubRepo?: string;\n  lumoGithubTag?: string;\n  lumoGithubIntervalHours?: number;\n  name: string;\n',
+     'chrome/browser/resources/extensions/extensions_browser_proxy.ts (patch 0049)'),
+    (_EXTENSIONS_TOOLBAR_HTML_TS_REL,
+     b'      <cr-button id="packExtensions" @click="${this.onPackExtensionsClick_}">\n        ${this.i18n(\'packExtension\')}\n      </cr-button>\n      <cr-button id="updateNow" @click="${this.onUpdateNowClick_}">\n',
+     b'      <cr-button id="packExtensions" @click="${this.onPackExtensionsClick_}">\n        ${this.i18n(\'packExtension\')}\n      </cr-button>\n      <!-- Lumo (patch 0049, task 36): shown only while\n           developer mode is on (the same condition that\n           reveals this drawer). -->\n      <cr-button id="lumoGithubAdd" @click="${this.onLumoGithubAddClick_}"\n          ?hidden="${!this.devModeOn}">\n        ${this.i18n(\'lumoGithubAddButton\')}\n      </cr-button>\n      <extensions-github-dialog></extensions-github-dialog>\n      <cr-button id="updateNow" @click="${this.onUpdateNowClick_}">\n',
+     'chrome/browser/resources/extensions/toolbar.html.ts (patch 0049)'),
+    (_EXTENSIONS_DETAIL_VIEW_HTML_TS_REL,
+     b'    <div class="section">\n      <div class="section-header">${this.i18n(\'extensionId\')}</div>\n      <div class="section-content">${this.data.id}</div>\n    </div>\n\n',
+     b'    <div class="section">\n      <div class="section-header">${this.i18n(\'extensionId\')}</div>\n      <div class="section-content">${this.data.id}</div>\n    </div>\n    <!-- Lumo (patch 0049, task 36, requirement (a)): the\n         update-check interval of a GitHub-managed extension\n         is changed here, on its detail page. -->\n    ${this.data.lumoGithubRepo ? html`\n    <div class="section" id="lumoGithubSection">\n      <div class="section-header">\n        ${this.i18n(\'lumoGithubDetailTitle\')}</div>\n      <div class="section-content">\n        GitHub: ${this.data.lumoGithubRepo} / ${this.data.lumoGithubTag}\n      </div>\n      <div class="section-content">\n        <label for="lumoGithubInterval">\xe6\x9b\xb4\xe6\x96\xb0\xe7\xa2\xba\xe8\xaa\x8d\xe3\x81\xae\xe9\xa0\xbb\xe5\xba\xa6</label>\n        <select id="lumoGithubInterval"\n            @change="${this.onLumoGithubIntervalChange_}">\n          <option value="0"\n              ?selected="${this.data.lumoGithubIntervalHours === 0}">\n            \xe8\xb5\xb7\xe5\x8b\x95\xe6\x99\x82\xe3\x81\xae\xe3\x81\xbf</option>\n          <option value="6"\n              ?selected="${this.data.lumoGithubIntervalHours === 6}">\n            6 \xe6\x99\x82\xe9\x96\x93\xe3\x81\x94\xe3\x81\xa8</option>\n          <option value="12"\n              ?selected="${this.data.lumoGithubIntervalHours === 12}">\n            12 \xe6\x99\x82\xe9\x96\x93\xe3\x81\x94\xe3\x81\xa8</option>\n          <option value="24"\n              ?selected="${this.data.lumoGithubIntervalHours === 24}">\n            24 \xe6\x99\x82\xe9\x96\x93\xe3\x81\x94\xe3\x81\xa8</option>\n          <option value="72"\n              ?selected="${this.data.lumoGithubIntervalHours === 72}">\n            3 \xe6\x97\xa5\xe3\x81\x94\xe3\x81\xa8</option>\n          <option value="168"\n              ?selected="${this.data.lumoGithubIntervalHours === 168}">\n            7 \xe6\x97\xa5\xe3\x81\x94\xe3\x81\xa8</option>\n        </select>\n      </div>\n    </div>` : \'\'}\n\n',
+     'chrome/browser/resources/extensions/detail_view.html.ts (patch 0049)'),
+    (_EXTENSIONS_RESOURCES_BUILD_GN_REL,
+     b'    "detail_view.ts",\n    "error_page.ts",\n',
+     b'    "detail_view.ts",\n    "github_dialog.html.ts",\n    "github_dialog.ts",\n    "error_page.ts",\n',
+     'chrome/browser/resources/extensions/BUILD.gn (patch 0049)'),
+    (_CUSTOMIZE_CHROME_UI_CC_REL,
+     b'#include "chrome/browser/ui/webui/side_panel/customize_chrome/customize_chrome_page_handler.h"\n#include "chrome/browser/ui/webui/side_panel/customize_chrome/customize_chrome_section.h"\n',
+     b'#include "chrome/browser/ui/webui/side_panel/customize_chrome/customize_chrome_page_handler.h"\n#include "chrome/browser/ui/webui/side_panel/customize_chrome/lumo_ntp_customize_handler.h"\n#include "chrome/browser/ui/webui/side_panel/customize_chrome/customize_chrome_section.h"\n',
+     'chrome/browser/ui/webui/side_panel/customize_chrome/customize_chrome_ui.cc include (patch 0051)'),
+    (_CUSTOMIZE_CHROME_UI_CC_REL,
+     b'content::WebUIDataSource* source = content::WebUIDataSource::CreateAndAdd(\n    profile_, chrome::kChromeUICustomizeChromeSidePanelHost);\n\n',
+     b'content::WebUIDataSource* source = content::WebUIDataSource::CreateAndAdd(\n    profile_, chrome::kChromeUICustomizeChromeSidePanelHost);\n  AddWebUiMessageHandler(std::make_unique<LumoNtpCustomizeHandler>(\n      profile_->GetPrefs()));\n\n',
+     'chrome/browser/ui/webui/side_panel/customize_chrome/customize_chrome_ui.cc handler (patch 0051)'),
+    (_NEW_TAB_PAGE_UI_CC_REL,
+     b'#include "chrome/browser/ui/webui/new_tab_page/new_tab_page_handler.h"\n#include "chrome/browser/ui/webui/new_tab_page/untrusted_source.h"\n',
+     b'#include "chrome/browser/ui/webui/new_tab_page/new_tab_page_handler.h"\n#include "chrome/browser/ui/webui/side_panel/customize_chrome/lumo_ntp_customize_handler.h"\n#include "chrome/browser/ui/webui/new_tab_page/untrusted_source.h"\n',
+     'chrome/browser/ui/webui/new_tab_page/new_tab_page_ui.cc include (patch 0052)'),
+    (_NEW_TAB_PAGE_UI_CC_REL,
+     b'content::WebUIDataSource::Add(profile_,\n                                CreateNewTabPageUiHtmlSource(profile_));\n\n',
+     b'content::WebUIDataSource::Add(profile_,\n                                CreateNewTabPageUiHtmlSource(profile_));\n  AddWebUiMessageHandler(std::make_unique<LumoNtpCustomizeHandler>(\n      profile_->GetPrefs()));\n\n',
+     'chrome/browser/ui/webui/new_tab_page/new_tab_page_ui.cc handler (patch 0052)'),
+)
+
+# (file, anchor, block, marker, insert_before, what) — anchored insertions for hunks whose change sits at a hunk
+# edge, where a plain replacement's old form would survive
+# contiguously in the fixed tree and insert twice. The
+# marker (a distinctive line of the inserted block) is
+# checked first, like _resume_fixup_lock_entry_struct.
+_LUMO_RESUME_FIXUP_INSERTIONS = (
+    (_EXTENSIONS_BROWSER_PROXY_TS_REL,
+     b'export interface ExtensionsBrowserProxy {\n',
+     b"/** Lumo (patch 0049): a repository's latest GitHub release. */\nexport interface LumoGithubReleaseInfo {\n  tag: string;\n  assets: string[];\n}\n",
+     b'LumoGithubReleaseInfo', True,
+     'chrome/browser/resources/extensions/extensions_browser_proxy.ts (patch 0049)'),
+    (_EXTENSIONS_BROWSER_PROXY_TS_REL,
+     b'  loadUnpacked(): Promise<string>;\n',
+     b'  // Lumo (patch 0049, task 36): GitHub extension updater.\n  lumoGithubFetchRelease(repo: string): Promise<LumoGithubReleaseInfo>;\n  lumoGithubAddExtension(\n      repo: string, asset: string, intervalHours: number): Promise<string>;\n  lumoGithubSetUpdateInterval(id: string, intervalHours: number): void;\n',
+     b'lumoGithubFetchRelease(repo: string): Promise', True,
+     'chrome/browser/resources/extensions/extensions_browser_proxy.ts (patch 0049)'),
+    (_EXTENSIONS_BROWSER_PROXY_TS_REL,
+     b"  loadUnpacked() {\n    return sendWithPromise('loadUnpacked');\n  }\n",
+     b"  lumoGithubFetchRelease(repo: string) {\n    return sendWithPromise('lumoGithubFetchRelease', repo);\n  }\n  lumoGithubAddExtension(repo: string, asset: string, intervalHours: number) {\n    return sendWithPromise(\n        'lumoGithubAddExtension', repo, asset, intervalHours);\n  }\n  lumoGithubSetUpdateInterval(id: string, intervalHours: number) {\n    chrome.send('lumoGithubSetUpdateInterval', [id, intervalHours]);\n  }\n",
+     b'lumoGithubFetchRelease(repo: string) {', True,
+     'chrome/browser/resources/extensions/extensions_browser_proxy.ts (patch 0049)'),
+    (_EXTENSIONS_TOOLBAR_TS_REL,
+     b"import {getHtml} from './toolbar.html.js';\n",
+     b"import './github_dialog.js';\n",
+     b"import './github_dialog.js';", True,
+     'chrome/browser/resources/extensions/toolbar.ts (patch 0049)'),
+    (_EXTENSIONS_TOOLBAR_TS_REL,
+     b"  static get is() {\n    return 'extensions-toolbar';\n  }\n",
+     b"  // Lumo (patch 0049, task 36): opens the GitHub add dialog\n  // hosted in this toolbar's template.\n  protected onLumoGithubAddClick_() {\n    this.shadowRoot!.querySelector('extensions-github-dialog')!.show();\n  }\n",
+     b'onLumoGithubAddClick_', True,
+     'chrome/browser/resources/extensions/toolbar.ts (patch 0049)'),
+    (_EXTENSIONS_DETAIL_VIEW_REL,
+     b"  static get is() {\n    return 'extensions-detail-view';\n  }\n",
+     b'  // Lumo (patch 0049, task 36, requirement (a)): persists a\n  // new update-check interval for a GitHub-managed extension.\n  protected onLumoGithubIntervalChange_(e: Event) {\n    const hours = Number((e.target as HTMLSelectElement).value);\n    ExtensionsBrowserProxyImpl.getInstance().lumoGithubSetUpdateInterval(\n        this.data.id, hours);\n  }\n',
+     b'onLumoGithubIntervalChange_', True,
+     'chrome/browser/resources/extensions/detail_view.ts (patch 0049)'),
+    (_PREF_NAMES_REL,
+     b'// collapsed to its narrow strip.\ninline constexpr char kLumoSidebarBarCollapsed[] =\n    "lumo.sidebar.bar_collapsed";\n',
+     b'\n// Lumo NTP customization (patches 0050-0052, task 38): the whole\n// new-tab customization as one dictionary pref (JSON-shaped; see\n// lumo_ntp_config.h for the schema). A single dictionary keeps the\n// Customize panel\'s instant preview and the NTP rendering on one\n// atomic value: every panel edit rewrites the dictionary and both\n// sides observe the same pref.\ninline constexpr char kLumoNtpConfig[] = "lumo.ntp.config";\n\n// Lumo NTP customization: the memo widget\'s text. Kept outside the\n// config dictionary because it is content, not layout.\ninline constexpr char kLumoNtpMemo[] = "lumo.ntp.memo";\n\n// Lumo NTP customization: the ToDo widget\'s items, a list of\n// dictionaries with "text" and "done" keys. Content, not layout,\n// so it also lives outside the config dictionary.\ninline constexpr char kLumoNtpTodos[] = "lumo.ntp.todos";\n\n// Lumo NTP customization: the local background image as a data URL\n// chosen through the Customize panel\'s file picker. Stored apart\n// from the config dictionary so config export/import stays small\n// and never embeds the image bytes.\ninline constexpr char kLumoNtpBackgroundImage[] =\n    "lumo.ntp.background_image";\n',
+     b'kLumoNtpConfig', False,
+     'chrome/common/pref_names.h (patch 0050)'),
+    (_UI_FEATURES_H_REL,
+     b'// Lumo Labs experiment (Lumo patches 0037/0038): Floorp-style\n// sidebar with a vertical icon bar and a left-docked side panel.\nBASE_DECLARE_FEATURE(kLumoSidebar);\n',
+     b'\n// Lumo NTP customization (Lumo patches 0050-0052, task 38): the\n// "Lumo \xe3\x82\x92\xe3\x82\xab\xe3\x82\xb9\xe3\x82\xbf\xe3\x83\x9e\xe3\x82\xa4\xe3\x82\xba" section in the standard Customize Chrome\n// side panel plus the customized rendering of the new tab page.\nBASE_DECLARE_FEATURE(kLumoNtpCustomize);\n',
+     b'kLumoNtpCustomize', False,
+     'chrome/browser/ui/ui_features.h (patch 0050)'),
+    (_UI_FEATURES_CC_REL,
+     b'BASE_FEATURE(kLumoSidebar, base::FEATURE_DISABLED_BY_DEFAULT);\n',
+     b'\nBASE_FEATURE(kLumoNtpCustomize, base::FEATURE_ENABLED_BY_DEFAULT);\n',
+     b'kLumoNtpCustomize', False,
+     'chrome/browser/ui/ui_features.cc (patch 0050)'),
+    (_THORIUM_FLAG_ENTRIES_REL,
+     b'     "Lumo Sidebar",\n     "Shows a Floorp-style vertical icon bar at the left edge of the window and docks the side panel on the left. Implemented by Lumo patches 0037 and 0038.",\n     kOsDesktop, FEATURE_VALUE_TYPE(features::kLumoSidebar)},\n',
+     b'\n    {"lumo-ntp-customize",\n     "Lumo \xe6\x96\xb0\xe8\xa6\x8f\xe3\x82\xbf\xe3\x83\x96\xe3\x81\xae\xe3\x82\xab\xe3\x82\xb9\xe3\x82\xbf\xe3\x83\x9e\xe3\x82\xa4\xe3\x82\xba",\n     "\xe6\x96\xb0\xe8\xa6\x8f\xe3\x82\xbf\xe3\x83\x96\xe3\x83\x9a\xe3\x83\xbc\xe3\x82\xb8\xe3\x81\xae\xe8\x83\x8c\xe6\x99\xaf\xe3\x83\xbb\xe6\x99\x82\xe8\xa8\x88\xe3\x83\xbb\xe6\xa4\x9c\xe7\xb4\xa2\xe3\x83\x90\xe3\x83\xbc\xe3\x83\xbb\xe3\x82\xb7\xe3\x83\xa7\xe3\x83\xbc\xe3\x83\x88\xe3\x82\xab\xe3\x83\x83\xe3\x83\x88\xe3\x83\xbb\xe3\x82\xa6\xe3\x82\xa3\xe3\x82\xb8\xe3\x82\xa7\xe3\x83\x83\xe3\x83\x88\xe3\x82\x92\xe3\x80\x81\xe6\xa8\x99\xe6\xba\x96\xe3\x81\xae\xe3\x82\xab\xe3\x82\xb9\xe3\x82\xbf\xe3\x83\x9e\xe3\x82\xa4\xe3\x82\xba\xe3\x83\x91\xe3\x83\x8d\xe3\x83\xab\xe3\x81\x8b\xe3\x82\x89\xe7\xb4\xb0\xe3\x81\x8b\xe3\x81\x8f\xe5\xa4\x89\xe6\x9b\xb4\xe3\x81\xa7\xe3\x81\x8d\xe3\x82\x8b\xe3\x82\x88\xe3\x81\x86\xe3\x81\xab\xe3\x81\x97\xe3\x81\xbe\xe3\x81\x99\xef\xbc\x88Lumo \xe3\x83\x91\xe3\x83\x83\xe3\x83\x81 0050\xe3\x80\x9c0052\xef\xbc\x89\xe3\x80\x82",\n     kOsDesktop, FEATURE_VALUE_TYPE(features::kLumoNtpCustomize)},\n',
+     b'lumo-ntp-customize', False,
+     'chrome/browser/thorium_flag_entries.h (patch 0050)'),
+    (_CHROME_LABS_MODEL_CC_REL,
+     b'        kLumoSidebarFlagDescription,\n        "chrome-labs-lumo-sidebar",\n        version_info::Channel::BETA);\n',
+     b'\n    const char kLumoNtpCustomizeFlagId[] = "lumo-ntp-customize";\n    const std::u16string kLumoNtpCustomizeFlagName =\n        l10n_util::GetStringUTF16(IDS_CHROMELABS_LUMO_NTP_CUSTOMIZE_NAME);\n    const std::u16string kLumoNtpCustomizeFlagDescription =\n        l10n_util::GetStringUTF16(\n            IDS_CHROMELABS_LUMO_NTP_CUSTOMIZE_DESCRIPTION);\n\n    lab_info.emplace_back(\n        kLumoNtpCustomizeFlagId,\n        kLumoNtpCustomizeFlagName,\n        kLumoNtpCustomizeFlagDescription,\n        "chrome-labs-lumo-ntp-customize",\n        version_info::Channel::BETA);\n',
+     b'kLumoNtpCustomizeFlagId', False,
+     'chrome/browser/ui/toolbar/chrome_labs/chrome_labs_model.cc (patch 0050)'),
+    (_GENERATED_RESOURCES_GRD_REL,
+     b'    <message name="IDS_LUMO_SIDEBAR_EXPAND" desc="Tooltip of the button that expands the collapsed Lumo sidebar icon bar.">\n      \xe3\x82\xb5\xe3\x82\xa4\xe3\x83\x89\xe3\x83\x90\xe3\x83\xbc\xe3\x82\x92\xe5\xb1\x95\xe9\x96\x8b\xe3\x81\x99\xe3\x82\x8b\n    </message>\n',
+     b'    <message name="IDS_CHROMELABS_LUMO_NTP_CUSTOMIZE_NAME" desc="Name of the Lumo Labs experiment shown in the Labs bubble.">\n      \xe6\x96\xb0\xe8\xa6\x8f\xe3\x82\xbf\xe3\x83\x96\xe3\x81\xae\xe3\x82\xab\xe3\x82\xb9\xe3\x82\xbf\xe3\x83\x9e\xe3\x82\xa4\xe3\x82\xba (Lumo)\n    </message>\n    <message name="IDS_CHROMELABS_LUMO_NTP_CUSTOMIZE_DESCRIPTION" desc="Description of the Lumo Labs experiment shown in the Labs bubble.">\n      \xe6\x96\xb0\xe8\xa6\x8f\xe3\x82\xbf\xe3\x83\x96\xe3\x83\x9a\xe3\x83\xbc\xe3\x82\xb8\xe3\x81\xae\xe8\x83\x8c\xe6\x99\xaf\xe3\x83\xbb\xe6\x99\x82\xe8\xa8\x88\xe3\x83\xbb\xe6\x8c\xa8\xe6\x8b\xb6\xe6\x96\x87\xe3\x83\xbb\xe6\xa4\x9c\xe7\xb4\xa2\xe3\x83\x90\xe3\x83\xbc\xe3\x83\xbb\xe3\x82\xb7\xe3\x83\xa7\xe3\x83\xbc\xe3\x83\x88\xe3\x82\xab\xe3\x83\x83\xe3\x83\x88\xe3\x83\xbb\xe3\x82\xa6\xe3\x82\xa3\xe3\x82\xb8\xe3\x82\xa7\xe3\x83\x83\xe3\x83\x88\xe3\x83\xbb\xe3\x83\xac\xe3\x82\xa4\xe3\x82\xa2\xe3\x82\xa6\xe3\x83\x88\xe3\x83\xbb\xe3\x83\x86\xe3\x83\xbc\xe3\x83\x9e\xe3\x82\x92\xe3\x80\x81\xe6\xa8\x99\xe6\xba\x96\xe3\x81\xae\xe3\x82\xab\xe3\x82\xb9\xe3\x82\xbf\xe3\x83\x9e\xe3\x82\xa4\xe3\x82\xba\xe3\x83\x91\xe3\x83\x8d\xe3\x83\xab\xe5\x86\x85\xe3\x81\xae\xe3\x80\x8cLumo \xe3\x82\x92\xe3\x82\xab\xe3\x82\xb9\xe3\x82\xbf\xe3\x83\x9e\xe3\x82\xa4\xe3\x82\xba\xe3\x80\x8d\xe3\x81\x8b\xe3\x82\x89\xe7\xb4\xb0\xe3\x81\x8b\xe3\x81\x8f\xe5\xa4\x89\xe6\x9b\xb4\xe3\x81\xa7\xe3\x81\x8d\xe3\x82\x8b\xe3\x82\x88\xe3\x81\x86\xe3\x81\xab\xe3\x81\x97\xe3\x81\xbe\xe3\x81\x99\xef\xbc\x88Lumo \xe3\x83\x91\xe3\x83\x83\xe3\x83\x81 0050\xe3\x80\x9c0052\xef\xbc\x89\xe3\x80\x82\n    </message>\n    <message name="IDS_LUMO_NTP_CUSTOMIZE_TITLE" desc="Title of the Lumo section in the standard Customize Chrome side panel.">\n      Lumo \xe3\x82\x92\xe3\x82\xab\xe3\x82\xb9\xe3\x82\xbf\xe3\x83\x9e\xe3\x82\xa4\xe3\x82\xba\n    </message>\n',
+     b'IDS_LUMO_NTP_CUSTOMIZE_TITLE', False,
+     'chrome/app/generated_resources.grd (patch 0050)'),
+    (_BROWSER_UI_PREFS_REL,
+     b'}  // namespace\n\nvoid RegisterBrowserUserPrefs(user_prefs::PrefRegistrySyncable* registry) {\n',
+     b'base::DictValue DefaultLumoNtpConfig() {\n  base::DictValue config;\n  config.Set("version", 1);\n  base::DictValue background;\n  background.Set("mode", "solid");\n  background.Set("color", "#ffffff");\n  background.Set("color2", "#00bcd4");\n  background.Set("gradientAngle", 135);\n  background.Set("pattern", "none");\n  background.Set("imageFit", "cover");\n  background.Set("imagePosition", "center");\n  background.Set("imageRepeat", false);\n  background.Set("darkness", 0);\n  background.Set("blur", 0);\n  background.Set("saturation", 100);\n  background.Set("overlayColor", "#000000");\n  background.Set("overlayOpacity", 0);\n  config.Set("background", std::move(background));\n  base::DictValue clock;\n  clock.Set("enabled", true);\n  clock.Set("format24h", true);\n  clock.Set("showSeconds", false);\n  clock.Set("size", 64);\n  clock.Set("weight", 300);\n  clock.Set("showDate", true);\n  clock.Set("dateFormat", "weekday-month-day");\n  clock.Set("align", "center");\n  clock.Set("color", "#202124");\n  clock.Set("opacity", 100);\n  config.Set("clock", std::move(clock));\n  base::DictValue greeting;\n  greeting.Set("enabled", true);\n  greeting.Set("useTimeOfDay", true);\n  greeting.Set("name", "");\n  greeting.Set("morning", "\xe3\x81\x8a\xe3\x81\xaf\xe3\x82\x88\xe3\x81\x86\xe3\x81\x94\xe3\x81\x96\xe3\x81\x84\xe3\x81\xbe\xe3\x81\x99");\n  greeting.Set("afternoon", "\xe3\x81\x93\xe3\x82\x93\xe3\x81\xab\xe3\x81\xa1\xe3\x81\xaf");\n  greeting.Set("evening", "\xe3\x81\x93\xe3\x82\x93\xe3\x81\xb0\xe3\x82\x93\xe3\x81\xaf");\n  config.Set("greeting", std::move(greeting));\n  base::DictValue search;\n  search.Set("enabled", true);\n  search.Set("engine", "default");\n  search.Set("width", 560);\n  search.Set("height", 48);\n  search.Set("radius", 24);\n  search.Set("bgOpacity", 90);\n  search.Set("blur", 0);\n  search.Set("placeholder", "\xe6\xa4\x9c\xe7\xb4\xa2\xe3\x80\x81\xe3\x81\xbe\xe3\x81\x9f\xe3\x81\xaf URL \xe3\x82\x92\xe5\x85\xa5\xe5\x8a\x9b");\n  search.Set("align", "center");\n  config.Set("search", std::move(search));\n  base::DictValue layout;\n  layout.Set("verticalAlign", "center");\n  layout.Set("maxWidth", 960);\n  layout.Set("gap", 24);\n  layout.Set("density", "standard");\n  layout.Set("fontScale", 100);\n  config.Set("layout", std::move(layout));\n  base::DictValue theme;\n  theme.Set("mode", "system");\n  theme.Set("accent", "#00acc1");\n  config.Set("theme", std::move(theme));\n  base::DictValue shortcuts;\n  shortcuts.Set("columns", 5);\n  shortcuts.Set("rows", 2);\n  shortcuts.Set("tileSize", 96);\n  shortcuts.Set("gap", 16);\n  shortcuts.Set("radius", 16);\n  shortcuts.Set("bgColor", "#ffffff");\n  shortcuts.Set("bgOpacity", 70);\n  shortcuts.Set("showLabel", true);\n  shortcuts.Set("labelColor", "#202124");\n  shortcuts.Set("labelSize", 12);\n  shortcuts.Set("faviconSize", 32);\n  shortcuts.Set("openInNewTab", false);\n  base::ListValue shortcut_items;\n  {\n    base::DictValue item;\n    item.Set("title", "YouTube");\n    item.Set("url", "https://www.youtube.com/");\n    shortcut_items.Append(std::move(item));\n  }\n  {\n    base::DictValue item;\n    item.Set("title", "GitHub");\n    item.Set("url", "https://github.com/");\n    shortcut_items.Append(std::move(item));\n  }\n  shortcuts.Set("items", std::move(shortcut_items));\n  config.Set("shortcuts", std::move(shortcuts));\n  base::ListValue widgets;\n  {\n    base::DictValue widget;\n    widget.Set("id", "clock");\n    widget.Set("enabled", false);\n    widget.Set("order", 0);\n    widget.Set("width", 320);\n    widgets.Append(std::move(widget));\n  }\n  {\n    base::DictValue widget;\n    widget.Set("id", "calendar");\n    widget.Set("enabled", true);\n    widget.Set("order", 1);\n    widget.Set("width", 320);\n    widgets.Append(std::move(widget));\n  }\n  {\n    base::DictValue widget;\n    widget.Set("id", "bookmarks");\n    widget.Set("enabled", false);\n    widget.Set("order", 2);\n    widget.Set("width", 320);\n    widgets.Append(std::move(widget));\n  }\n  {\n    base::DictValue widget;\n    widget.Set("id", "recently_closed");\n    widget.Set("enabled", false);\n    widget.Set("order", 3);\n    widget.Set("width", 320);\n    widgets.Append(std::move(widget));\n  }\n  {\n    base::DictValue widget;\n    widget.Set("id", "downloads");\n    widget.Set("enabled", false);\n    widget.Set("order", 4);\n    widget.Set("width", 320);\n    widgets.Append(std::move(widget));\n  }\n  {\n    base::DictValue widget;\n    widget.Set("id", "memo");\n    widget.Set("enabled", true);\n    widget.Set("order", 5);\n    widget.Set("width", 320);\n    widgets.Append(std::move(widget));\n  }\n  {\n    base::DictValue widget;\n    widget.Set("id", "todo");\n    widget.Set("enabled", true);\n    widget.Set("order", 6);\n    widget.Set("width", 320);\n    widgets.Append(std::move(widget));\n  }\n  {\n    base::DictValue widget;\n    widget.Set("id", "open_tabs");\n    widget.Set("enabled", false);\n    widget.Set("order", 7);\n    widget.Set("width", 320);\n    widgets.Append(std::move(widget));\n  }\n  {\n    base::DictValue widget;\n    widget.Set("id", "lumo_info");\n    widget.Set("enabled", true);\n    widget.Set("order", 8);\n    widget.Set("width", 320);\n    widgets.Append(std::move(widget));\n  }\n  config.Set("widgets", std::move(widgets));\n  return config;\n}\n\n',
+     b'DefaultLumoNtpConfig', True,
+     'chrome/browser/ui/browser_ui_prefs.cc (patch 0050)'),
+    (_CUSTOMIZE_CHROME_BUILD_GN_REL,
+     b'    "hover_button.ts",\n',
+     b'    "lumo_ntp_presets.ts",\n    "lumo_ntp_section.css",\n    "lumo_ntp_section.html.ts",\n    "lumo_ntp_section.ts",\n',
+     b'lumo_ntp_section.ts', False,
+     'chrome/browser/resources/side_panel/customize_chrome/BUILD.gn (patch 0051)'),
+    (_CUSTOMIZE_CHROME_TS_REL,
+     b"import './appearance.js';\n",
+     b"import './lumo_ntp_section.js';\n",
+     b'lumo_ntp_section.js', False,
+     'chrome/browser/resources/side_panel/customize_chrome/app.ts (patch 0051)'),
+    (_CUSTOMIZE_CHROME_HTML_TS_REL,
+     b"    `: ''}\n",
+     b'    <hr class="sp-cards-separator">\n    <lumo-ntp-section></lumo-ntp-section>\n',
+     b'lumo-ntp-section', False,
+     'chrome/browser/resources/side_panel/customize_chrome/app.html.ts (patch 0051)'),
+    (_NEW_TAB_PAGE_TS_REL,
+     b"export {AppElement, CONTEXTUAL_ENTRYPOINT_ELEMENT_ID, CUSTOMIZE_CHROME_BUTTON_ELEMENT_ID, NtpCustomizeChromeEntryPoint, NtpElement} from './app.js';\n",
+     b"import './lumo_ntp_customizer.js';\n",
+     b'lumo_ntp_customizer.js', False,
+     'chrome/browser/resources/new_tab_page/new_tab_page.ts (patch 0052)'),
+    (_NTP_APP_HTML_TS_REL,
+     b'    <ntp-app></ntp-app>\n',
+     b'  <div id="lumo-ntp-root">\n    <div class="lumo-bg-filter"></div>\n    <div class="lumo-bg-overlay"></div>\n    <div class="lumo-clock-main"><div class="lumo-date"></div></div>\n    <div class="lumo-greeting"></div>\n    <form class="lumo-search"><input type="text"></form>\n    <div class="lumo-shortcuts"></div>\n    <div class="lumo-widgets"></div>\n  </div>\n',
+     b'lumo-ntp-root', False,
+     'chrome/browser/resources/new_tab_page/new_tab_page.html (patch 0052)'),
+    (_NEW_TAB_PAGE_BUILD_GN_REL,
+     b'                 "new_tab_page.ts",\n',
+     b'                 "lumo_ntp_customizer.css",\n                 "lumo_ntp_customizer.ts",\n',
+     b'lumo_ntp_customizer.ts', False,
+     'chrome/browser/resources/new_tab_page/new_tab_page.gni (patch 0052)'),
+    (_TAB_STRIP_MODEL_REL,
+     b'\n    case CommandSendTabToSelf: {\n      base::UmaHistogramCounts1000(\n          "Tab.ContextMenu.SendTabToSelf.SelectedTabsCount",\n',
+     b'\n    // Lumo (patch 0042): discard the selected tabs without closing\n    // them. This is the manual form of what memory saver does\n    // automatically: the tab stays in the strip (shown dimmed, like\n    // an automatically discarded tab) and reloads when revisited.\n    case CommandDiscardTab: {\n      base::UmaHistogramCounts1000(\n          "Tab.ContextMenu.DiscardTab.SelectedTabsCount",\n          selection_model_.size());\n      base::RecordAction(UserMetricsAction("TabContextMenu_DiscardTab"));\n\n      std::vector<int> indices = GetIndicesForCommand(context_index);\n      std::vector<tabs::TabInterface*> tabs = GetTabsAtIndices(indices);\n\n      // A visible (active) tab cannot be discarded. If the active\n      // tab is among the targets, activate a neighbouring tab that\n      // is not itself a target first; if every tab is a target\n      // there is nowhere to move to, so the active tab is skipped.\n      tabs::TabInterface* active_tab = GetActiveTab();\n      const bool active_is_target =\n          active_tab && std::ranges::contains(tabs, active_tab);\n      if (active_is_target) {\n        std::optional<int> neighbour;\n        for (int i = 0; i < count(); ++i) {\n          if (!std::ranges::contains(indices, i)) {\n            neighbour = i;\n            break;\n          }\n        }\n        if (neighbour) {\n          ActivateTabAt(*neighbour,\n                        TabStripUserGestureDetails(\n                            TabStripUserGestureType::kOther));\n        }\n      }\n\n      for (tabs::TabInterface* tab : tabs) {\n        if (tab == active_tab && active_is_target &&\n            GetActiveTab() == active_tab) {\n          continue;\n        }\n        content::WebContents* contents = tab->GetContents();\n        auto* lifecycle_unit =\n            contents ? resource_coordinator::TabLifecycleUnitExternal::\n                           FromWebContents(contents)\n                     : nullptr;\n        if (lifecycle_unit) {\n          lifecycle_unit->DiscardTab(\n              resource_coordinator::mojom::LifecycleUnitDiscardReason::\n                  EXTERNAL);\n        }\n      }\n      break;\n    }\n',
+     b'Tab.ContextMenu.DiscardTab.SelectedTabsCount', True,
+     'tab_strip_model.cc: CommandDiscardTab case (patch 0042)'),
 )
 
 # The LumoLockEntry struct and ParseLumoLockEntry helper the
@@ -5281,6 +6177,73 @@ def _resume_fixup_lock_entry_struct(data, rel_path):
     )
 
 
+def _resume_fixup_insert(data, anchor, block, marker, before,
+                         what, rel_path):
+    """One anchored insertion (see _LUMO_RESUME_FIXUP_INSERTIONS).
+
+    Three-way like _resume_fixup_replace: the marker (a distinctive
+    line of the inserted block) present -> already fixed, no-op;
+    the anchor present exactly once -> insert the block before or
+    after it; anything else -> StageError. A CRLF variant of the
+    anchor/block/marker is accepted for the same reason as in
+    _resume_fixup_replace (build #30).
+    """
+    if marker in data:
+        log(f"Resume fixup: {rel_path}: {what}: already fixed, "
+            f"nothing to do.")
+        return data
+    if data.count(anchor) == 1:
+        if before:
+            log(f"Resume fixup: {rel_path}: {what}: inserted "
+                f"before the anchor.")
+            return data.replace(anchor, block + anchor)
+        log(f"Resume fixup: {rel_path}: {what}: inserted after "
+            f"the anchor.")
+        return data.replace(anchor, anchor + block)
+    anchor_crlf = anchor.replace(b"\n", b"\r\n")
+    block_crlf = block.replace(b"\n", b"\r\n")
+    marker_crlf = marker.replace(b"\n", b"\r\n")
+    if marker_crlf != marker and marker_crlf in data:
+        log(f"Resume fixup: {rel_path}: {what}: already fixed "
+            "(CRLF form), nothing to do.")
+        return data
+    if anchor_crlf != anchor and data.count(anchor_crlf) == 1:
+        if before:
+            log(f"Resume fixup: {rel_path}: {what}: inserted "
+                f"before the anchor (CRLF form).")
+            return data.replace(anchor_crlf, block_crlf + anchor_crlf)
+        log(f"Resume fixup: {rel_path}: {what}: inserted after "
+            f"the anchor (CRLF form).")
+        return data.replace(anchor_crlf, anchor_crlf + block_crlf)
+    raise StageError(
+        f"Resume fixup: {rel_path}: cannot place '{what}': the "
+        f"inserted block's marker is absent and the anchor does "
+        f"not occur exactly once (LF or CRLF); this tree is not "
+        f"the tree the fixup was written for, refusing to "
+        f"compile it."
+    )
+
+
+def _resume_fixup_launch_notify_files(chromium_src):
+    """Check patch 0046's new files exist on a resumed tree.
+
+    The launch notification sources are new files, so no byte
+    replacement can recreate them; a checkpoint whose setup ran
+    without patch 0046 cannot be resumed into a build that
+    expects them (task 41 spec, section 6.3).
+    """
+    for rel_path in (_LUMO_LAUNCH_NOTIFY_CC_REL,
+                     _LUMO_LAUNCH_NOTIFY_H_REL):
+        if not (chromium_src / rel_path).is_file():
+            raise StageError(
+                f"Resume fixup: expected source file is missing: "
+                f"{chromium_src / rel_path}; patch 0046 (launch "
+                f"notification, task 41) was not applied to the "
+                f"checkpoint this stage resumed from, refusing "
+                f"to compile it."
+            )
+
+
 def apply_lumo_resume_fixups(ctx):
     """Bring a resumed build-phase tree up to the fixed patches.
 
@@ -5300,19 +6263,46 @@ def apply_lumo_resume_fixups(ctx):
     checkpoint the stage resumed from is incomplete.
     """
     chromium_src = ctx["chromium_src"]
+    _resume_fixup_launch_notify_files(chromium_src)
+    # The settings_main.ts Monitor import goes first: the patch
+    # 0047 replacement for the same file (the hub/font imports)
+    # anchors on the import block WITH the Monitor import in it.
+    main_path = chromium_src / _LUMO_MONITOR_MAIN_REL
+    if not main_path.is_file():
+        raise StageError(
+            f"Resume fixup: expected settings_main.ts is missing: "
+            f"{main_path}; the checkpoint this stage resumed from "
+            f"is incomplete."
+        )
+    main_data = main_path.read_bytes()
+    main_original = main_data
+    main_data = _resume_fixup_lumo_monitor_import(
+        main_data, _LUMO_MONITOR_MAIN_REL)
+    if main_data != main_original:
+        main_path.write_bytes(main_data)
+        log(f"Resume fixup: rewrote {main_path}.")
     replacements = {}
     for rel_path, old, new, what in _LUMO_RESUME_FIXUP_REPLACEMENTS:
         replacements.setdefault(rel_path, []).append((old, new, what))
-    for rel_path in (_PEOPLE_HANDLER_REL, _BROWSER_VIEW_REL,
-                     _PROFILE_IMPL_REL, _BROWSER_COMMAND_CONTROLLER_REL,
-                     _LUMO_MONITOR_HANDLER_REL,
-                     _LUMO_DEBUGGER_REPORTER_REL, _SETTINGS_MENU_REL,
-                     _SETTINGS_STRINGS_REL, _LUMO_MONITOR_PAGE_REL,
-                     _SIGN_IN_PROMO_REFRESH_CSS_REL,
-                     _SIGN_IN_PROMO_REFRESH_HTML_REL, _INTRO_APP_CSS_REL,
-                     _PRODUCT_LOGO_ANIMATION_REL, _THORIUM_URL_UTILS_REL,
-                     _THORIUM_EASTER_EGGS_REL,
-                     _CHROME_BROWSER_MAIN_WIN_REL):
+    insertions = {}
+    for rel_path, anchor, block, marker, before, what in \
+            _LUMO_RESUME_FIXUP_INSERTIONS:
+        insertions.setdefault(rel_path, []).append(
+            (anchor, block, marker, before, what))
+    target_rels = [_PEOPLE_HANDLER_REL, _BROWSER_VIEW_REL,
+                   _PROFILE_IMPL_REL, _BROWSER_COMMAND_CONTROLLER_REL,
+                   _LUMO_MONITOR_HANDLER_REL,
+                   _LUMO_DEBUGGER_REPORTER_REL, _SETTINGS_MENU_REL,
+                   _SETTINGS_STRINGS_REL, _LUMO_MONITOR_PAGE_REL,
+                   _SIGN_IN_PROMO_REFRESH_CSS_REL,
+                   _SIGN_IN_PROMO_REFRESH_HTML_REL, _INTRO_APP_CSS_REL,
+                   _PRODUCT_LOGO_ANIMATION_REL, _THORIUM_URL_UTILS_REL,
+                   _THORIUM_EASTER_EGGS_REL,
+                   _CHROME_BROWSER_MAIN_WIN_REL]
+    for rel_path in list(replacements) + list(insertions):
+        if rel_path not in target_rels:
+            target_rels.append(rel_path)
+    for rel_path in target_rels:
         path = chromium_src / rel_path
         if not path.is_file():
             raise StageError(
@@ -5324,6 +6314,10 @@ def apply_lumo_resume_fixups(ctx):
         original = data
         for old, new, what in replacements.get(rel_path, []):
             data = _resume_fixup_replace(data, old, new, what, rel_path)
+        for anchor, block, marker, before, what in \
+                insertions.get(rel_path, []):
+            data = _resume_fixup_insert(
+                data, anchor, block, marker, before, what, rel_path)
         if rel_path == _PEOPLE_HANDLER_REL:
             data = _resume_fixup_sync_snapshot_include(data, rel_path)
         if rel_path == _CHROME_BROWSER_MAIN_WIN_REL:
@@ -5345,20 +6339,6 @@ def apply_lumo_resume_fixups(ctx):
     if spec_data != spec_original:
         spec_path.write_bytes(spec_data)
         log(f"Resume fixup: rewrote {spec_path}.")
-    main_path = chromium_src / _LUMO_MONITOR_MAIN_REL
-    if not main_path.is_file():
-        raise StageError(
-            f"Resume fixup: expected settings_main.ts is missing: "
-            f"{main_path}; the checkpoint this stage resumed from "
-            f"is incomplete."
-        )
-    main_data = main_path.read_bytes()
-    main_original = main_data
-    main_data = _resume_fixup_lumo_monitor_import(
-        main_data, _LUMO_MONITOR_MAIN_REL)
-    if main_data != main_original:
-        main_path.write_bytes(main_data)
-        log(f"Resume fixup: rewrote {main_path}.")
     log("Resume fixups complete.")
 
 
@@ -6022,11 +7002,12 @@ def phase_build(args, ctx, deadline):
             f"checkpoint, so the next workflow run starts over "
             f"from stage 1 — it does not resume this tree."
         )
-    exe = out_dir / "thorium.exe"
+    exe = out_dir / "lumo.exe"
     if not exe.is_file():
         raise StageError(
             f"autoninja reported success but {exe} is missing; "
-            f"the Thorium patches may have changed the output name."
+            f"the Thorium patches and Lumo patch 0045 determine the "
+            f"output name (lumo.exe since build #33, task 40)."
         )
     log(f"\nBuild finished: {exe} exists "
         f"({exe.stat().st_size / (1024 ** 2):.1f} MiB).")
@@ -6036,11 +7017,14 @@ def _checkpoint_exclusion_switches(build_root):
     """7z switches keeping Secret-bearing generated files out of
     the checkpoint zip (build #30 audit fix).
 
-    Three generated files carry GitHub Secrets into the tree:
-    out/thorium/args.gn (the Google API keys, write_args_gn) and
+    Four generated files carry GitHub Secrets into the tree:
+    out/thorium/args.gn (the Google API keys, write_args_gn),
     chrome/browser/lumo/lumo_lock_config.h / lumo_lock_config_2.h
     (the startup lock's salt and expected SHA-256 hash,
-    write_lumo_lock_config). The checkpoint zip is uploaded as a
+    write_lumo_lock_config) and
+    chrome/browser/lumo/lumo_launch_config.h (the launch
+    notification's distribution id and signing key,
+    write_lumo_launch_config). The checkpoint zip is uploaded as a
     build-state Artifact to a public repository (3-day retention),
     so none of them may ride along. restore_generated_secret_
     files() re-creates them from the resuming stage's environment
@@ -6064,6 +7048,7 @@ def _checkpoint_exclusion_switches(build_root):
         "-xr!args.gn",
         "-xr!lumo_lock_config.h",
         "-xr!lumo_lock_config_2.h",
+        "-xr!lumo_launch_config.h",
     ]
 
 
@@ -6086,7 +7071,8 @@ def _checkpoint_secret_entries(zip_path):
     for name in names:
         normalized = name.replace("\\", "/")
         leaf = normalized.rsplit("/", 1)[-1]
-        if leaf in ("lumo_lock_config.h", "lumo_lock_config_2.h"):
+        if leaf in ("lumo_lock_config.h", "lumo_lock_config_2.h",
+                    "lumo_launch_config.h"):
             bad.append(name)
         elif normalized.endswith("/" + OUT_DIR_NAME + "/args.gn"):
             bad.append(name)
@@ -6239,7 +7225,8 @@ def checkpoint(args, ctx):
         )
     else:
         log("Checkpoint verified: no Secret-bearing generated "
-            "files (args.gn, lumo_lock_config*.h) are inside.")
+            "files (args.gn, lumo_lock_config*.h, "
+            "lumo_launch_config.h) are inside.")
     size_gb = zip_path.stat().st_size / (1024 ** 3)
     zip_minutes = (time.time() - zip_started) / 60
     log(f"Checkpoint written: {zip_path} ({size_gb:.1f} GiB, "

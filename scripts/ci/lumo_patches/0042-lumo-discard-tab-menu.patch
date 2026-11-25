@@ -1,0 +1,141 @@
+diff --git a/chrome/app/generated_resources.grd b/chrome/app/generated_resources.grd
+index 5b321cb..1110042 100644
+--- a/chrome/app/generated_resources.grd
++++ b/chrome/app/generated_resources.grd
+@@ -100,6 +100,9 @@ Please help our engineers fix this problem. Tell us what happened right before y
+     <message name="IDS_LUMO_DEV_STAGE_LABEL" desc="Label shown at the bottom-right of every Lumo browser window stating that the browser is in an experimental development stage.">
+       このブラウザーは試験的な開発段階です
+     </message>
++    <message name="IDS_LUMO_TAB_CXMENU_DISCARD_TAB" desc="Tab context menu item that discards the tab's contents without closing the tab (Lumo patch 0042).">
++      タブを閉じずに非アクティブ化
++    </message>
+     <message name="IDS_CHROMELABS_RELAUNCH_BUTTON_LABEL"
+              desc="Label on the button in the footer of the Thorium Labs bubble which will relaunch the browser.">
+       Relaunch
+diff --git a/chrome/browser/ui/tabs/tab_menu_model.cc b/chrome/browser/ui/tabs/tab_menu_model.cc
+index 17ab4e6..1110042 100644
+--- a/chrome/browser/ui/tabs/tab_menu_model.cc
++++ b/chrome/browser/ui/tabs/tab_menu_model.cc
+@@ -100,6 +100,12 @@ void TabMenuModel::Build(int index) {
+   // Separator Close Tab items
+   AddSeparator(ui::NORMAL_SEPARATOR);
+   AddItemWithStringId(TabStripModel::CommandCloseTab, IDS_TAB_CXMENU_CLOSETAB);
++  // Lumo (patch 0042): discard the tab's contents without closing
++  // the tab (the manual form of memory saver's automatic discard).
++  // The command is executed by TabStripModel, the TabMenuModel
++  // delegate's target, in ExecuteContextMenuCommand().
++  AddItemWithStringId(TabStripModel::CommandDiscardTab,
++                      IDS_LUMO_TAB_CXMENU_DISCARD_TAB);
+   AddItemWithStringId(TabStripModel::CommandCloseOtherTabs,
+                       IDS_TAB_CXMENU_CLOSEOTHERTABS);
+ 
+diff --git a/chrome/browser/ui/tabs/tab_strip_model.cc b/chrome/browser/ui/tabs/tab_strip_model.cc
+index e03b98f..1110042 100644
+--- a/chrome/browser/ui/tabs/tab_strip_model.cc
++++ b/chrome/browser/ui/tabs/tab_strip_model.cc
+@@ -100,6 +100,7 @@
+ #include "chrome/browser/profiles/profile.h"
+ #include "chrome/browser/reading_list/reading_list_model_factory.h"
+ #include "chrome/browser/resource_coordinator/tab_helper.h"
++#include "chrome/browser/resource_coordinator/tab_lifecycle_unit_external.h"
+ #include "chrome/browser/send_tab_to_self/send_tab_to_self_util.h"
+ #include "chrome/browser/ui/bookmarks/bookmark_utils.h"
+ #include "chrome/browser/ui/browser_command_controller.h"
+@@ -146,6 +147,19 @@ bool TabStripModel::IsContextMenuCommandEnabled(
+       return delegate()->CanGoBack(GetWebContentsAt(context_index));
+ 
++    // Lumo (patch 0042): the discard item is enabled whenever the
++    // tab has contents that are not discarded yet.
++    case CommandDiscardTab: {
++      WebContents* contents = GetWebContentsAt(context_index);
++      auto* lifecycle_unit =
++          contents ? resource_coordinator::TabLifecycleUnitExternal::
++                         FromWebContents(contents)
++                   : nullptr;
++      return lifecycle_unit &&
++             lifecycle_unit->GetTabState() !=
++                 resource_coordinator::mojom::LifecycleUnitState::DISCARDED;
++    }
++
+     case CommandCloseAllTabs:
+       DCHECK(delegate()->IsForWebApp());
+       DCHECK(web_app::HasPinnedHomeTab(this));
+       return true;
+@@ -192,6 +206,60 @@ void TabStripModel::ExecuteContextMenuCommand(int context_index,
+       break;
+     }
+ 
++    // Lumo (patch 0042): discard the selected tabs without closing
++    // them. This is the manual form of what memory saver does
++    // automatically: the tab stays in the strip (shown dimmed, like
++    // an automatically discarded tab) and reloads when revisited.
++    case CommandDiscardTab: {
++      base::UmaHistogramCounts1000(
++          "Tab.ContextMenu.DiscardTab.SelectedTabsCount",
++          selection_model_.size());
++      base::RecordAction(UserMetricsAction("TabContextMenu_DiscardTab"));
++
++      std::vector<int> indices = GetIndicesForCommand(context_index);
++      std::vector<tabs::TabInterface*> tabs = GetTabsAtIndices(indices);
++
++      // A visible (active) tab cannot be discarded. If the active
++      // tab is among the targets, activate a neighbouring tab that
++      // is not itself a target first; if every tab is a target
++      // there is nowhere to move to, so the active tab is skipped.
++      tabs::TabInterface* active_tab = GetActiveTab();
++      const bool active_is_target =
++          active_tab && std::ranges::contains(tabs, active_tab);
++      if (active_is_target) {
++        std::optional<int> neighbour;
++        for (int i = 0; i < count(); ++i) {
++          if (!std::ranges::contains(indices, i)) {
++            neighbour = i;
++            break;
++          }
++        }
++        if (neighbour) {
++          ActivateTabAt(*neighbour,
++                        TabStripUserGestureDetails(
++                            TabStripUserGestureType::kOther));
++        }
++      }
++
++      for (tabs::TabInterface* tab : tabs) {
++        if (tab == active_tab && active_is_target &&
++            GetActiveTab() == active_tab) {
++          continue;
++        }
++        content::WebContents* contents = tab->GetContents();
++        auto* lifecycle_unit =
++            contents ? resource_coordinator::TabLifecycleUnitExternal::
++                           FromWebContents(contents)
++                     : nullptr;
++        if (lifecycle_unit) {
++          lifecycle_unit->DiscardTab(
++              resource_coordinator::mojom::LifecycleUnitDiscardReason::
++                  EXTERNAL);
++        }
++      }
++      break;
++    }
++
+     case CommandSendTabToSelf: {
+       base::UmaHistogramCounts1000(
+           "Tab.ContextMenu.SendTabToSelf.SelectedTabsCount",
+diff --git a/components/tabs/public/tab_context_menu_command.h b/components/tabs/public/tab_context_menu_command.h
+index 0ed448f..1110042 100644
+--- a/components/tabs/public/tab_context_menu_command.h
++++ b/components/tabs/public/tab_context_menu_command.h
+@@ -100,6 +100,12 @@ enum TabContextMenuCommand {
+   CommandGlicSwitchToRecentConversation,
+   CommandGlicUnshare,
+   CommandToggleFocusGroup,
++  // Lumo (patch 0042): discards the tab without closing it. Added
++  // at the end so no existing command value changes. The
++  // LINT.ThenChange histograms entry for TabContextMenuCommand
++  // must gain a matching value before this is submitted upstream;
++  // Lumo is a private fork, so the presubmit note is recorded here.
++  CommandDiscardTab,
+ };
+ 
+ // LINT.ThenChange(//tools/metrics/histograms/metadata/tab/histograms.xml:TabContextMenuCommand)

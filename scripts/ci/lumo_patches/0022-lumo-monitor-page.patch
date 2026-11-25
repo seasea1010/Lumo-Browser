@@ -419,12 +419,13 @@ diff --git a/chrome/browser/resources/settings/route.ts b/chrome/browser/resourc
 index d733ae8..a318826 100644
 --- a/chrome/browser/resources/settings/route.ts
 +++ b/chrome/browser/resources/settings/route.ts
-@@ -146,6 +146,12 @@ function createRoutes(): SettingsRoutes {
+@@ -146,6 +146,13 @@ function createRoutes(): SettingsRoutes {
    r.ABOUT = r.BASIC.createSection(
        '/help', 'about', loadTimeData.getString('aboutPageTitle'));
  
-+  // Lumo: Monitor page (Lumo patch 0022), in the menu right below
-+  // the About entry.
++  // Lumo: Monitor page (Lumo patch 0022). Reached from the Lumo
++  // hub page (patch 0047); there is no direct menu item for it
++  // (the hub has the menu item instead).
 +  r.LUMO_MONITOR = r.BASIC.createSection(
 +      '/lumoMonitor', 'lumoMonitor',
 +      loadTimeData.getString('lumoMonitorPageTitle'));
@@ -488,22 +489,6 @@ index 2ef4dca..a5f0481 100644
 +    </template>
 +  </div>
  </cr-view-manager>
-diff --git a/chrome/browser/resources/settings/settings_menu/settings_menu.html b/chrome/browser/resources/settings/settings_menu/settings_menu.html
-index 0d30190..70ab115 100644
---- a/chrome/browser/resources/settings/settings_menu/settings_menu.html
-+++ b/chrome/browser/resources/settings/settings_menu/settings_menu.html
-@@ -209,5 +209,11 @@
-           <span class="menu-label">$i18n{aboutPageTitle}</span>
-           <cr-ripple></cr-ripple>
-         </a>
-+        <a role="menuitem" id="lumo-monitor-menu" href="/lumoMonitor"
-+            class="cr-nav-menu-item">
-+          <cr-icon icon="settings20:dashboard"></cr-icon>
-+          <span class="menu-label">$i18n{lumoMonitorPageTitle}</span>
-+          <cr-ripple></cr-ripple>
-+        </a>
-       </cr-menu-selector>
-     </div>
 diff --git a/chrome/browser/ui/webui/settings/BUILD.gn b/chrome/browser/ui/webui/settings/BUILD.gn
 index 3219735..f855c1b 100644
 --- a/chrome/browser/ui/webui/settings/BUILD.gn

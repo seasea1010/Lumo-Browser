@@ -1,0 +1,467 @@
+diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
+index 0f05f0d..0000000 100644
+--- a/chrome/browser/BUILD.gn
++++ b/chrome/browser/BUILD.gn
+@@ -100,6 +100,8 @@
+     "intranet_redirect_detector.cc",
+     "lumo/lumo_debugger_reporter.cc",
+     "lumo/lumo_debugger_reporter.h",
++    "lumo/lumo_launch_notify.cc",
++    "lumo/lumo_launch_notify.h",
+     "lumo/lumo_upgrade_welcome.cc",
+     "lumo/lumo_upgrade_welcome.h",
+     "memory_details.cc",
+diff --git a/chrome/browser/chrome_browser_main.cc b/chrome/browser/chrome_browser_main.cc
+index e8d7d43..0000000 100644
+--- a/chrome/browser/chrome_browser_main.cc
++++ b/chrome/browser/chrome_browser_main.cc
+@@ -100,6 +100,7 @@
+ #include "chrome/browser/gpu/chrome_browser_main_extra_parts_gpu.h"
+ #include "chrome/browser/language/url_language_histogram_factory.h"
+ #include "chrome/browser/lifetime/browser_shutdown.h"
++#include "chrome/browser/lumo/lumo_launch_notify.h"
+ #include "chrome/browser/lumo/lumo_debugger_reporter.h"
+ #include "chrome/browser/media/router/chrome_media_router_factory.h"
+ #include "chrome/browser/media/webrtc/media_capture_devices_dispatcher.h"
+@@ -146,6 +147,12 @@
+   // debugger app (--lumo-debugger-endpoint), report the startup
+   // event and start the session's tab reports. No-op otherwise.
+   lumo::debugger::StartSession();
++
++  // Lumo (patch 0046): one launch notification ping per launch
++  // (task 41). Fire-and-forget on a background thread; no-op
++  // unless this build carries a distribution id and signing key.
++  lumo::NotifyLaunchOnStartup();
++
+   browser_process_->browser_policy_connector()->OnBrowserStarted();
+ 
+ #if BUILDFLAG(ENABLE_PROCESS_SINGLETON)
+diff --git a/chrome/browser/lumo/lumo_launch_notify.cc b/chrome/browser/lumo/lumo_launch_notify.cc
+new file mode 100644
+index 0000000..0000000
+--- /dev/null
++++ b/chrome/browser/lumo/lumo_launch_notify.cc
+@@ -100,0 +100,359 @@
++// Copyright 2026 seasea1010
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/lumo/lumo_launch_notify.h"
++
++#include <array>
++#include <cstdint>
++#include <cstring>
++#include <memory>
++#include <optional>
++#include <string>
++#include <utility>
++#include <vector>
++
++#include "base/containers/span.h"
++#include "base/files/file_path.h"
++#include "base/files/file_util.h"
++#include "base/functional/bind.h"
++#include "base/hex.h"
++#include "base/json/json_writer.h"
++#include "base/logging.h"
++#include "base/path_service.h"
++#include "base/strings/string_number_conversions.h"
++#include "base/strings/string_util.h"
++#include "base/strings/stringprintf.h"
++#include "base/sys_info.h"
++#include "base/task/task_traits.h"
++#include "base/task/thread_pool.h"
++#include "base/time/time.h"
++#include "base/values.h"
++#include "chrome/browser/browser_process.h"
++#include "chrome/browser/net/system_network_context_manager.h"
++#include "chrome/common/chrome_paths.h"
++#include "content/public/browser/browser_task_traits.h"
++#include "content/public/browser/browser_thread.h"
++#include "crypto/hmac.h"
++#include "net/base/load_flags.h"
++#include "net/traffic_annotation/network_traffic_annotation.h"
++#include "services/network/public/cpp/resource_request.h"
++#include "services/network/public/cpp/simple_url_loader.h"
++#include "url/gurl.h"
++
++// Lumo (patch 0046): build-time configuration. stage.py generates
++// lumo_launch_config.h from the LUMO_LAUNCH_DIST_ID and
++// LUMO_LAUNCH_KEY secrets, and lumo_build_config.h from the CI run
++// number (patch 0025). Both are deliberately not part of the source
++// tree, so a tree without them builds with this feature disabled.
++#if __has_include("chrome/browser/lumo/lumo_launch_config.h")
++#include "chrome/browser/lumo/lumo_launch_config.h"
++#define LUMO_LAUNCH_CONFIG_GENERATED 1
++#endif  // __has_include("chrome/browser/lumo/lumo_launch_config.h")
++
++#if __has_include("chrome/browser/lumo/lumo_build_config.h")
++#include "chrome/browser/lumo/lumo_build_config.h"
++#define LUMO_BUILD_CONFIG_GENERATED 1
++#endif  // __has_include("chrome/browser/lumo/lumo_build_config.h")
++
++namespace lumo {
++
++// Implemented after the anonymous namespace below.
++void SendPingOnUiThread(std::string url_text, std::string payload);
++
++namespace {
++
++#if defined(LUMO_LAUNCH_CONFIG_GENERATED)
++constexpr std::string_view kDistId = kLaunchDistId;
++constexpr std::string_view kKeyHex = kLaunchKeyHex;
++#else
++constexpr std::string_view kDistId;
++constexpr std::string_view kKeyHex;
++#endif
++
++int EmbeddedBuildNumber() {
++#if defined(LUMO_BUILD_CONFIG_GENERATED)
++  return kBuildNumber;
++#else
++  return 0;
++#endif
++}
++
++bool LaunchNotifyConfigured() {
++  return !kDistId.empty() && !kKeyHex.empty();
++}
++
++// ------------------------------------------------------------------
++// Destination endpoint, kept only as ciphertext bytes.
++//
++// The endpoint host must not appear in the binary (or in this
++// source) as plaintext: the host name is tied to the owner's
++// notification account, and a leaked copy of the binary should not
++// reveal it to a strings scan. The bytes below are the endpoint
++// URL XORed with a keystream; the keystream key is itself never
++// stored whole - it is rebuilt at runtime from three fragments
++// (kPartA ^ kPartB ^ kPartC), and position mixing is applied so
++// repeated plaintext does not produce repeated ciphertext. The URL
++// is reconstructed only immediately before the request is built,
++// and every buffer that held it (or the key) is wiped right after.
++// This is obfuscation, not encryption against a live memory
++// analysis; that limit is accepted (see GOAL task 41).
++// ------------------------------------------------------------------
++constexpr std::array<uint8_t, 16> kPartA = {
++    223, 161, 222, 214, 95, 43, 157, 91,
++    215, 52, 133, 11, 172, 87, 211, 245,
++};
++
++constexpr std::array<uint8_t, 16> kPartB = {
++    64, 115, 177, 245, 169, 75, 101, 56,
++    206, 74, 227, 163, 169, 238, 109, 199,
++};
++
++constexpr std::array<uint8_t, 16> kPartC = {
++    122, 78, 195, 144, 249, 74, 85, 181,
++    112, 11, 35, 161, 67, 120, 250, 36,
++};
++
++constexpr std::array<uint8_t, 56> kCipher = {
++    215, 151, 124, 10, 146, 3, 186, 164,
++    135, 167, 228, 151, 125, 150, 69, 230,
++    33, 48, 48, 135, 67, 44, 73, 26,
++    194, 172, 53, 101, 81, 63, 157, 166,
++    107, 174, 154, 191, 237, 248, 12, 24,
++    115, 3, 26, 182, 135, 117, 54, 88,
++    202, 129, 75, 36, 181, 76, 243, 180,
++};
++
++std::string ReconstructKey() {
++  std::string key(kPartA.size(), '\0');
++  for (size_t i = 0; i < key.size(); ++i) {
++    key[i] = static_cast<char>(kPartA[i] ^ kPartB[i] ^ kPartC[i]);
++  }
++  return key;
++}
++
++void Wipe(std::string* s) {
++  if (!s) {
++    return;
++  }
++  for (char& c : *s) {
++    c = '\0';
++  }
++  s->clear();
++  s->shrink_to_fit();
++}
++
++// Rebuilds the endpoint URL. The caller must Wipe() the result as
++// soon as the request has taken its own copy.
++std::string ReconstructEndpoint() {
++  std::string key = ReconstructKey();
++  std::string url(kCipher.size(), '\0');
++  for (size_t i = 0; i < url.size(); ++i) {
++    const uint8_t mix = static_cast<uint8_t>((i * 37u + 0x5Au) & 0xFFu);
++    url[i] = static_cast<char>(kCipher[i] ^
++                               static_cast<uint8_t>(key[i % key.size()]) ^
++                               mix);
++  }
++  Wipe(&key);
++  return url;
++}
++
++// Which startup-lock password unlocked this user data directory:
++// "owner" for the primary password, "friend" for the second one.
++// Patch 0046 extends patch 0019 to persist this kind next to the
++// unlock token (file "lumo-unlock-kind"); profiles unlocked before
++// this patch have no such file, and profiles that never saw the
++// lock have none either. Both cases return an empty string and the
++// ping simply omits the field - the password itself is never read
++// here (it is never stored anywhere) and never sent.
++std::string ReadUnlockKind(const base::FilePath& user_data_dir) {
++  std::string raw;
++  if (!base::ReadFileToString(
++          user_data_dir.Append(FILE_PATH_LITERAL("lumo-unlock-kind")),
++          &raw)) {
++    return std::string();
++  }
++  const std::string kind =
++      std::string(base::TrimWhitespaceASCII(raw, base::TRIM_ALL));
++  if (kind == "owner" || kind == "friend") {
++    return kind;
++  }
++  return std::string();
++}
++
++std::string MemoryDescription() {
++  const int64_t bytes = base::SysInfo::AmountOfPhysicalMemory();
++  if (bytes <= 0) {
++    return std::string();
++  }
++  const int64_t gib = (bytes + (int64_t{1} << 29)) / (int64_t{1} << 30);
++  return base::StringPrintf("%lld GB", static_cast<long long>(gib));
++}
++
++// Computes sig = HMAC-SHA256(key = the distribution key bytes,
++// message = "<id>.<build>.<ts>"), hex encoded, exactly as the
++// receiving side verifies it.
++std::optional<std::string> ComputeSignature(
++    const std::vector<uint8_t>& key_bytes,
++    const std::string& message) {
++  crypto::HMAC hmac(crypto::HMAC::SHA256);
++  if (!hmac.Init(key_bytes)) {
++    return std::nullopt;
++  }
++  std::array<uint8_t, 32> digest;
++  if (!hmac.Sign(message, digest)) {
++    return std::nullopt;
++  }
++  return base::ToLowerASCII(base::HexEncode(digest));
++}
++
++// Runs on a background thread (MayBlock: reads the unlock-kind
++// file). Builds the JSON body and the endpoint, then hands both to
++// SendPing() on the UI thread, where the network context lives.
++void CollectAndPost(base::FilePath user_data_dir) {
++  std::vector<uint8_t> key_bytes;
++  if (!base::HexStringToBytes(std::string(kKeyHex), &key_bytes) ||
++      key_bytes.empty()) {
++    return;  // Malformed injected key: stay silent, never block.
++  }
++  const int build = EmbeddedBuildNumber();
++  const int64_t ts = static_cast<int64_t>(
++      base::Time::Now().InSecondsFSinceUnixEpoch());
++  const std::string message = std::string(kDistId) + "." +
++                              base::NumberToString(build) + "." +
++                              base::NumberToString(ts);
++  const std::optional<std::string> sig =
++      ComputeSignature(key_bytes, message);
++  if (!sig) {
++    return;
++  }
++  base::DictValue body;
++  body.Set("id", std::string(kDistId));
++  body.Set("build", build);
++  body.Set("ts", static_cast<int>(ts));
++  body.Set("sig", *sig);
++  const std::string os = base::TrimWhitespaceASCII(
++      base::SysInfo::OperatingSystemName() + " " +
++          base::SysInfo::OperatingSystemVersion(),
++      base::TRIM_ALL);
++  if (!os.empty()) {
++    body.Set("os", os);
++  }
++  const std::string cpu = base::SysInfo::CPUModelName();
++  if (!cpu.empty()) {
++    body.Set("cpu", cpu);
++  }
++  const std::string mem = MemoryDescription();
++  if (!mem.empty()) {
++    body.Set("mem", mem);
++  }
++  const std::string pw = ReadUnlockKind(user_data_dir);
++  if (!pw.empty()) {
++    body.Set("pw", pw);
++  }
++  std::string json;
++  if (!base::JSONWriter::Write(body, &json)) {
++    return;
++  }
++  std::string endpoint = ReconstructEndpoint();
++  content::GetUIThreadTaskRunner({})->PostTask(
++      FROM_HERE,
++      base::BindOnce(
++          [](std::string url_text, std::string payload) {
++            SendPingOnUiThread(std::move(url_text),
++                               std::move(payload));
++          },
++          std::move(endpoint), std::move(json)));
++}
++
++}  // namespace
++
++// Sends |payload| as JSON to |url_text| through the browser's
++// standard network stack (SystemNetworkContextManager), so the
++// request carries the browser's normal user agent - the receiving
++// side rejects non-browser user agents. Fire-and-forget in the
++// style of patch 0020's debugger reporter: the loader owns itself
++// until it finishes or times out (10 seconds), the response is
++// ignored, and any failure silently drops the ping.
++void SendPingOnUiThread(std::string url_text, std::string payload) {
++  const GURL url(url_text);
++  Wipe(&url_text);
++  if (!url.is_valid() || !url.SchemeIs("https") || !g_browser_process) {
++    return;
++  }
++  auto* network_context_manager =
++      g_browser_process->system_network_context_manager();
++  if (!network_context_manager) {
++    return;
++  }
++  auto* factory = network_context_manager->GetURLLoaderFactory();
++  if (!factory) {
++    return;
++  }
++  auto request = std::make_unique<network::ResourceRequest>();
++  request->url = url;
++  request->method = "POST";
++  request->load_flags = net::LOAD_BYPASS_CACHE | net::LOAD_DISABLE_CACHE;
++  request->credentials_mode = network::mojom::CredentialsMode::kOmit;
++  static constexpr net::NetworkTrafficAnnotationTag kAnnotation =
++      net::DefineNetworkTrafficAnnotation("lumo_launch_ping", R"(
++        semantics {
++          sender: "Lumo Launch Notify"
++          description:
++            "Sends a single launch notification for this Lumo "
++            "distribution to the browser owner's own notification "
++            "endpoint, so the owner can notice a leaked copy being "
++            "launched. Only present in builds that were given a "
++            "distribution id and signing key at build time."
++          trigger:
++            "Once per browser launch, shortly after startup."
++          data:
++            "Distribution id, embedded build number, launch time, "
++            "a keyed signature over those three, OS version, CPU "
++            "model name, total memory size, and which of the two "
++            "startup-lock passwords unlocked this profile (owner "
++            "or friend; never the password itself). No browsing "
++            "history, no device name, no user data."
++          destination: OTHER
++        }
++        policy {
++          cookies_allowed: NO
++          setting:
++            "Baked in at build time by the distribution's build "
++            "secrets; builds without those secrets never send."
++          policy_exception_justification:
++            "Owner-operated leak detection for a private, "
++            "single-owner browser distribution."
++        })");
++  auto loader =
++      network::SimpleURLLoader::Create(std::move(request), kAnnotation);
++  loader->AttachStringForUpload(payload, "application/json");
++  loader->SetTimeoutDuration(base::Seconds(10));
++  network::SimpleURLLoader* loader_ptr = loader.get();
++  loader_ptr->DownloadToString(
++      factory,
++      base::BindOnce(
++          [](std::unique_ptr<network::SimpleURLLoader> owned_loader,
++             std::optional<std::string> body) {
++            // The response is ignored by design.
++          },
++          std::move(loader)),
++      1024);
++}
++
++void NotifyLaunchOnStartup() {
++  if (!LaunchNotifyConfigured()) {
++    return;
++  }
++  base::FilePath user_data_dir;
++  if (!base::PathService::Get(chrome::DIR_USER_DATA, &user_data_dir)) {
++    return;
++  }
++  base::ThreadPool::PostTask(
++      FROM_HERE,
++      {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
++       base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
++      base::BindOnce(&CollectAndPost, std::move(user_data_dir)));
++}
++
++}  // namespace lumo
+diff --git a/chrome/browser/lumo/lumo_launch_notify.h b/chrome/browser/lumo/lumo_launch_notify.h
+new file mode 100644
+index 0000000..0000000
+--- /dev/null
++++ b/chrome/browser/lumo/lumo_launch_notify.h
+@@ -100,0 +100,23 @@
++// Copyright 2026 seasea1010
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_LUMO_LUMO_LAUNCH_NOTIFY_H_
++#define CHROME_BROWSER_LUMO_LUMO_LAUNCH_NOTIFY_H_
++
++namespace lumo {
++
++// Lumo (patch 0046, task 41): sends the one-per-launch notification
++// ping for this distribution. Called once from
++// ChromeBrowserMainParts::PostBrowserStart(). Fire-and-forget: the
++// work happens on a background thread, failures are silent, and
++// startup is never delayed or blocked. No-op unless this build was
++// given a distribution id and signing key at build time (stage.py
++// generates chrome/browser/lumo/lumo_launch_config.h from the
++// LUMO_LAUNCH_DIST_ID / LUMO_LAUNCH_KEY secrets; an unset secret
++// produces an empty header and this function does nothing).
++void NotifyLaunchOnStartup();
++
++}  // namespace lumo
++
++#endif  // CHROME_BROWSER_LUMO_LUMO_LAUNCH_NOTIFY_H_
+diff --git a/chrome/browser/chrome_browser_main_win.cc b/chrome/browser/chrome_browser_main_win.cc
+index 2dad76d..0000000 100644
+--- a/chrome/browser/chrome_browser_main_win.cc
++++ b/chrome/browser/chrome_browser_main_win.cc
+@@ -100,5 +100,13 @@
+ #endif
+ 
+ constexpr wchar_t kLumoUnlockTokenFileName[] = L"lumo-unlock-token";
++// Lumo (patch 0046): alongside the unlock token, the KIND of the
++// password that unlocked ("owner" for the primary password,
++// "friend" for the second one) is persisted in this small file,
++// so the launch notification (task 41) can report which password
++// a copy was unlocked with. The password itself is never stored.
++// Profiles unlocked before patch 0046 have no such file; the
++// notification then simply omits the kind.
++constexpr wchar_t kLumoUnlockKindFileName[] = L"lumo-unlock-kind";
+ constexpr int kLumoLockMaxAttempts = 3;
+ constexpr int kLumoLockPasswordEditId = 101;
+@@ -145,9 +153,16 @@
+   if (!base::WriteFile(
+           token_path,
+           LumoUnlockToken(matched.salt, matched.expected_hash))) {
+     LOG(WARNING) << "Lumo startup lock: could not persist the "
+                     "unlock token.";
+   }
++  // Lumo (patch 0046): persist which password unlocked, for the
++  // launch notification. Entry 0 is the primary (owner) password;
++  // any later entry is the second (friend) password. Best effort
++  // like the token: a failed write only means the next launch
++  // notification omits the kind.
++  base::WriteFile(user_data_dir.Append(kLumoUnlockKindFileName),
++                  state.matched_entry == 0 ? "owner" : "friend");
+   return true;
+ }
+ 

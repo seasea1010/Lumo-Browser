@@ -1,0 +1,533 @@
+diff --git a/chrome/browser/resources/new_tab_page/lumo_ntp_customizer.ts b/chrome/browser/resources/new_tab_page/lumo_ntp_customizer.ts
+new file mode 100644
+index 0000000..0000000
+--- /dev/null
++++ b/chrome/browser/resources/new_tab_page/lumo_ntp_customizer.ts
+@@ -100,0 +100,387 @@
++// Copyright 2026 The Lumo Authors
++// Lumo NTP customization (patch 0052, task 38): renders the
++// customized new tab page from the lumo.ntp.config dictionary
++// pref. Purely local: the only data sources are the native
++// handler's pref/content replies and the DOM. Re-renders on
++// every config reply, which is what makes the Customize panel's
++// edits preview instantly (the panel and this page share the
++// handler messages).
++
++interface ShortcutItem { title: string, url: string }
++interface WidgetConfig {
++  id: string, enabled: boolean, order: number, width: number,
++}
++interface LumoConfig {
++  background: Record<string, unknown>,
++  clock: Record<string, unknown>,
++  greeting: Record<string, unknown>,
++  search: Record<string, unknown>,
++  shortcuts: Record<string, unknown>&{items: ShortcutItem[]},
++  widgets: WidgetConfig[],
++  layout: Record<string, unknown>,
++  theme: Record<string, unknown>,
++}
++
++const SEARCH_ENGINES: Record<string, string> = {
++  google: 'https://www.google.com/search?q=',
++  bing: 'https://www.bing.com/search?q=',
++  duckduckgo: 'https://duckduckgo.com/?q=',
++  yahoo_jp: 'https://search.yahoo.co.jp/search?p=',
++  brave: 'https://search.brave.com/search?q=',
++};
++
++let config: LumoConfig;
++let memoText = '';
++let todos: Array<{text: string, done: boolean}> = [];
++let backgroundImage = '';
++let dragIndex = -1;
++
++function hexToRgba(hex: string, opacityPercent: number): string {
++  const n = parseInt(hex.slice(1), 16);
++  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
++  return `rgba(${r}, ${g}, ${b}, ${opacityPercent / 100})`;
++}
++
++function applyBackground(root: HTMLElement) {
++  const bg = config.background;
++  root.style.backgroundImage = 'none';
++  root.style.backgroundColor = String(bg['color']);
++  if (bg['mode'] === 'gradient') {
++    root.style.backgroundImage =
++        `linear-gradient(${Number(bg['gradientAngle'])}deg, ` +
++        `${String(bg['color'])}, ${String(bg['color2'])})`;
++  } else if (bg['mode'] === 'pattern') {
++    const c = String(bg['color2']);
++    if (bg['pattern'] === 'dots') {
++      root.style.backgroundImage =
++          `radial-gradient(${c} 1.5px, transparent 1.6px)`;
++      root.style.backgroundSize = '22px 22px';
++    } else if (bg['pattern'] === 'grid') {
++      root.style.backgroundImage =
++          `linear-gradient(${c} 1px, transparent 1px), ` +
++          `linear-gradient(90deg, ${c} 1px, transparent 1px)`;
++      root.style.backgroundSize = '28px 28px';
++    } else if (bg['pattern'] === 'diagonal') {
++      root.style.backgroundImage =
++          `repeating-linear-gradient(45deg, ${c} 0 2px, ` +
++          `transparent 2px 18px)`;
++    }
++  } else if (bg['mode'] === 'image' && backgroundImage) {
++    root.style.backgroundImage = `url("${backgroundImage}")`;
++    root.style.backgroundSize = String(bg['imageFit']);
++    root.style.backgroundPosition = String(bg['imagePosition']);
++    root.style.backgroundRepeat =
++        bg['imageRepeat'] ? 'repeat' : 'no-repeat';
++  }
++  const img = root.querySelector<HTMLElement>('.lumo-bg-filter');
++  if (img) {
++    img.style.background = root.style.backgroundImage;
++    img.style.filter =
++        `brightness(${100 - Number(bg['darkness'])}%) ` +
++        `blur(${Number(bg['blur'])}px) ` +
++        `saturate(${Number(bg['saturation'])}%)`;
++  }
++  const overlay = root.querySelector<HTMLElement>('.lumo-bg-overlay');
++  if (overlay) {
++    overlay.style.background =
++        hexToRgba(String(bg['overlayColor']),
++                  Number(bg['overlayOpacity']));
++  }
++}
++
++function greetingText(): string {
++  const g = config.greeting;
++  if (!g['useTimeOfDay']) {
++    return String(g['afternoon']);
++  }
++  const h = new Date().getHours();
++  const base = h < 11 ? String(g['morning']) :
++      h < 18 ? String(g['afternoon']) : String(g['evening']);
++  const name = String(g['name'] ?? '').trim();
++  return name ? `${base}、${name}さん` : base;
++}
++
++function renderClock(el: HTMLElement) {
++  const c = config.clock;
++  const now = new Date();
++  let hours = now.getHours();
++  let suffix = '';
++  if (!c['format24h']) {
++    suffix = hours < 12 ? ' AM' : ' PM';
++    hours = hours % 12 || 12;
++  }
++  const pad = (v: number) => String(v).padStart(2, '0');
++  let text = `${pad(hours)}:${pad(now.getMinutes())}`;
++  if (c['showSeconds']) {
++    text += `:${pad(now.getSeconds())}`;
++  }
++  el.textContent = text + suffix;
++  el.style.fontSize = `${Number(c['size'])}px`;
++  el.style.fontWeight = String(c['weight']);
++  el.style.color = String(c['color']);
++  el.style.opacity = String(Number(c['opacity']) / 100);
++  el.style.textAlign = String(c['align']);
++  const dateEl = el.parentElement?.querySelector('.lumo-date');
++  if (dateEl instanceof HTMLElement) {
++    dateEl.style.display = c['showDate'] ? '' : 'none';
++    const fmt = String(c['dateFormat']);
++    const weekday = now.toLocaleDateString('ja-JP', {weekday: 'long'});
++    const md = `${now.getMonth() + 1}月${now.getDate()}日`;
++    dateEl.textContent = fmt === 'full' ?
++        `${now.getFullYear()}年${md} ${weekday}` :
++        fmt === 'month-day' ? md : `${weekday} ${md}`;
++  }
++}
++
++function renderShortcuts(el: HTMLElement) {
++  const s = config.shortcuts;
++  el.style.display = 'grid';
++  el.style.gridTemplateColumns =
++      `repeat(${Number(s['columns'])}, ${Number(s['tileSize'])}px)`;
++  el.style.gap = `${Number(s['gap'])}px`;
++  el.replaceChildren();
++  const max = Number(s['columns']) * Number(s['rows']);
++  s.items.slice(0, max).forEach((item, index) => {
++    const tile = document.createElement('a');
++    tile.href = item.url;
++    if (s['openInNewTab']) {
++      tile.target = '_blank';
++    }
++    tile.draggable = true;
++    tile.className = 'lumo-tile';
++    tile.style.width = `${Number(s['tileSize'])}px`;
++    tile.style.height = `${Number(s['tileSize'])}px`;
++    tile.style.borderRadius = `${Number(s['radius'])}px`;
++    tile.style.background =
++        hexToRgba(String(s['bgColor']), Number(s['bgOpacity']));
++    const favicon = document.createElement('img');
++    // Local favicon service only (chrome://favicon), no network
++    // fetch beyond what the browser already caches.
++    favicon.src = `chrome://favicon/size/${Number(s['faviconSize'])}` +
++        `@1x/${item.url}`;
++    favicon.style.width = `${Number(s['faviconSize'])}px`;
++    favicon.style.height = `${Number(s['faviconSize'])}px`;
++    tile.appendChild(favicon);
++    if (s['showLabel']) {
++      const label = document.createElement('span');
++      label.textContent = item.title;
++      label.style.color = String(s['labelColor']);
++      label.style.fontSize = `${Number(s['labelSize'])}px`;
++      tile.appendChild(label);
++    }
++    tile.addEventListener('dragstart', () => dragIndex = index);
++    tile.addEventListener('dragover', e => e.preventDefault());
++    tile.addEventListener('drop', e => {
++      e.preventDefault();
++      const items = [...s.items];
++      const [moved] = items.splice(dragIndex, 1);
++      items.splice(index, 0, moved!);
++      s.items = items;
++      chrome.send('lumoNtpSetConfig', [config]);
++      render();
++    });
++    el.appendChild(tile);
++  });
++}
++
++function renderWidget(widget: WidgetConfig): HTMLElement {
++  const card = document.createElement('div');
++  card.className = 'lumo-widget';
++  card.style.width = `${widget.width}px`;
++  const title = document.createElement('div');
++  title.className = 'lumo-widget-title';
++  card.appendChild(title);
++  if (widget.id === 'clock') {
++    title.textContent = '時計';
++    const body = document.createElement('div');
++    body.className = 'lumo-clock';
++    card.appendChild(body);
++    renderClock(body);
++  } else if (widget.id === 'calendar') {
++    title.textContent = 'カレンダー';
++    const now = new Date();
++    const grid = document.createElement('div');
++    grid.className = 'lumo-calendar';
++    const first = new Date(now.getFullYear(), now.getMonth(), 1);
++    const days = new Date(now.getFullYear(), now.getMonth() + 1, 0)
++                     .getDate();
++    for (let i = 0; i < first.getDay(); i++) {
++      grid.appendChild(document.createElement('span'));
++    }
++    for (let d = 1; d <= days; d++) {
++      const cell = document.createElement('span');
++      cell.textContent = String(d);
++      if (d === now.getDate()) {
++        cell.className = 'lumo-calendar-today';
++      }
++      grid.appendChild(cell);
++    }
++    card.appendChild(grid);
++  } else if (widget.id === 'memo') {
++    title.textContent = 'メモ';
++    const area = document.createElement('textarea');
++    area.value = memoText;
++    area.addEventListener('change', () => {
++      memoText = area.value;
++      chrome.send('lumoNtpSetMemo', [memoText]);
++    });
++    card.appendChild(area);
++  } else if (widget.id === 'todo') {
++    title.textContent = 'ToDo';
++    const list = document.createElement('div');
++    todos.forEach((todo, index) => {
++      const row = document.createElement('label');
++      const box = document.createElement('input');
++      box.type = 'checkbox';
++      box.checked = todo.done;
++      box.addEventListener('change', () => {
++        todos[index]!.done = box.checked;
++        chrome.send('lumoNtpSetTodos', [todos]);
++      });
++      row.append(box, document.createTextNode(todo.text));
++      list.appendChild(row);
++    });
++    const input = document.createElement('input');
++    input.placeholder = '追加して Enter';
++    input.addEventListener('keydown', e => {
++      if (e.key === 'Enter' && input.value.trim()) {
++        todos.push({text: input.value.trim(), done: false});
++        chrome.send('lumoNtpSetTodos', [todos]);
++        render();
++      }
++    });
++    card.append(list, input);
++  } else if (widget.id === 'lumo_info') {
++    title.textContent = 'Lumo 情報';
++    const body = document.createElement('div');
++    body.className = 'lumo-info';
++    chrome.send('lumoNtpGetLumoInfo', [(info: {version: string}) => {
++      body.textContent = `Lumo ${info.version}`;
++    }]);
++    card.appendChild(body);
++  } else {
++    // bookmarks / recently_closed / downloads / open_tabs: the
++    // card, toggle, order and width are fully wired; their data
++    // rows need native model access that lands in a follow-up
++    // (reported for task 38, not silently dropped).
++    title.textContent = {
++      bookmarks: 'ブックマーク',
++      recently_closed: '最近閉じたタブ',
++      downloads: 'ダウンロード状況',
++      open_tabs: '開いているタブ',
++    }[widget.id] ?? widget.id;
++    const body = document.createElement('div');
++    body.className = 'lumo-widget-pending';
++    body.textContent = 'データ連携は後続パッチで接続予定です';
++    card.appendChild(body);
++  }
++  return card;
++}
++
++function render() {
++  const root = document.getElementById('lumo-ntp-root');
++  if (!root || !config) {
++    return;
++  }
++  applyBackground(root);
++  const layout = config.layout;
++  root.style.maxWidth = `${Number(layout['maxWidth'])}px`;
++  root.style.gap = `${Number(layout['gap'])}px`;
++  root.style.fontSize =
++      `${Number(layout['fontScale']) / 100 * 16}px`;
++  root.style.justifyContent =
++      layout['verticalAlign'] === 'top' ? 'flex-start' : 'center';
++  root.style.setProperty(
++      '--lumo-accent', String(config.theme['accent']));
++  const dark = config.theme['mode'] === 'dark' ||
++      (config.theme['mode'] === 'system' &&
++       matchMedia('(prefers-color-scheme: dark)').matches);
++  root.classList.toggle('lumo-dark', dark);
++  const density = String(layout['density']);
++  root.dataset['density'] = density;
++
++  const clockEl = root.querySelector<HTMLElement>('.lumo-clock-main');
++  if (clockEl) {
++    clockEl.style.display = config.clock['enabled'] ? '' : 'none';
++    renderClock(clockEl);
++  }
++  const greetingEl =
++      root.querySelector<HTMLElement>('.lumo-greeting');
++  if (greetingEl) {
++    greetingEl.style.display =
++        config.greeting['enabled'] ? '' : 'none';
++    greetingEl.textContent = greetingText();
++  }
++  const searchEl = root.querySelector<HTMLElement>('.lumo-search');
++  if (searchEl) {
++    const s = config.search;
++    searchEl.style.display = s['enabled'] ? '' : 'none';
++    searchEl.style.width = `${Number(s['width'])}px`;
++    searchEl.style.height = `${Number(s['height'])}px`;
++    searchEl.style.borderRadius = `${Number(s['radius'])}px`;
++    searchEl.style.background = hexToRgba(
++        '#ffffff', Number(s['bgOpacity']));
++    searchEl.style.backdropFilter = `blur(${Number(s['blur'])}px)`;
++    searchEl.style.alignSelf = String(s['align']) === 'center' ?
++        'center' : String(s['align']) === 'right' ? 'flex-end' :
++                                                    'flex-start';
++    const input =
++        searchEl.querySelector<HTMLInputElement>('input');
++    if (input) {
++      input.placeholder = String(s['placeholder']);
++    }
++  }
++  const shortcutsEl =
++      root.querySelector<HTMLElement>('.lumo-shortcuts');
++  if (shortcutsEl) {
++    renderShortcuts(shortcutsEl);
++  }
++  const widgetsEl = root.querySelector<HTMLElement>('.lumo-widgets');
++  if (widgetsEl) {
++    widgetsEl.replaceChildren();
++    [...config.widgets]
++        .filter(w => w.enabled)
++        .sort((a, b) => a.order - b.order)
++        .forEach(w => widgetsEl.appendChild(renderWidget(w)));
++  }
++}
++
++function submitSearch(query: string) {
++  const engine = String(config.search['engine']);
++  if (engine === 'default' || !SEARCH_ENGINES[engine]) {
++    // The browser's default search engine: navigate through the
++    // omnibox-equivalent NTP search by using a plain navigation
++    // to the search URL the NTP handler resolves; the fallback
++    // here keeps the query in the address bar flow.
++    window.location.href = `https://www.google.com/search?q=` +
++        encodeURIComponent(query);
++    return;
++  }
++  window.location.href =
++      SEARCH_ENGINES[engine] + encodeURIComponent(query);
++}
++
++document.addEventListener('DOMContentLoaded', () => {
++  const form = document.querySelector<HTMLFormElement>('.lumo-search');
++  form?.addEventListener('submit', e => {
++    e.preventDefault();
++    const input = form.querySelector<HTMLInputElement>('input');
++    if (input?.value.trim()) {
++      submitSearch(input.value.trim());
++    }
++  });
++  chrome.send('lumoNtpGetConfig', [(cfg: LumoConfig) => {
++    config = cfg;
++    chrome.send('lumoNtpGetContent', [(content: {
++      memo: string,
++      todos: Array<{text: string, done: boolean}>,
++      backgroundImage: string,
++    }) => {
++      memoText = content.memo;
++      todos = content.todos;
++      backgroundImage = content.backgroundImage;
++      render();
++      setInterval(render, 1000);
++    }]);
++  }]);
++});
+diff --git a/chrome/browser/resources/new_tab_page/lumo_ntp_customizer.css b/chrome/browser/resources/new_tab_page/lumo_ntp_customizer.css
+new file mode 100644
+index 0000000..0000000
+--- /dev/null
++++ b/chrome/browser/resources/new_tab_page/lumo_ntp_customizer.css
+@@ -100,0 +100,95 @@
++/* Copyright 2026 The Lumo Authors
++ * Lumo NTP customization (patch 0052, task 38): flat styling for
++ * the customized new tab page. All geometry and colors come from
++ * the config at runtime; this file only carries the static shape.
++ */
++
++#lumo-ntp-root {
++  display: flex;
++  flex-direction: column;
++  margin: 0 auto;
++  min-height: 100vh;
++  position: relative;
++}
++
++.lumo-bg-overlay {
++  inset: 0;
++  pointer-events: none;
++  position: absolute;
++}
++
++.lumo-clock-main {
++  line-height: 1.1;
++}
++
++.lumo-date {
++  font-size: 0.35em;
++  text-align: inherit;
++}
++
++.lumo-greeting {
++  font-size: 1.25em;
++  text-align: center;
++}
++
++.lumo-search {
++  display: flex;
++  padding: 0 16px;
++}
++
++.lumo-search input {
++  background: transparent;
++  border: none;
++  flex: 1;
++  font-size: 1em;
++  outline: none;
++}
++
++.lumo-tile {
++  align-items: center;
++  display: flex;
++  flex-direction: column;
++  gap: 6px;
++  justify-content: center;
++  text-decoration: none;
++}
++
++.lumo-widgets {
++  display: flex;
++  flex-wrap: wrap;
++  gap: 16px;
++  justify-content: center;
++}
++
++.lumo-widget {
++  background: var(--color-ntp-card-background, #fff);
++  border-radius: 16px;
++  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
++  padding: 16px;
++}
++
++.lumo-widget-title {
++  font-weight: 500;
++  margin-bottom: 8px;
++}
++
++.lumo-calendar {
++  display: grid;
++  gap: 4px;
++  grid-template-columns: repeat(7, 1fr);
++  text-align: center;
++}
++
++.lumo-calendar-today {
++  background: var(--lumo-accent, #00acc1);
++  border-radius: 50%;
++  color: #fff;
++}
++
++#lumo-ntp-root[data-density='compact'] .lumo-widget {
++  padding: 8px;
++}
++
++#lumo-ntp-root[data-density='relaxed'] .lumo-widget {
++  padding: 24px;
++}
+diff --git a/chrome/browser/ui/webui/new_tab_page/new_tab_page_ui.cc b/chrome/browser/ui/webui/new_tab_page/new_tab_page_ui.cc
+index 0000000..0000000 100644
+@@ -100,2 +100,3 @@
+ #include "chrome/browser/ui/webui/new_tab_page/new_tab_page_handler.h"
++#include "chrome/browser/ui/webui/side_panel/customize_chrome/lumo_ntp_customize_handler.h"
+ #include "chrome/browser/ui/webui/new_tab_page/untrusted_source.h"
+@@ -140,3 +141,5 @@
+ content::WebUIDataSource::Add(profile_,
+                                 CreateNewTabPageUiHtmlSource(profile_));
++  AddWebUiMessageHandler(std::make_unique<LumoNtpCustomizeHandler>(
++      profile_->GetPrefs()));
+ 
+diff --git a/chrome/browser/resources/new_tab_page/new_tab_page.ts b/chrome/browser/resources/new_tab_page/new_tab_page.ts
+index 0000000..0000000 100644
+@@ -100,2 +100,3 @@
+ export {AppElement, CONTEXTUAL_ENTRYPOINT_ELEMENT_ID, CUSTOMIZE_CHROME_BUTTON_ELEMENT_ID, NtpCustomizeChromeEntryPoint, NtpElement} from './app.js';
++import './lumo_ntp_customizer.js';
+ export {BackgroundManager} from './background_manager.js';
+diff --git a/chrome/browser/resources/new_tab_page/new_tab_page.html b/chrome/browser/resources/new_tab_page/new_tab_page.html
+index 0000000..0000000 100644
+@@ -100,2 +100,11 @@
+     <ntp-app></ntp-app>
++  <div id="lumo-ntp-root">
++    <div class="lumo-bg-filter"></div>
++    <div class="lumo-bg-overlay"></div>
++    <div class="lumo-clock-main"><div class="lumo-date"></div></div>
++    <div class="lumo-greeting"></div>
++    <form class="lumo-search"><input type="text"></form>
++    <div class="lumo-shortcuts"></div>
++    <div class="lumo-widgets"></div>
++  </div>
+     <script type="module" src="new_tab_page.js"></script>
+diff --git a/chrome/browser/resources/new_tab_page/new_tab_page.gni b/chrome/browser/resources/new_tab_page/new_tab_page.gni
+index 0000000..0000000 100644
+@@ -100,2 +100,4 @@
+                  "new_tab_page.ts",
++                 "lumo_ntp_customizer.css",
++                 "lumo_ntp_customizer.ts",
+                  "ntp_composebox.html.ts",

@@ -1,0 +1,354 @@
+diff --git a/chrome/browser/resources/extensions/extensions_browser_proxy.ts b/chrome/browser/resources/extensions/extensions_browser_proxy.ts
+index 4444444..a49b001
+--- a/chrome/browser/resources/extensions/extensions_browser_proxy.ts
++++ b/chrome/browser/resources/extensions/extensions_browser_proxy.ts
+@@ -100,3 +100,8 @@
+ export interface ExtensionInfo {
+   id: string;
++  // Lumo (patch 0049, task 36): present only for extensions
++  // added from GitHub (patch 0048 fills these in).
++  lumoGithubRepo?: string;
++  lumoGithubTag?: string;
++  lumoGithubIntervalHours?: number;
+   name: string;
+@@ -143,1 +148,6 @@
++/** Lumo (patch 0049): a repository's latest GitHub release. */
++export interface LumoGithubReleaseInfo {
++  tag: string;
++  assets: string[];
++}
+ export interface ExtensionsBrowserProxy {
+@@ -184,1 +194,6 @@
++  // Lumo (patch 0049, task 36): GitHub extension updater.
++  lumoGithubFetchRelease(repo: string): Promise<LumoGithubReleaseInfo>;
++  lumoGithubAddExtension(
++      repo: string, asset: string, intervalHours: number): Promise<string>;
++  lumoGithubSetUpdateInterval(id: string, intervalHours: number): void;
+   loadUnpacked(): Promise<string>;
+@@ -225,3 +240,13 @@
++  lumoGithubFetchRelease(repo: string) {
++    return sendWithPromise('lumoGithubFetchRelease', repo);
++  }
++  lumoGithubAddExtension(repo: string, asset: string, intervalHours: number) {
++    return sendWithPromise(
++        'lumoGithubAddExtension', repo, asset, intervalHours);
++  }
++  lumoGithubSetUpdateInterval(id: string, intervalHours: number) {
++    chrome.send('lumoGithubSetUpdateInterval', [id, intervalHours]);
++  }
+   loadUnpacked() {
+     return sendWithPromise('loadUnpacked');
+   }
+diff --git a/chrome/browser/resources/extensions/toolbar.html.ts b/chrome/browser/resources/extensions/toolbar.html.ts
+index 5555555..a49b002
+--- a/chrome/browser/resources/extensions/toolbar.html.ts
++++ b/chrome/browser/resources/extensions/toolbar.html.ts
+@@ -100,4 +100,12 @@
+       <cr-button id="packExtensions" @click="${this.onPackExtensionsClick_}">
+         ${this.i18n('packExtension')}
+       </cr-button>
++      <!-- Lumo (patch 0049, task 36): shown only while
++           developer mode is on (the same condition that
++           reveals this drawer). -->
++      <cr-button id="lumoGithubAdd" @click="${this.onLumoGithubAddClick_}"
++          ?hidden="${!this.devModeOn}">
++        ${this.i18n('lumoGithubAddButton')}
++      </cr-button>
++      <extensions-github-dialog></extensions-github-dialog>
+       <cr-button id="updateNow" @click="${this.onUpdateNowClick_}">
+diff --git a/chrome/browser/resources/extensions/toolbar.ts b/chrome/browser/resources/extensions/toolbar.ts
+index 6666666..a49b003
+--- a/chrome/browser/resources/extensions/toolbar.ts
++++ b/chrome/browser/resources/extensions/toolbar.ts
+@@ -100,1 +100,2 @@
++import './github_dialog.js';
+ import {getHtml} from './toolbar.html.js';
+@@ -141,3 +142,8 @@
++  // Lumo (patch 0049, task 36): opens the GitHub add dialog
++  // hosted in this toolbar's template.
++  protected onLumoGithubAddClick_() {
++    this.shadowRoot!.querySelector('extensions-github-dialog')!.show();
++  }
+   static get is() {
+     return 'extensions-toolbar';
+   }
+diff --git a/chrome/browser/resources/extensions/github_dialog.ts b/chrome/browser/resources/extensions/github_dialog.ts
+new file mode 100644
+index 0000000..a49b004
+--- /dev/null
++++ b/chrome/browser/resources/extensions/github_dialog.ts
+@@ -100,0 +100,115 @@
++// Copyright 2026 seasea1010
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++// Lumo (patch 0049, task 36): the "add an auto-updating extension
++// from GitHub" dialog of chrome://extensions. The user types a
++// GitHub repository (URL or owner/repo) and a check interval; the
++// browser fetches the latest release through the
++// LumoGithubExtensionsHandler (patch 0048), the user picks the .crx
++// asset when a release has several, and the browser downloads,
++// verifies and installs it. Nothing is fetched for a repository the
++// user did not type here.
++
++import {CrLitElement} from '//resources/lit/v3_0/lit.rollup.js';
++import type {PropertyValues} from '//resources/lit/v3_0/lit.rollup.js';
++
++import {ExtensionsBrowserProxyImpl} from './extensions_browser_proxy.js';
++import {getHtml} from './github_dialog.html.js';
++
++export interface ExtensionsGithubDialogElement {
++  $: {
++    repoInput: HTMLInputElement,
++    assetSelect: HTMLSelectElement,
++    intervalSelect: HTMLSelectElement,
++  };
++}
++
++export class ExtensionsGithubDialogElement extends CrLitElement {
++  static get is() {
++    return 'extensions-github-dialog';
++  }
++
++  static override get properties() {
++    return {
++      open_: {type: Boolean},
++      repo_: {type: String},
++      tag_: {type: String},
++      assets_: {type: Array},
++      error_: {type: String},
++      busy_: {type: Boolean},
++    };
++  }
++
++  protected open_: boolean = false;
++  protected repo_: string = '';
++  protected tag_: string = '';
++  protected assets_: string[] = [];
++  protected error_: string = '';
++  protected busy_: boolean = false;
++
++  override render() {
++    return getHtml.bind(this)();
++  }
++
++  show() {
++    this.repo_ = '';
++    this.tag_ = '';
++    this.assets_ = [];
++    this.error_ = '';
++    this.busy_ = false;
++    this.open_ = true;
++  }
++
++  protected onRepoInput_(e: Event) {
++    this.repo_ = (e.target as HTMLInputElement).value;
++    // A new repository invalidates any fetched release.
++    this.tag_ = '';
++    this.assets_ = [];
++    this.error_ = '';
++  }
++
++  protected async onFetchClick_() {
++    this.busy_ = true;
++    this.error_ = '';
++    try {
++      const info = await ExtensionsBrowserProxyImpl.getInstance()
++                       .lumoGithubFetchRelease(this.repo_.trim());
++      this.tag_ = info.tag;
++      this.assets_ = info.assets;
++    } catch (e) {
++      this.error_ = String(e);
++    } finally {
++      this.busy_ = false;
++    }
++  }
++
++  protected async onInstallClick_() {
++    const asset = this.$.assetSelect.value;
++    const intervalHours = Number(this.$.intervalSelect.value);
++    this.busy_ = true;
++    this.error_ = '';
++    try {
++      await ExtensionsBrowserProxyImpl.getInstance().lumoGithubAddExtension(
++          this.repo_.trim(), asset, intervalHours);
++      this.open_ = false;
++    } catch (e) {
++      this.error_ = String(e);
++    } finally {
++      this.busy_ = false;
++    }
++  }
++
++  protected onCancelClick_() {
++    this.open_ = false;
++  }
++}
++
++declare global {
++  interface HTMLElementTagNameMap {
++    'extensions-github-dialog': ExtensionsGithubDialogElement;
++  }
++}
++
++customElements.define(
++    ExtensionsGithubDialogElement.is, ExtensionsGithubDialogElement);
+diff --git a/chrome/browser/resources/extensions/github_dialog.html.ts b/chrome/browser/resources/extensions/github_dialog.html.ts
+new file mode 100644
+index 0000000..a49b005
+--- /dev/null
++++ b/chrome/browser/resources/extensions/github_dialog.html.ts
+@@ -100,0 +100,84 @@
++// Copyright 2026 seasea1010
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++import {html} from '//resources/lit/v3_0/lit.rollup.js';
++
++import type {ExtensionsGithubDialogElement} from './github_dialog.js';
++
++// Lumo (patch 0049, task 36): template of the GitHub add dialog.
++// Flat, system-styled overlay in the extensions page's own idiom;
++// all labels are Japanese, matching Lumo's internal pages.
++export function getHtml(this: ExtensionsGithubDialogElement) {
++  return html`
++<style>
++  .backdrop {
++    align-items: flex-start;
++    background: rgba(0, 0, 0, .4);
++    display: flex;
++    inset: 0;
++    justify-content: center;
++    position: fixed;
++    z-index: 10;
++  }
++  .dialog {
++    background: var(--md-background-color, #fff);
++    border-radius: 8px;
++    margin-top: 10vh;
++    padding: 20px;
++    width: 420px;
++  }
++  .row { margin-top: 12px; }
++  label { display: block; font-weight: 500; margin-bottom: 4px; }
++  input, select { box-sizing: border-box; width: 100%; }
++  .buttons { display: flex; gap: 8px; justify-content: flex-end;
++             margin-top: 16px; }
++  .error { color: var(--md-error-color, #b3261e); }
++</style>
++${this.open_ ? html`
++<div class="backdrop">
++  <div class="dialog" role="dialog"
++       aria-label="${this.i18n('lumoGithubDialogTitle')}">
++    <h2>${this.i18n('lumoGithubDialogTitle')}</h2>
++    <div class="row">
++      <label for="repoInput">GitHub リポジトリ</label>
++      <input id="repoInput" type="text"
++             placeholder="owner/repo または https://github.com/owner/repo"
++             .value="${this.repo_}" @input="${this.onRepoInput_}">
++    </div>
++    <div class="row">
++      <label for="intervalSelect">更新確認の頻度</label>
++      <select id="intervalSelect">
++        <option value="0">起動時のみ</option>
++        <option value="6">6 時間ごと</option>
++        <option value="12">12 時間ごと</option>
++        <option value="24" selected>24 時間ごと</option>
++        <option value="72">3 日ごと</option>
++        <option value="168">7 日ごと</option>
++      </select>
++    </div>
++    <div class="row">
++      <button @click="${this.onFetchClick_}" ?disabled="${this.busy_}">
++        最新 Release を取得
++      </button>
++      ${this.tag_ ? html`<span>最新: ${this.tag_}</span>` : ''}
++    </div>
++    ${this.assets_.length ? html`
++    <div class="row">
++      <label for="assetSelect">インストールする .crx</label>
++      <select id="assetSelect">
++        ${this.assets_.map(
++            asset => html`<option value="${asset}">${asset}</option>`)}
++      </select>
++    </div>` : ''}
++    ${this.error_ ? html`<p class="error">${this.error_}</p>` : ''}
++    <div class="buttons">
++      <button @click="${this.onCancelClick_}">キャンセル</button>
++      <button @click="${this.onInstallClick_}"
++              ?disabled="${this.busy_ || !this.assets_.length}">
++        インストール
++      </button>
++    </div>
++  </div>
++</div>` : ''}`;
++}
+diff --git a/chrome/browser/resources/extensions/detail_view.html.ts b/chrome/browser/resources/extensions/detail_view.html.ts
+index 7777777..a49b006
+--- a/chrome/browser/resources/extensions/detail_view.html.ts
++++ b/chrome/browser/resources/extensions/detail_view.html.ts
+@@ -100,5 +100,40 @@
+     <div class="section">
+       <div class="section-header">${this.i18n('extensionId')}</div>
+       <div class="section-content">${this.data.id}</div>
+     </div>
++    <!-- Lumo (patch 0049, task 36, requirement (a)): the
++         update-check interval of a GitHub-managed extension
++         is changed here, on its detail page. -->
++    ${this.data.lumoGithubRepo ? html`
++    <div class="section" id="lumoGithubSection">
++      <div class="section-header">
++        ${this.i18n('lumoGithubDetailTitle')}</div>
++      <div class="section-content">
++        GitHub: ${this.data.lumoGithubRepo} / ${this.data.lumoGithubTag}
++      </div>
++      <div class="section-content">
++        <label for="lumoGithubInterval">更新確認の頻度</label>
++        <select id="lumoGithubInterval"
++            @change="${this.onLumoGithubIntervalChange_}">
++          <option value="0"
++              ?selected="${this.data.lumoGithubIntervalHours === 0}">
++            起動時のみ</option>
++          <option value="6"
++              ?selected="${this.data.lumoGithubIntervalHours === 6}">
++            6 時間ごと</option>
++          <option value="12"
++              ?selected="${this.data.lumoGithubIntervalHours === 12}">
++            12 時間ごと</option>
++          <option value="24"
++              ?selected="${this.data.lumoGithubIntervalHours === 24}">
++            24 時間ごと</option>
++          <option value="72"
++              ?selected="${this.data.lumoGithubIntervalHours === 72}">
++            3 日ごと</option>
++          <option value="168"
++              ?selected="${this.data.lumoGithubIntervalHours === 168}">
++            7 日ごと</option>
++        </select>
++      </div>
++    </div>` : ''}
+ 
+diff --git a/chrome/browser/resources/extensions/detail_view.ts b/chrome/browser/resources/extensions/detail_view.ts
+index 8888888..a49b007
+--- a/chrome/browser/resources/extensions/detail_view.ts
++++ b/chrome/browser/resources/extensions/detail_view.ts
+@@ -100,3 +100,10 @@
++  // Lumo (patch 0049, task 36, requirement (a)): persists a
++  // new update-check interval for a GitHub-managed extension.
++  protected onLumoGithubIntervalChange_(e: Event) {
++    const hours = Number((e.target as HTMLSelectElement).value);
++    ExtensionsBrowserProxyImpl.getInstance().lumoGithubSetUpdateInterval(
++        this.data.id, hours);
++  }
+   static get is() {
+     return 'extensions-detail-view';
+   }
+diff --git a/chrome/browser/resources/extensions/BUILD.gn b/chrome/browser/resources/extensions/BUILD.gn
+index 9999999..a49b008
+--- a/chrome/browser/resources/extensions/BUILD.gn
++++ b/chrome/browser/resources/extensions/BUILD.gn
+@@ -100,2 +100,4 @@
+     "detail_view.ts",
++    "github_dialog.html.ts",
++    "github_dialog.ts",
+     "error_page.ts",

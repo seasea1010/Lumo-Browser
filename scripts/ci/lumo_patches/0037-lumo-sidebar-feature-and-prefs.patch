@@ -2,7 +2,7 @@ diff --git a/chrome/app/generated_resources.grd b/chrome/app/generated_resources
 index 977eb64..68503a9 100644
 --- a/chrome/app/generated_resources.grd
 +++ b/chrome/app/generated_resources.grd
-@@ -1,6 +1,33 @@
+@@ -100,6 +100,33 @@
      <message name="IDS_CHROMELABS_LUMO_DOUBLE_CLICK_CLOSE_TAB_DESCRIPTION" desc="Description of the Lumo Labs experiment shown in the Labs bubble.">
        タブをダブルクリックして閉じられるようにします（中クリックでも閉じられます）。有効にすると、タブのダブルクリックでそのタブを閉じます（Lumo パッチ 0035）。
      </message>
@@ -40,7 +40,7 @@ diff --git a/chrome/browser/thorium_flag_entries.h b/chrome/browser/thorium_flag
 index 38ee1e8..0abf802 100644
 --- a/chrome/browser/thorium_flag_entries.h
 +++ b/chrome/browser/thorium_flag_entries.h
-@@ -3,4 +3,9 @@
+@@ -100,4 +100,9 @@
       "Closes a tab when you double-click it, in addition to middle-click. Implemented by Lumo patch 0035.",
       kOsDesktop, FEATURE_VALUE_TYPE(features::kLumoDoubleClickCloseTab)},
  
@@ -54,7 +54,7 @@ diff --git a/chrome/browser/ui/browser_ui_prefs.cc b/chrome/browser/ui/browser_u
 index 00057bf..2ceccdc 100644
 --- a/chrome/browser/ui/browser_ui_prefs.cc
 +++ b/chrome/browser/ui/browser_ui_prefs.cc
-@@ -1,12 +1,45 @@
+@@ -100,12 +100,45 @@
  #include "base/numerics/safe_conversions.h"
  
 +#include "base/values.h"
@@ -104,7 +104,7 @@ diff --git a/chrome/browser/ui/toolbar/chrome_labs/chrome_labs_model.cc b/chrome
 index 190bff6..0db63d3 100644
 --- a/chrome/browser/ui/toolbar/chrome_labs/chrome_labs_model.cc
 +++ b/chrome/browser/ui/toolbar/chrome_labs/chrome_labs_model.cc
-@@ -5,5 +5,19 @@
+@@ -100,5 +100,19 @@
          "chrome-labs-lumo-double-click-close-tab",
          version_info::Channel::BETA);
  
@@ -128,7 +128,7 @@ diff --git a/chrome/browser/ui/ui_features.cc b/chrome/browser/ui/ui_features.cc
 index 4d7c188..2d0df62 100644
 --- a/chrome/browser/ui/ui_features.cc
 +++ b/chrome/browser/ui/ui_features.cc
-@@ -2,4 +2,6 @@ BASE_FEATURE(kLumoTabGroupSessionSave, base::FEATURE_DISABLED_BY_DEFAULT);
+@@ -100,4 +100,6 @@ BASE_FEATURE(kLumoTabGroupSessionSave, base::FEATURE_DISABLED_BY_DEFAULT);
  
  BASE_FEATURE(kLumoDoubleClickCloseTab, base::FEATURE_DISABLED_BY_DEFAULT);
  
@@ -139,7 +139,7 @@ diff --git a/chrome/browser/ui/ui_features.h b/chrome/browser/ui/ui_features.h
 index 814d713..98bb84c 100644
 --- a/chrome/browser/ui/ui_features.h
 +++ b/chrome/browser/ui/ui_features.h
-@@ -4,4 +4,8 @@ BASE_DECLARE_FEATURE(kLumoTabGroupSessionSave);
+@@ -100,4 +100,8 @@ BASE_DECLARE_FEATURE(kLumoTabGroupSessionSave);
  // Lumo Labs experiment (Lumo patch 0035): Double-Click to Close Tab.
  BASE_DECLARE_FEATURE(kLumoDoubleClickCloseTab);
  
@@ -152,7 +152,7 @@ diff --git a/chrome/common/pref_names.h b/chrome/common/pref_names.h
 index 9b0634a..df42bff 100644
 --- a/chrome/common/pref_names.h
 +++ b/chrome/common/pref_names.h
-@@ -1,3 +1,17 @@
+@@ -100,4 +100,18 @@
  // The pref name is "default_apps" for backwards compatibility. This pref used
  // to control both apps and extensions, and before that just apps.
  inline constexpr char kPreinstalledExtensions[] = "default_apps";
@@ -170,3 +170,4 @@ index 9b0634a..df42bff 100644
 +// collapsed to its narrow strip.
 +inline constexpr char kLumoSidebarBarCollapsed[] =
 +    "lumo.sidebar.bar_collapsed";
+ 

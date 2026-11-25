@@ -6,7 +6,7 @@ index 28c42dd..5b321cb 100644
      <message name="IDS_LUMO_LAUNCH_THORIUM_PROFILE" desc="App menu item that launches Lumo with the original Thorium user profile data directory.">
        もともとのThoriumのユーザープロファイルデータの保存場所から起動
      </message>
-+    <message name="IDS_LUMO_DEV_STAGE_LABEL" desc="Label shown at the top-left of every Lumo browser window stating that the browser is in an experimental development stage.">
++    <message name="IDS_LUMO_DEV_STAGE_LABEL" desc="Label shown at the bottom-right of every Lumo browser window stating that the browser is in an experimental development stage.">
 +      このブラウザーは試験的な開発段階です
 +    </message>
      <message name="IDS_CHROMELABS_RELAUNCH_BUTTON_LABEL"
@@ -32,7 +32,7 @@ index cb12e8a..44ef270 100644
 +  // Lumo: persistent label noting that this browser is in an
 +  // experimental development stage (Lumo patch 0008). It never
 +  // processes events, so clicks pass through to whatever is
-+  // below it. BrowserView::Layout() positions it at the top-left
++  // below it. BrowserView::Layout() positions it at the bottom-right
 +  // of the contents area on every layout pass and keeps it in
 +  // front of the other BrowserView children.
 +  //
@@ -57,22 +57,27 @@ index cb12e8a..44ef270 100644
  #if BUILDFLAG(IS_WIN)
    // Create a custom JumpList and add it to an observer of TabRestoreService
    // so we can update the custom JumpList when a tab is added or removed.
-@@ -5025,6 +5052,28 @@ void BrowserView::Layout(PassKey) {
+@@ -5025,6 +5052,33 @@ void BrowserView::Layout(PassKey) {
      startup_layout_state_ = StartupLayoutState::kDeferring;
    }
  
-+  // Lumo: keep the development-stage label pinned to the top-left
-+  // of the contents area (Lumo patch 0008). The label gets a small
++  // Lumo: keep the development-stage label pinned to the bottom-right
++  // of the contents area (Lumo patch 0008, position revised for build
++  // #33: at its old position the label covered page headings
++  // and photos).
++  // The label gets a small
 +  // padding around its preferred size; it is click-through, so it
 +  // does not block the page content below it.
 +  if (lumo_dev_stage_label_ && multi_contents_view_) {
 +    const gfx::Size label_preferred =
 +        lumo_dev_stage_label_->GetPreferredSize();
 +    const gfx::Rect contents_bounds = multi_contents_view_->bounds();
-+    lumo_dev_stage_label_->SetBounds(contents_bounds.x() + 6,
-+                                     contents_bounds.y() + 6,
-+                                     label_preferred.width() + 12,
-+                                     label_preferred.height() + 6);
++    const int label_width = label_preferred.width() + 12;
++    const int label_height = label_preferred.height() + 6;
++    lumo_dev_stage_label_->SetBounds(
++        contents_bounds.right() - label_width - 6,
++        contents_bounds.bottom() - label_height - 6,
++        label_width, label_height);
 +    // Keep the label (and its layer) in front of any sibling
 +    // added after it, so it always paints above the contents.
 +    const std::optional<size_t> label_index =
@@ -97,7 +102,7 @@ index b3b3a40..5017ab7 100644
 +  // Lumo: always-visible label stating that this browser is in an
 +  // experimental development stage (Lumo patch 0008). Created in
 +  // the constructor; BrowserView::Layout() keeps it pinned to the
-+  // top-left of the contents area.
++  // bottom-right of the contents area.
 +  raw_ptr<views::Label> lumo_dev_stage_label_ = nullptr;
 +
    // The view that contains the tabstrip, new tab button, and grab handle space.

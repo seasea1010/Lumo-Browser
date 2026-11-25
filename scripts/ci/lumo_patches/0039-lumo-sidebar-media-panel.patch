@@ -2,7 +2,7 @@ diff --git a/chrome/app/generated_resources.grd b/chrome/app/generated_resources
 index 68503a9..9bbced0 100644
 --- a/chrome/app/generated_resources.grd
 +++ b/chrome/app/generated_resources.grd
-@@ -28,6 +28,24 @@
+@@ -100,6 +100,24 @@
      <message name="IDS_LUMO_SIDEBAR_EXPAND" desc="Tooltip of the button that expands the collapsed Lumo sidebar icon bar.">
        サイドバーを展開する
      </message>
@@ -31,7 +31,7 @@ diff --git a/chrome/browser/ui/actions/chrome_action_id.h b/chrome/browser/ui/ac
 index 23ccb21..8e504ef 100644
 --- a/chrome/browser/ui/actions/chrome_action_id.h
 +++ b/chrome/browser/ui/actions/chrome_action_id.h
-@@ -1,5 +1,6 @@
+@@ -100,5 +100,6 @@
    E(kActionSidePanelShowTabsFromOtherDevices, \
      IDC_SHOW_TABS_FROM_OTHER_DEVICES_SIDE_PANEL) \
 -  E(kActionSidePanelShowLumoWebPanel)
@@ -43,7 +43,7 @@ diff --git a/chrome/browser/ui/browser_actions.cc b/chrome/browser/ui/browser_ac
 index 9b1f59d..5090962 100644
 --- a/chrome/browser/ui/browser_actions.cc
 +++ b/chrome/browser/ui/browser_actions.cc
-@@ -21,3 +21,14 @@
+@@ -100,4 +100,15 @@
                          kActionSidePanelShowLumoWebPanel, bwi, true)
              .Build());
    }
@@ -58,11 +58,12 @@ index 9b1f59d..5090962 100644
 +                        kActionSidePanelShowLumoMediaPanel, bwi, true)
 +            .Build());
 +  }
+ 
 diff --git a/chrome/browser/ui/side_panel/side_panel_entry_id.h b/chrome/browser/ui/side_panel/side_panel_entry_id.h
 index c8456b4..45c6e14 100644
 --- a/chrome/browser/ui/side_panel/side_panel_entry_id.h
 +++ b/chrome/browser/ui/side_panel/side_panel_entry_id.h
-@@ -2,6 +2,7 @@
+@@ -100,6 +100,7 @@
    V(kWebView, std::nullopt, "WebView")                                        \
    V(kContextualTasks, kActionSidePanelShowContextualTasks, "ContextualTasks") \
    V(kLumoWebPanel, kActionSidePanelShowLumoWebPanel, "LumoWebPanel")          \
@@ -74,7 +75,7 @@ diff --git a/chrome/browser/ui/views/side_panel/BUILD.gn b/chrome/browser/ui/vie
 index 1624c1a..450638c 100644
 --- a/chrome/browser/ui/views/side_panel/BUILD.gn
 +++ b/chrome/browser/ui/views/side_panel/BUILD.gn
-@@ -1,4 +1,8 @@
+@@ -100,4 +100,8 @@
      "history_clusters/history_clusters_tab_helper.h",
 +    "lumo/lumo_media_item_view.cc",
 +    "lumo/lumo_media_item_view.h",
@@ -83,7 +84,7 @@ index 1624c1a..450638c 100644
      "lumo/lumo_sidebar_bar.cc",
      "lumo/lumo_sidebar_bar.h",
      "lumo/lumo_sidebar_entries.cc",
-@@ -27,6 +31,7 @@
+@@ -144,6 +148,7 @@
      "//chrome/browser/ui/bookmarks",
      "//chrome/browser/ui/browser_window",
      "//chrome/browser/ui/extensions",
@@ -91,7 +92,7 @@ index 1624c1a..450638c 100644
      "//chrome/browser/ui/side_panel",
      "//chrome/browser/ui/tabs:tab_strip",
      "//chrome/browser/ui/tabs:tabs_public",
-@@ -53,11 +58,14 @@
+@@ -190,11 +195,14 @@
      "//components/download/content/public",
      "//components/favicon_base",
      "//components/feature_engagement/public",
@@ -111,7 +112,7 @@ new file mode 100644
 index 0000000..1581dde
 --- /dev/null
 +++ b/chrome/browser/ui/views/side_panel/lumo/lumo_media_item_view.cc
-@@ -0,0 +1,558 @@
+@@ -100,0 +100,558 @@
 +// Copyright 2026 seasea1010
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -675,7 +676,7 @@ new file mode 100644
 index 0000000..d61a84a
 --- /dev/null
 +++ b/chrome/browser/ui/views/side_panel/lumo/lumo_media_item_view.h
-@@ -0,0 +1,125 @@
+@@ -100,0 +100,125 @@
 +// Copyright 2026 seasea1010
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -806,7 +807,7 @@ new file mode 100644
 index 0000000..49ddcbc
 --- /dev/null
 +++ b/chrome/browser/ui/views/side_panel/lumo/lumo_media_panel_view.cc
-@@ -0,0 +1,114 @@
+@@ -100,0 +100,114 @@
 +// Copyright 2026 seasea1010
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -926,7 +927,7 @@ new file mode 100644
 index 0000000..99eff95
 --- /dev/null
 +++ b/chrome/browser/ui/views/side_panel/lumo/lumo_media_panel_view.h
-@@ -0,0 +1,80 @@
+@@ -100,0 +100,80 @@
 +// Copyright 2026 seasea1010
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -1011,7 +1012,7 @@ diff --git a/chrome/browser/ui/views/side_panel/lumo/lumo_sidebar_bar.cc b/chrom
 index 0b3da5c..a53d8f8 100644
 --- a/chrome/browser/ui/views/side_panel/lumo/lumo_sidebar_bar.cc
 +++ b/chrome/browser/ui/views/side_panel/lumo/lumo_sidebar_bar.cc
-@@ -101,6 +101,7 @@ void LumoSidebarBar::BuildButtons() {
+@@ -100,6 +100,7 @@ void LumoSidebarBar::BuildButtons() {
    AddEntryButton(SidePanelEntryKey(SidePanelEntryId::kHistory));
    AddEntryButton(SidePanelEntryKey(SidePanelEntryId::kReadingList));
    AddEntryButton(SidePanelEntryKey(SidePanelEntryId::kLumoWebPanel));
@@ -1023,7 +1024,7 @@ diff --git a/chrome/browser/ui/views/side_panel/lumo/lumo_sidebar_entries.cc b/c
 index c56a794..131bce5 100644
 --- a/chrome/browser/ui/views/side_panel/lumo/lumo_sidebar_entries.cc
 +++ b/chrome/browser/ui/views/side_panel/lumo/lumo_sidebar_entries.cc
-@@ -16,6 +16,7 @@
+@@ -100,6 +100,7 @@
  #include "chrome/browser/ui/side_panel/side_panel_entry_scope.h"
  #include "chrome/browser/ui/side_panel/side_panel_native_view.h"
  #include "chrome/browser/ui/side_panel/side_panel_registry.h"
@@ -1031,7 +1032,7 @@ index c56a794..131bce5 100644
  #include "chrome/browser/ui/views/side_panel/lumo/lumo_web_panel_view.h"
  
  namespace lumo_sidebar {
-@@ -27,6 +28,11 @@ SidePanelNativeView CreateWebPanelView(Profile* profile,
+@@ -146,6 +147,11 @@ SidePanelNativeView CreateWebPanelView(Profile* profile,
    return std::make_unique<LumoWebPanelView>(profile);
  }
  
@@ -1043,7 +1044,7 @@ index c56a794..131bce5 100644
  }  // namespace
  
  void RegisterLumoSidebarEntries(BrowserWindowInterface* browser,
-@@ -37,6 +43,14 @@ void RegisterLumoSidebarEntries(BrowserWindowInterface* browser,
+@@ -192,6 +198,14 @@ void RegisterLumoSidebarEntries(BrowserWindowInterface* browser,
        base::BindRepeating(&CreateWebPanelView, profile),
        /*default_content_width_callback=*/base::NullCallback());
    window_registry->Register(std::move(entry));
@@ -1062,7 +1063,7 @@ diff --git a/chrome/browser/ui/views/side_panel/lumo/lumo_sidebar_entries.h b/ch
 index ab9ce05..25c9228 100644
 --- a/chrome/browser/ui/views/side_panel/lumo/lumo_sidebar_entries.h
 +++ b/chrome/browser/ui/views/side_panel/lumo/lumo_sidebar_entries.h
-@@ -10,7 +10,8 @@ class SidePanelRegistry;
+@@ -100,7 +100,8 @@ class SidePanelRegistry;
  
  namespace lumo_sidebar {
  

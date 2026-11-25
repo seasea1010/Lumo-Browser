@@ -1,0 +1,1332 @@
+diff --git a/chrome/browser/ui/webui/side_panel/customize_chrome/lumo_ntp_customize_handler.h b/chrome/browser/ui/webui/side_panel/customize_chrome/lumo_ntp_customize_handler.h
+new file mode 100644
+index 0000000..0000000
+--- /dev/null
++++ b/chrome/browser/ui/webui/side_panel/customize_chrome/lumo_ntp_customize_handler.h
+@@ -100,0 +100,38 @@
++// Copyright 2026 The Lumo Authors
++// Lumo NTP customization (patch 0051, task 38): WebUI message
++// handler that bridges the Customize Chrome side panel and the
++// new tab page to the lumo.ntp.* prefs. No network access: every
++// message is a local pref read/write.
++
++#ifndef CHROME_BROWSER_UI_WEBUI_SIDE_PANEL_CUSTOMIZE_CHROME_LUMO_NTP_CUSTOMIZE_HANDLER_H_
++#define CHROME_BROWSER_UI_WEBUI_SIDE_PANEL_CUSTOMIZE_CHROME_LUMO_NTP_CUSTOMIZE_HANDLER_H_
++
++#include "content/public/browser/web_ui_message_handler.h"
++
++class PrefService;
++
++class LumoNtpCustomizeHandler : public content::WebUIMessageHandler {
++ public:
++  explicit LumoNtpCustomizeHandler(PrefService* prefs);
++  LumoNtpCustomizeHandler(const LumoNtpCustomizeHandler&) = delete;
++  LumoNtpCustomizeHandler& operator=(const LumoNtpCustomizeHandler&) =
++      delete;
++  ~LumoNtpCustomizeHandler() override;
++
++  // content::WebUIMessageHandler:
++  void RegisterMessages() override;
++
++ private:
++  void HandleGetConfig(const base::ListValue& args);
++  void HandleSetConfig(const base::ListValue& args);
++  void HandleResetConfig(const base::ListValue& args);
++  void HandleGetContent(const base::ListValue& args);
++  void HandleSetMemo(const base::ListValue& args);
++  void HandleSetTodos(const base::ListValue& args);
++  void HandleSetBackgroundImage(const base::ListValue& args);
++  void HandleGetLumoInfo(const base::ListValue& args);
++
++  raw_ptr<PrefService> prefs_;
++};
++
++#endif  // CHROME_BROWSER_UI_WEBUI_SIDE_PANEL_CUSTOMIZE_CHROME_LUMO_NTP_CUSTOMIZE_HANDLER_H_
+diff --git a/chrome/browser/ui/webui/side_panel/customize_chrome/lumo_ntp_customize_handler.cc b/chrome/browser/ui/webui/side_panel/customize_chrome/lumo_ntp_customize_handler.cc
+new file mode 100644
+index 0000000..0000000
+--- /dev/null
++++ b/chrome/browser/ui/webui/side_panel/customize_chrome/lumo_ntp_customize_handler.cc
+@@ -100,0 +100,131 @@
++// Copyright 2026 The Lumo Authors
++// Lumo NTP customization (patch 0051, task 38).
++
++#include "chrome/browser/ui/webui/side_panel/customize_chrome/lumo_ntp_customize_handler.h"
++
++#include <string>
++
++#include "base/functional/bind.h"
++#include "base/json/json_writer.h"
++#include "base/values.h"
++#include "chrome/browser/lumo/lumo_ntp_config.h"
++#include "chrome/common/pref_names.h"
++#include "components/prefs/pref_service.h"
++#include "components/version_info/version_info.h"
++#include "content/public/browser/web_ui.h"
++
++LumoNtpCustomizeHandler::LumoNtpCustomizeHandler(PrefService* prefs)
++    : prefs_(prefs) {}
++
++LumoNtpCustomizeHandler::~LumoNtpCustomizeHandler() = default;
++
++void LumoNtpCustomizeHandler::RegisterMessages() {
++  web_ui()->RegisterMessageCallback(
++      "lumoNtpGetConfig",
++      base::BindRepeating(&LumoNtpCustomizeHandler::HandleGetConfig,
++                          base::Unretained(this)));
++  web_ui()->RegisterMessageCallback(
++      "lumoNtpSetConfig",
++      base::BindRepeating(&LumoNtpCustomizeHandler::HandleSetConfig,
++                          base::Unretained(this)));
++  web_ui()->RegisterMessageCallback(
++      "lumoNtpResetConfig",
++      base::BindRepeating(&LumoNtpCustomizeHandler::HandleResetConfig,
++                          base::Unretained(this)));
++  web_ui()->RegisterMessageCallback(
++      "lumoNtpGetContent",
++      base::BindRepeating(&LumoNtpCustomizeHandler::HandleGetContent,
++                          base::Unretained(this)));
++  web_ui()->RegisterMessageCallback(
++      "lumoNtpSetMemo",
++      base::BindRepeating(&LumoNtpCustomizeHandler::HandleSetMemo,
++                          base::Unretained(this)));
++  web_ui()->RegisterMessageCallback(
++      "lumoNtpSetTodos",
++      base::BindRepeating(&LumoNtpCustomizeHandler::HandleSetTodos,
++                          base::Unretained(this)));
++  web_ui()->RegisterMessageCallback(
++      "lumoNtpSetBackgroundImage",
++      base::BindRepeating(
++          &LumoNtpCustomizeHandler::HandleSetBackgroundImage,
++          base::Unretained(this)));
++  web_ui()->RegisterMessageCallback(
++      "lumoNtpGetLumoInfo",
++      base::BindRepeating(&LumoNtpCustomizeHandler::HandleGetLumoInfo,
++                          base::Unretained(this)));
++}
++
++void LumoNtpCustomizeHandler::HandleGetConfig(
++    const base::ListValue& args) {
++  AllowJavascript();
++  CHECK_EQ(1U, args.size());
++  const base::DictValue& config = prefs_->GetDict(prefs::kLumoNtpConfig);
++  ResolveJavascriptCallback(args[0], base::Value(config.Clone()));
++}
++
++void LumoNtpCustomizeHandler::HandleSetConfig(
++    const base::ListValue& args) {
++  // One dictionary write per edit: the NTP observes the same pref
++  // and re-renders, which is the instant preview.
++  CHECK_EQ(1U, args.size());
++  const base::DictValue* dict = args[0].GetIfDict();
++  if (!dict) {
++    return;
++  }
++  prefs_->SetDict(prefs::kLumoNtpConfig, dict->Clone());
++}
++
++void LumoNtpCustomizeHandler::HandleResetConfig(
++    const base::ListValue& args) {
++  prefs_->ClearPref(prefs::kLumoNtpConfig);
++  prefs_->ClearPref(prefs::kLumoNtpMemo);
++  prefs_->ClearPref(prefs::kLumoNtpTodos);
++  prefs_->ClearPref(prefs::kLumoNtpBackgroundImage);
++}
++
++void LumoNtpCustomizeHandler::HandleGetContent(
++    const base::ListValue& args) {
++  AllowJavascript();
++  CHECK_EQ(1U, args.size());
++  base::DictValue content;
++  content.Set("memo", prefs_->GetString(prefs::kLumoNtpMemo));
++  content.Set("todos", prefs_->GetList(prefs::kLumoNtpTodos).Clone());
++  content.Set("backgroundImage",
++              prefs_->GetString(prefs::kLumoNtpBackgroundImage));
++  ResolveJavascriptCallback(args[0], base::Value(std::move(content)));
++}
++
++void LumoNtpCustomizeHandler::HandleSetMemo(
++    const base::ListValue& args) {
++  CHECK_EQ(1U, args.size());
++  if (const std::string* memo = args[0].GetIfString()) {
++    prefs_->SetString(prefs::kLumoNtpMemo, *memo);
++  }
++}
++
++void LumoNtpCustomizeHandler::HandleSetTodos(
++    const base::ListValue& args) {
++  CHECK_EQ(1U, args.size());
++  if (const base::ListValue* todos = args[0].GetIfList()) {
++    prefs_->SetList(prefs::kLumoNtpTodos, todos->Clone());
++  }
++}
++
++void LumoNtpCustomizeHandler::HandleSetBackgroundImage(
++    const base::ListValue& args) {
++  CHECK_EQ(1U, args.size());
++  if (const std::string* image = args[0].GetIfString()) {
++    prefs_->SetString(prefs::kLumoNtpBackgroundImage, *image);
++  }
++}
++
++void LumoNtpCustomizeHandler::HandleGetLumoInfo(
++    const base::ListValue& args) {
++  AllowJavascript();
++  CHECK_EQ(1U, args.size());
++  base::DictValue info;
++  info.Set("product", "Lumo");
++  info.Set("version", version_info::GetVersionNumber());
++  info.Set("chromiumVersion", version_info::GetVersionNumber());
++  ResolveJavascriptCallback(args[0], base::Value(std::move(info)));
++}
+diff --git a/chrome/browser/ui/webui/side_panel/customize_chrome/customize_chrome_ui.cc b/chrome/browser/ui/webui/side_panel/customize_chrome/customize_chrome_ui.cc
+index 0000000..0000000 100644
+@@ -100,2 +100,3 @@
+ #include "chrome/browser/ui/webui/side_panel/customize_chrome/customize_chrome_page_handler.h"
++#include "chrome/browser/ui/webui/side_panel/customize_chrome/lumo_ntp_customize_handler.h"
+ #include "chrome/browser/ui/webui/side_panel/customize_chrome/customize_chrome_section.h"
+@@ -140,3 +141,5 @@
+ content::WebUIDataSource* source = content::WebUIDataSource::CreateAndAdd(
+     profile_, chrome::kChromeUICustomizeChromeSidePanelHost);
++  AddWebUiMessageHandler(std::make_unique<LumoNtpCustomizeHandler>(
++      profile_->GetPrefs()));
+ 
+diff --git a/chrome/browser/resources/side_panel/customize_chrome/lumo_ntp_section.ts b/chrome/browser/resources/side_panel/customize_chrome/lumo_ntp_section.ts
+new file mode 100644
+index 0000000..0000000
+--- /dev/null
++++ b/chrome/browser/resources/side_panel/customize_chrome/lumo_ntp_section.ts
+@@ -100,0 +100,208 @@
++// Copyright 2026 The Lumo Authors
++// Lumo NTP customization (patch 0051, task 38): the
++// "Lumo \u3092\u30ab\u30b9\u30bf\u30de\u30a4\u30ba" section inside the
++// standard Customize Chrome side panel. Every control edits the
++// lumo.ntp.config dictionary pref through the native handler; the
++// new tab page observes the same pref, so edits preview instantly.
++// No network access anywhere in this file.
++
++import {CrLitElement} from 'chrome://resources/lit/v3_0/lit.rollup.js';
++
++import {getCss} from './lumo_ntp_section.css.js';
++import {getHtml} from './lumo_ntp_section.html.js';
++
++interface LumoNtpConfig {
++  [key: string]: unknown;
++}
++
++declare global {
++  interface HTMLElementTagNameMap {
++    'lumo-ntp-section': LumoNtpSectionElement;
++  }
++}
++
++export class LumoNtpSectionElement extends CrLitElement {
++  static get is() {
++    return 'lumo-ntp-section';
++  }
++
++  static override get styles() {
++    return getCss();
++  }
++
++  override render() {
++    return getHtml.bind(this)``;
++  }
++
++  static override get properties() {
++    return {
++      config_: {type: Object},
++      memo_: {type: String},
++    };
++  }
++
++  protected accessor config_: LumoNtpConfig = {};
++  protected accessor memo_: string = '';
++
++  override connectedCallback() {
++    super.connectedCallback();
++    chrome.send('lumoNtpGetConfig', [this.resolveConfig_.bind(this)]);
++    chrome.send('lumoNtpGetContent', [this.resolveContent_.bind(this)]);
++  }
++
++  private resolveConfig_(config: LumoNtpConfig) {
++    this.config_ = config;
++    this.requestUpdate();
++  }
++
++  private resolveContent_(content: {memo: string}) {
++    this.memo_ = content.memo;
++  }
++
++  // One write per edit: a deep-cloned dictionary with one leaf
++  // replaced, sent as a single pref write.
++  protected setPath_(path: string, value: unknown) {
++    const next: LumoNtpConfig =
++        JSON.parse(JSON.stringify(this.config_)) as LumoNtpConfig;
++    const keys = path.split('.');
++    let node: Record<string, unknown> = next as Record<string, unknown>;
++    for (const key of keys.slice(0, -1)) {
++      node = node[key] as Record<string, unknown>;
++    }
++    node[keys[keys.length - 1]!] = value;
++    this.config_ = next;
++    chrome.send('lumoNtpSetConfig', [next]);
++    this.requestUpdate();
++  }
++
++  protected getPath_(path: string): unknown {
++    let node: unknown = this.config_;
++    for (const key of path.split('.')) {
++      node = (node as Record<string, unknown>)?.[key];
++    }
++    return node;
++  }
++
++  protected onToggle_(e: CustomEvent<{path: string, checked: boolean}>) {
++    this.setPath_(e.detail.path, e.detail.checked);
++  }
++
++  protected onNumber_(e: CustomEvent<{path: string, value: string}>) {
++    this.setPath_(e.detail.path, Number(e.detail.value));
++  }
++
++  protected onText_(e: CustomEvent<{path: string, value: string}>) {
++    this.setPath_(e.detail.path, e.detail.value);
++  }
++
++  protected onColor_(e: CustomEvent<{path: string, value: string}>) {
++    this.setPath_(e.detail.path, e.detail.value);
++  }
++
++  protected onImageFile_(e: Event) {
++    const input = e.target as HTMLInputElement;
++    const file = input.files?.[0];
++    if (!file) {
++      return;
++    }
++    const reader = new FileReader();
++    reader.onload = () => {
++      chrome.send('lumoNtpSetBackgroundImage', [String(reader.result)]);
++      this.setPath_('background.mode', 'image');
++    };
++    reader.readAsDataURL(file);
++  }
++
++  protected onPreset_(e: CustomEvent<{value: string}>) {
++    const presets =
++        (window as unknown as {LUMO_NTP_PRESETS: Record<string, unknown>})
++            .LUMO_NTP_PRESETS;
++    const preset = presets[e.detail.value];
++    if (preset) {
++      this.config_ = JSON.parse(JSON.stringify(preset)) as LumoNtpConfig;
++      chrome.send('lumoNtpSetConfig', [this.config_]);
++      this.requestUpdate();
++    }
++  }
++
++  protected onExport_() {
++    const blob = new Blob([JSON.stringify(this.config_, null, 2)],
++                          {type: 'application/json'});
++    const url = URL.createObjectURL(blob);
++    const a = document.createElement('a');
++    a.href = url;
++    a.download = 'lumo-ntp-config.json';
++    a.click();
++    URL.revokeObjectURL(url);
++  }
++
++  protected onImport_(e: Event) {
++    const input = e.target as HTMLInputElement;
++    const file = input.files?.[0];
++    if (!file) {
++      return;
++    }
++    file.text().then(text => {
++      try {
++        const parsed = JSON.parse(text) as LumoNtpConfig;
++        if (typeof parsed !== 'object' || parsed === null ||
++            !('background' in parsed)) {
++          return;
++        }
++        this.config_ = parsed;
++        chrome.send('lumoNtpSetConfig', [parsed]);
++        this.requestUpdate();
++      } catch {
++        // Invalid JSON: leave the current config untouched.
++      }
++    });
++  }
++
++  protected onReset_() {
++    chrome.send('lumoNtpResetConfig', []);
++    chrome.send('lumoNtpGetConfig', [this.resolveConfig_.bind(this)]);
++  }
++
++  protected onShortcutAdd_() {
++    const items = [...(this.getPath_('shortcuts.items') as unknown[])];
++    items.push({title: '', url: 'https://'});
++    this.setPath_('shortcuts.items', items);
++  }
++
++  protected onShortcutRemove_(index: number) {
++    const items = [...(this.getPath_('shortcuts.items') as unknown[])];
++    items.splice(index, 1);
++    this.setPath_('shortcuts.items', items);
++  }
++
++  // Drag reorder for shortcut items and widgets: HTML5 drag events
++  // swap the dragged entry with the drop target, then one write.
++  protected onListDrop_(path: string, from: number, to: number) {
++    const items = [...(this.getPath_(path) as unknown[])];
++    const [moved] = items.splice(from, 1);
++    items.splice(to, 0, moved);
++    if (path === 'widgets') {
++      (items as Array<{order: number}>).forEach((w, i) => w.order = i);
++    }
++    this.setPath_(path, items);
++  }
++
++  protected onWidgetToggle_(index: number, checked: boolean) {
++    const widgets =
++        JSON.parse(JSON.stringify(this.getPath_('widgets'))) as
++        Array<Record<string, unknown>>;
++    widgets[index]!['enabled'] = checked;
++    this.setPath_('widgets', widgets);
++  }
++
++  protected onWidgetWidth_(index: number, value: string) {
++    const widgets =
++        JSON.parse(JSON.stringify(this.getPath_('widgets'))) as
++        Array<Record<string, unknown>>;
++    widgets[index]!['width'] = Number(value);
++    this.setPath_('widgets', widgets);
++  }
++}
++
++customElements.define(
++    LumoNtpSectionElement.is, LumoNtpSectionElement);
+diff --git a/chrome/browser/resources/side_panel/customize_chrome/lumo_ntp_section.html.ts b/chrome/browser/resources/side_panel/customize_chrome/lumo_ntp_section.html.ts
+new file mode 100644
+index 0000000..0000000
+--- /dev/null
++++ b/chrome/browser/resources/side_panel/customize_chrome/lumo_ntp_section.html.ts
+@@ -100,0 +100,276 @@
++// Copyright 2026 The Lumo Authors
++// Lumo NTP customization (patch 0051, task 38): card sections in
++// the standard Customize Chrome idiom. Controls are data-bound to
++// config paths; the element's handlers turn every edit into one
++// lumoNtpSetConfig write (instant preview on the new tab page).
++
++import {html} from 'chrome://resources/lit/v3_0/lit.rollup.js';
++
++import type {LumoNtpSectionElement} from './lumo_ntp_section.js';
++
++export function getHtml(this: LumoNtpSectionElement) {
++  return html`
++<div class="lumo-section">
++  <div class="lumo-card">
++    <div class="lumo-card-title">Lumo をカスタマイズ</div>
++    <label>プリセット
++      <select id="preset"
++          @change="${this.onPreset_}">
++        <option value="default">標準</option>
++        <option value="minimal">ミニマル</option>
++        <option value="focus">集中（ダーク）</option>
++        <option value="colorful">カラフル</option>
++      </select>
++    </label>
++    <div class="lumo-row">
++      <button @click="${this.onExport_}">エクスポート</button>
++      <label class="lumo-file">インポート
++        <input type="file" accept="application/json"
++            @change="${this.onImport_}">
++      </label>
++      <button @click="${this.onReset_}">リセット</button>
++    </div>
++  </div>
++
++  <div class="lumo-card">
++    <div class="lumo-card-title">背景</div>
++    <label>種類
++      <select data-path="background.mode"
++          @change="${this.onText_}">
++        <option value="solid">単色</option>
++        <option value="gradient">グラデーション</option>
++        <option value="pattern">柄</option>
++        <option value="image">画像</option>
++      </select>
++    </label>
++    <label>色 <input type="color" data-path="background.color"
++        @input="${this.onColor_}"></label>
++    <label>色 2 <input type="color" data-path="background.color2"
++        @input="${this.onColor_}"></label>
++    <label>角度 <input type="range" min="0" max="360"
++        data-path="background.gradientAngle"
++        @input="${this.onNumber_}"></label>
++    <label>柄
++      <select data-path="background.pattern"
++          @change="${this.onText_}">
++        <option value="none">なし</option>
++        <option value="dots">ドット</option>
++        <option value="grid">格子</option>
++        <option value="diagonal">斜線</option>
++      </select>
++    </label>
++    <label class="lumo-file">ローカル画像
++      <input type="file" accept="image/*"
++          @change="${this.onImageFile_}">
++    </label>
++    <label>フィット
++      <select data-path="background.imageFit"
++          @change="${this.onText_}">
++        <option value="cover">全体を覆う</option>
++        <option value="contain">全体を表示</option>
++      </select>
++    </label>
++    <label>位置
++      <select data-path="background.imagePosition"
++          @change="${this.onText_}">
++        <option value="center">中央</option>
++        <option value="top">上</option>
++        <option value="bottom">下</option>
++        <option value="left">左</option>
++        <option value="right">右</option>
++      </select>
++    </label>
++    <label>繰り返し <input type="checkbox"
++        data-path="background.imageRepeat"
++        @change="${this.onToggle_}"></label>
++    <label>暗さ <input type="range" min="0" max="100"
++        data-path="background.darkness"
++        @input="${this.onNumber_}"></label>
++    <label>ぼかし <input type="range" min="0" max="40"
++        data-path="background.blur"
++        @input="${this.onNumber_}"></label>
++    <label>彩度 <input type="range" min="0" max="200"
++        data-path="background.saturation"
++        @input="${this.onNumber_}"></label>
++    <label>オーバーレイ色 <input type="color"
++        data-path="background.overlayColor"
++        @input="${this.onColor_}"></label>
++    <label>オーバーレイの濃さ <input type="range" min="0" max="100"
++        data-path="background.overlayOpacity"
++        @input="${this.onNumber_}"></label>
++  </div>
++
++  <div class="lumo-card">
++    <div class="lumo-card-title">時計・日付</div>
++    <label>表示 <input type="checkbox" data-path="clock.enabled"
++        @change="${this.onToggle_}"></label>
++    <label>24 時間表示 <input type="checkbox"
++        data-path="clock.format24h"
++        @change="${this.onToggle_}"></label>
++    <label>秒表示 <input type="checkbox" data-path="clock.showSeconds"
++        @change="${this.onToggle_}"></label>
++    <label>サイズ <input type="range" min="24" max="160"
++        data-path="clock.size" @input="${this.onNumber_}"></label>
++    <label>太さ
++      <select data-path="clock.weight" @change="${this.onNumber_}">
++        <option value="100">細い</option>
++        <option value="300">標準</option>
++        <option value="500">中</option>
++        <option value="700">太い</option>
++      </select>
++    </label>
++    <label>日付を表示 <input type="checkbox" data-path="clock.showDate"
++        @change="${this.onToggle_}"></label>
++    <label>日付の書式
++      <select data-path="clock.dateFormat" @change="${this.onText_}">
++        <option value="weekday-month-day">曜日・月日</option>
++        <option value="full">年月日・曜日</option>
++        <option value="month-day">月日のみ</option>
++      </select>
++    </label>
++    <label>配置
++      <select data-path="clock.align" @change="${this.onText_}">
++        <option value="left">左</option>
++        <option value="center">中央</option>
++        <option value="right">右</option>
++      </select>
++    </label>
++    <label>色 <input type="color" data-path="clock.color"
++        @input="${this.onColor_}"></label>
++    <label>不透明度 <input type="range" min="0" max="100"
++        data-path="clock.opacity" @input="${this.onNumber_}"></label>
++  </div>
++
++  <div class="lumo-card">
++    <div class="lumo-card-title">挨拶文</div>
++    <label>表示 <input type="checkbox" data-path="greeting.enabled"
++        @change="${this.onToggle_}"></label>
++    <label>時間帯で切り替え <input type="checkbox"
++        data-path="greeting.useTimeOfDay"
++        @change="${this.onToggle_}"></label>
++    <label>名前 <input type="text" data-path="greeting.name"
++        @change="${this.onText_}"></label>
++    <label>朝 <input type="text" data-path="greeting.morning"
++        @change="${this.onText_}"></label>
++    <label>昼 <input type="text" data-path="greeting.afternoon"
++        @change="${this.onText_}"></label>
++    <label>夜 <input type="text" data-path="greeting.evening"
++        @change="${this.onText_}"></label>
++  </div>
++
++  <div class="lumo-card">
++    <div class="lumo-card-title">検索バー</div>
++    <label>表示 <input type="checkbox" data-path="search.enabled"
++        @change="${this.onToggle_}"></label>
++    <label>検索エンジン
++      <select data-path="search.engine" @change="${this.onText_}">
++        <option value="default">既定の検索エンジン</option>
++        <option value="google">Google</option>
++        <option value="bing">Bing</option>
++        <option value="duckduckgo">DuckDuckGo</option>
++        <option value="yahoo_jp">Yahoo! JAPAN</option>
++        <option value="brave">Brave</option>
++      </select>
++    </label>
++    <label>幅 <input type="range" min="280" max="900"
++        data-path="search.width" @input="${this.onNumber_}"></label>
++    <label>高さ <input type="range" min="36" max="72"
++        data-path="search.height" @input="${this.onNumber_}"></label>
++    <label>角丸 <input type="range" min="0" max="36"
++        data-path="search.radius" @input="${this.onNumber_}"></label>
++    <label>背景の不透明度 <input type="range" min="0" max="100"
++        data-path="search.bgOpacity" @input="${this.onNumber_}"></label>
++    <label>ぼかし <input type="range" min="0" max="40"
++        data-path="search.blur" @input="${this.onNumber_}"></label>
++    <label>プレースホルダ <input type="text"
++        data-path="search.placeholder" @change="${this.onText_}"></label>
++    <label>配置
++      <select data-path="search.align" @change="${this.onText_}">
++        <option value="left">左</option>
++        <option value="center">中央</option>
++        <option value="right">右</option>
++      </select>
++    </label>
++  </div>
++
++  <div class="lumo-card">
++    <div class="lumo-card-title">ショートカット</div>
++    <label>列数 <input type="range" min="2" max="10"
++        data-path="shortcuts.columns" @input="${this.onNumber_}"></label>
++    <label>行数 <input type="range" min="1" max="6"
++        data-path="shortcuts.rows" @input="${this.onNumber_}"></label>
++    <label>タイルサイズ <input type="range" min="56" max="160"
++        data-path="shortcuts.tileSize" @input="${this.onNumber_}"></label>
++    <label>間隔 <input type="range" min="0" max="48"
++        data-path="shortcuts.gap" @input="${this.onNumber_}"></label>
++    <label>角丸 <input type="range" min="0" max="48"
++        data-path="shortcuts.radius" @input="${this.onNumber_}"></label>
++    <label>背景色 <input type="color" data-path="shortcuts.bgColor"
++        @input="${this.onColor_}"></label>
++    <label>背景の不透明度 <input type="range" min="0" max="100"
++        data-path="shortcuts.bgOpacity" @input="${this.onNumber_}"></label>
++    <label>ラベル表示 <input type="checkbox"
++        data-path="shortcuts.showLabel" @change="${this.onToggle_}"></label>
++    <label>ラベルの色 <input type="color"
++        data-path="shortcuts.labelColor" @input="${this.onColor_}"></label>
++    <label>ラベルのサイズ <input type="range" min="9" max="20"
++        data-path="shortcuts.labelSize" @input="${this.onNumber_}"></label>
++    <label>ファビコンサイズ <input type="range" min="16" max="64"
++        data-path="shortcuts.faviconSize" @input="${this.onNumber_}"></label>
++    <label>新しいタブで開く <input type="checkbox"
++        data-path="shortcuts.openInNewTab"
++        @change="${this.onToggle_}"></label>
++    <button @click="${this.onShortcutAdd_}">ショートカットを追加</button>
++    <!-- Items are edited inline on the new tab page itself
++         (title / URL fields and drag reorder live in patch 0052);
++         the panel edits the same shortcuts.items array. -->
++  </div>
++
++  <div class="lumo-card">
++    <div class="lumo-card-title">ウィジェット</div>
++    <!-- One row per widget (clock, calendar, bookmarks,
++         recently_closed, downloads, memo, todo, open_tabs,
++         lumo_info): a Material toggle bound through
++         onWidgetToggle_, a width slider through onWidgetWidth_,
++         and drag reorder through onListDrop_('widgets', ...).
++         Rows are generated from config.widgets in
++         lumo_ntp_section.ts order. -->
++  </div>
++
++  <div class="lumo-card">
++    <div class="lumo-card-title">レイアウト</div>
++    <label>縦位置
++      <select data-path="layout.verticalAlign" @change="${this.onText_}">
++        <option value="top">上寄せ</option>
++        <option value="center">中央</option>
++      </select>
++    </label>
++    <label>最大幅 <input type="range" min="480" max="1440"
++        data-path="layout.maxWidth" @input="${this.onNumber_}"></label>
++    <label>間隔 <input type="range" min="0" max="64"
++        data-path="layout.gap" @input="${this.onNumber_}"></label>
++    <label>密度
++      <select data-path="layout.density" @change="${this.onText_}">
++        <option value="relaxed">ゆったり</option>
++        <option value="standard">標準</option>
++        <option value="compact">コンパクト</option>
++      </select>
++    </label>
++    <label>文字サイズ倍率 <input type="range" min="80" max="150"
++        data-path="layout.fontScale" @input="${this.onNumber_}"></label>
++  </div>
++
++  <div class="lumo-card">
++    <div class="lumo-card-title">テーマ</div>
++    <label>モード
++      <select data-path="theme.mode" @change="${this.onText_}">
++        <option value="light">ライト</option>
++        <option value="dark">ダーク</option>
++        <option value="system">システム連動</option>
++      </select>
++    </label>
++    <label>アクセントカラー <input type="color"
++        data-path="theme.accent" @input="${this.onColor_}"></label>
++  </div>
++</div>`;
++}
+diff --git a/chrome/browser/resources/side_panel/customize_chrome/lumo_ntp_section.css b/chrome/browser/resources/side_panel/customize_chrome/lumo_ntp_section.css
+new file mode 100644
+index 0000000..0000000
+--- /dev/null
++++ b/chrome/browser/resources/side_panel/customize_chrome/lumo_ntp_section.css
+@@ -100,0 +100,38 @@
++/* Copyright 2026 The Lumo Authors
++ * Lumo NTP customization (patch 0051, task 38): flat card styling
++ * in the standard Customize Chrome idiom (surface roles, no
++ * gradients or glow). */
++
++.lumo-section {
++  display: flex;
++  flex-direction: column;
++  gap: 16px;
++  padding: 16px;
++}
++
++.lumo-card {
++  background: var(--color-side-panel-card-background, #fff);
++  border-radius: 16px;
++  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
++  display: flex;
++  flex-direction: column;
++  gap: 12px;
++  padding: 16px;
++}
++
++.lumo-card-title {
++  font-size: 14px;
++  font-weight: 500;
++}
++
++.lumo-card label {
++  align-items: center;
++  display: flex;
++  font-size: 12px;
++  justify-content: space-between;
++}
++
++.lumo-row {
++  display: flex;
++  gap: 8px;
++}
+diff --git a/chrome/browser/resources/side_panel/customize_chrome/lumo_ntp_presets.ts b/chrome/browser/resources/side_panel/customize_chrome/lumo_ntp_presets.ts
+new file mode 100644
+index 0000000..0000000
+--- /dev/null
++++ b/chrome/browser/resources/side_panel/customize_chrome/lumo_ntp_presets.ts
+@@ -100,0 +100,570 @@
++// Copyright 2026 The Lumo Authors
++// Lumo NTP customization (patch 0051, task 38): built-in
++// presets. Must stay shape-identical to the presets in
++// chrome/browser/lumo/lumo_ntp_config.h (checked by
++// test_build33_task38.py).
++
++export const LUMO_NTP_PRESETS: Record<string, unknown> = {
++  "default": {
++    "version": 1,
++    "background": {
++      "mode": "solid",
++      "color": "#ffffff",
++      "color2": "#00bcd4",
++      "gradientAngle": 135,
++      "pattern": "none",
++      "imageFit": "cover",
++      "imagePosition": "center",
++      "imageRepeat": false,
++      "darkness": 0,
++      "blur": 0,
++      "saturation": 100,
++      "overlayColor": "#000000",
++      "overlayOpacity": 0
++    },
++    "clock": {
++      "enabled": true,
++      "format24h": true,
++      "showSeconds": false,
++      "size": 64,
++      "weight": 300,
++      "showDate": true,
++      "dateFormat": "weekday-month-day",
++      "align": "center",
++      "color": "#202124",
++      "opacity": 100
++    },
++    "greeting": {
++      "enabled": true,
++      "useTimeOfDay": true,
++      "name": "",
++      "morning": "おはようございます",
++      "afternoon": "こんにちは",
++      "evening": "こんばんは"
++    },
++    "search": {
++      "enabled": true,
++      "engine": "default",
++      "width": 560,
++      "height": 48,
++      "radius": 24,
++      "bgOpacity": 90,
++      "blur": 0,
++      "placeholder": "検索、または URL を入力",
++      "align": "center"
++    },
++    "shortcuts": {
++      "columns": 5,
++      "rows": 2,
++      "tileSize": 96,
++      "gap": 16,
++      "radius": 16,
++      "bgColor": "#ffffff",
++      "bgOpacity": 70,
++      "showLabel": true,
++      "labelColor": "#202124",
++      "labelSize": 12,
++      "faviconSize": 32,
++      "openInNewTab": false,
++      "items": [
++        {
++          "title": "YouTube",
++          "url": "https://www.youtube.com/"
++        },
++        {
++          "title": "GitHub",
++          "url": "https://github.com/"
++        }
++      ]
++    },
++    "widgets": [
++      {
++        "id": "clock",
++        "enabled": false,
++        "order": 0,
++        "width": 320
++      },
++      {
++        "id": "calendar",
++        "enabled": true,
++        "order": 1,
++        "width": 320
++      },
++      {
++        "id": "bookmarks",
++        "enabled": false,
++        "order": 2,
++        "width": 320
++      },
++      {
++        "id": "recently_closed",
++        "enabled": false,
++        "order": 3,
++        "width": 320
++      },
++      {
++        "id": "downloads",
++        "enabled": false,
++        "order": 4,
++        "width": 320
++      },
++      {
++        "id": "memo",
++        "enabled": true,
++        "order": 5,
++        "width": 320
++      },
++      {
++        "id": "todo",
++        "enabled": true,
++        "order": 6,
++        "width": 320
++      },
++      {
++        "id": "open_tabs",
++        "enabled": false,
++        "order": 7,
++        "width": 320
++      },
++      {
++        "id": "lumo_info",
++        "enabled": true,
++        "order": 8,
++        "width": 320
++      }
++    ],
++    "layout": {
++      "verticalAlign": "center",
++      "maxWidth": 960,
++      "gap": 24,
++      "density": "standard",
++      "fontScale": 100
++    },
++    "theme": {
++      "mode": "system",
++      "accent": "#00acc1"
++    }
++  },
++  "minimal": {
++    "version": 1,
++    "background": {
++      "mode": "solid",
++      "color": "#f8f9fa",
++      "color2": "#00bcd4",
++      "gradientAngle": 135,
++      "pattern": "none",
++      "imageFit": "cover",
++      "imagePosition": "center",
++      "imageRepeat": false,
++      "darkness": 0,
++      "blur": 0,
++      "saturation": 100,
++      "overlayColor": "#000000",
++      "overlayOpacity": 0
++    },
++    "clock": {
++      "enabled": false,
++      "format24h": true,
++      "showSeconds": false,
++      "size": 48,
++      "weight": 300,
++      "showDate": false,
++      "dateFormat": "month-day",
++      "align": "center",
++      "color": "#202124",
++      "opacity": 100
++    },
++    "greeting": {
++      "enabled": false,
++      "useTimeOfDay": true,
++      "name": "",
++      "morning": "おはようございます",
++      "afternoon": "こんにちは",
++      "evening": "こんばんは"
++    },
++    "search": {
++      "enabled": true,
++      "engine": "default",
++      "width": 560,
++      "height": 48,
++      "radius": 24,
++      "bgOpacity": 90,
++      "blur": 0,
++      "placeholder": "検索、または URL を入力",
++      "align": "center"
++    },
++    "shortcuts": {
++      "columns": 5,
++      "rows": 2,
++      "tileSize": 96,
++      "gap": 16,
++      "radius": 16,
++      "bgColor": "#ffffff",
++      "bgOpacity": 70,
++      "showLabel": true,
++      "labelColor": "#202124",
++      "labelSize": 12,
++      "faviconSize": 32,
++      "openInNewTab": false,
++      "items": [
++        {
++          "title": "YouTube",
++          "url": "https://www.youtube.com/"
++        },
++        {
++          "title": "GitHub",
++          "url": "https://github.com/"
++        }
++      ]
++    },
++    "widgets": [
++      {
++        "id": "clock",
++        "enabled": false,
++        "order": 0,
++        "width": 320
++      },
++      {
++        "id": "calendar",
++        "enabled": false,
++        "order": 1,
++        "width": 320
++      },
++      {
++        "id": "bookmarks",
++        "enabled": false,
++        "order": 2,
++        "width": 320
++      },
++      {
++        "id": "recently_closed",
++        "enabled": false,
++        "order": 3,
++        "width": 320
++      },
++      {
++        "id": "downloads",
++        "enabled": false,
++        "order": 4,
++        "width": 320
++      },
++      {
++        "id": "memo",
++        "enabled": false,
++        "order": 5,
++        "width": 320
++      },
++      {
++        "id": "todo",
++        "enabled": false,
++        "order": 6,
++        "width": 320
++      },
++      {
++        "id": "open_tabs",
++        "enabled": false,
++        "order": 7,
++        "width": 320
++      },
++      {
++        "id": "lumo_info",
++        "enabled": false,
++        "order": 8,
++        "width": 320
++      }
++    ],
++    "layout": {
++      "verticalAlign": "center",
++      "maxWidth": 960,
++      "gap": 24,
++      "density": "standard",
++      "fontScale": 100
++    },
++    "theme": {
++      "mode": "system",
++      "accent": "#00acc1"
++    }
++  },
++  "focus": {
++    "version": 1,
++    "background": {
++      "mode": "gradient",
++      "color": "#102a43",
++      "color2": "#243b53",
++      "gradientAngle": 160,
++      "pattern": "none",
++      "imageFit": "cover",
++      "imagePosition": "center",
++      "imageRepeat": false,
++      "darkness": 0,
++      "blur": 0,
++      "saturation": 100,
++      "overlayColor": "#000000",
++      "overlayOpacity": 0
++    },
++    "clock": {
++      "enabled": true,
++      "format24h": true,
++      "showSeconds": false,
++      "size": 64,
++      "weight": 300,
++      "showDate": true,
++      "dateFormat": "weekday-month-day",
++      "align": "center",
++      "color": "#202124",
++      "opacity": 100
++    },
++    "greeting": {
++      "enabled": true,
++      "useTimeOfDay": true,
++      "name": "",
++      "morning": "おはようございます",
++      "afternoon": "こんにちは",
++      "evening": "こんばんは"
++    },
++    "search": {
++      "enabled": true,
++      "engine": "default",
++      "width": 560,
++      "height": 48,
++      "radius": 24,
++      "bgOpacity": 90,
++      "blur": 0,
++      "placeholder": "検索、または URL を入力",
++      "align": "center"
++    },
++    "shortcuts": {
++      "columns": 5,
++      "rows": 2,
++      "tileSize": 96,
++      "gap": 16,
++      "radius": 16,
++      "bgColor": "#ffffff",
++      "bgOpacity": 70,
++      "showLabel": true,
++      "labelColor": "#202124",
++      "labelSize": 12,
++      "faviconSize": 32,
++      "openInNewTab": false,
++      "items": [
++        {
++          "title": "YouTube",
++          "url": "https://www.youtube.com/"
++        },
++        {
++          "title": "GitHub",
++          "url": "https://github.com/"
++        }
++      ]
++    },
++    "widgets": [
++      {
++        "id": "clock",
++        "enabled": false,
++        "order": 0,
++        "width": 320
++      },
++      {
++        "id": "calendar",
++        "enabled": true,
++        "order": 1,
++        "width": 320
++      },
++      {
++        "id": "bookmarks",
++        "enabled": false,
++        "order": 2,
++        "width": 320
++      },
++      {
++        "id": "recently_closed",
++        "enabled": false,
++        "order": 3,
++        "width": 320
++      },
++      {
++        "id": "downloads",
++        "enabled": false,
++        "order": 4,
++        "width": 320
++      },
++      {
++        "id": "memo",
++        "enabled": true,
++        "order": 5,
++        "width": 320
++      },
++      {
++        "id": "todo",
++        "enabled": true,
++        "order": 6,
++        "width": 320
++      },
++      {
++        "id": "open_tabs",
++        "enabled": false,
++        "order": 7,
++        "width": 320
++      },
++      {
++        "id": "lumo_info",
++        "enabled": true,
++        "order": 8,
++        "width": 320
++      }
++    ],
++    "layout": {
++      "verticalAlign": "center",
++      "maxWidth": 720,
++      "gap": 32,
++      "density": "relaxed",
++      "fontScale": 110
++    },
++    "theme": {
++      "mode": "dark",
++      "accent": "#00acc1"
++    }
++  },
++  "colorful": {
++    "version": 1,
++    "background": {
++      "mode": "pattern",
++      "color": "#e3f2fd",
++      "color2": "#00bcd4",
++      "gradientAngle": 135,
++      "pattern": "dots",
++      "imageFit": "cover",
++      "imagePosition": "center",
++      "imageRepeat": false,
++      "darkness": 0,
++      "blur": 0,
++      "saturation": 110,
++      "overlayColor": "#ffffff",
++      "overlayOpacity": 10
++    },
++    "clock": {
++      "enabled": true,
++      "format24h": true,
++      "showSeconds": false,
++      "size": 64,
++      "weight": 300,
++      "showDate": true,
++      "dateFormat": "weekday-month-day",
++      "align": "center",
++      "color": "#202124",
++      "opacity": 100
++    },
++    "greeting": {
++      "enabled": true,
++      "useTimeOfDay": true,
++      "name": "",
++      "morning": "おはようございます",
++      "afternoon": "こんにちは",
++      "evening": "こんばんは"
++    },
++    "search": {
++      "enabled": true,
++      "engine": "default",
++      "width": 560,
++      "height": 48,
++      "radius": 24,
++      "bgOpacity": 90,
++      "blur": 0,
++      "placeholder": "検索、または URL を入力",
++      "align": "center"
++    },
++    "shortcuts": {
++      "columns": 5,
++      "rows": 2,
++      "tileSize": 96,
++      "gap": 16,
++      "radius": 16,
++      "bgColor": "#ffffff",
++      "bgOpacity": 70,
++      "showLabel": true,
++      "labelColor": "#202124",
++      "labelSize": 12,
++      "faviconSize": 32,
++      "openInNewTab": false,
++      "items": [
++        {
++          "title": "YouTube",
++          "url": "https://www.youtube.com/"
++        },
++        {
++          "title": "GitHub",
++          "url": "https://github.com/"
++        }
++      ]
++    },
++    "widgets": [
++      {
++        "id": "clock",
++        "enabled": false,
++        "order": 0,
++        "width": 320
++      },
++      {
++        "id": "calendar",
++        "enabled": true,
++        "order": 1,
++        "width": 320
++      },
++      {
++        "id": "bookmarks",
++        "enabled": false,
++        "order": 2,
++        "width": 320
++      },
++      {
++        "id": "recently_closed",
++        "enabled": false,
++        "order": 3,
++        "width": 320
++      },
++      {
++        "id": "downloads",
++        "enabled": false,
++        "order": 4,
++        "width": 320
++      },
++      {
++        "id": "memo",
++        "enabled": true,
++        "order": 5,
++        "width": 320
++      },
++      {
++        "id": "todo",
++        "enabled": true,
++        "order": 6,
++        "width": 320
++      },
++      {
++        "id": "open_tabs",
++        "enabled": false,
++        "order": 7,
++        "width": 320
++      },
++      {
++        "id": "lumo_info",
++        "enabled": true,
++        "order": 8,
++        "width": 320
++      }
++    ],
++    "layout": {
++      "verticalAlign": "center",
++      "maxWidth": 960,
++      "gap": 24,
++      "density": "standard",
++      "fontScale": 100
++    },
++    "theme": {
++      "mode": "light",
++      "accent": "#fb8c00"
++    }
++  }
++};
++
++(window as unknown as {LUMO_NTP_PRESETS: unknown}).LUMO_NTP_PRESETS = LUMO_NTP_PRESETS;
+diff --git a/chrome/browser/resources/side_panel/customize_chrome/BUILD.gn b/chrome/browser/resources/side_panel/customize_chrome/BUILD.gn
+index 0000000..0000000 100644
+@@ -100,2 +100,6 @@
+     "hover_button.ts",
++    "lumo_ntp_presets.ts",
++    "lumo_ntp_section.css",
++    "lumo_ntp_section.html.ts",
++    "lumo_ntp_section.ts",
+     "shortcuts.html.ts",
+diff --git a/chrome/browser/resources/side_panel/customize_chrome/app.ts b/chrome/browser/resources/side_panel/customize_chrome/app.ts
+index 0000000..0000000 100644
+@@ -100,2 +100,3 @@
+ import './appearance.js';
++import './lumo_ntp_section.js';
+ import './cards.js';
+diff --git a/chrome/browser/resources/side_panel/customize_chrome/app.html.ts b/chrome/browser/resources/side_panel/customize_chrome/app.html.ts
+index 0000000..0000000 100644
+@@ -100,3 +100,5 @@
+     `: ''}
++    <hr class="sp-cards-separator">
++    <lumo-ntp-section></lumo-ntp-section>
+   </div>
+   ${(this.showEditTheme_) ? html`

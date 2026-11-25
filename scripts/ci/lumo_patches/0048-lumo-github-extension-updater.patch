@@ -1,0 +1,1352 @@
+diff --git a/chrome/app/generated_resources.grd b/chrome/app/generated_resources.grd
+index 977eb64..a48b001
+--- a/chrome/app/generated_resources.grd
++++ b/chrome/app/generated_resources.grd
+@@ -100,4 +100,25 @@
+     <message name="IDS_LUMO_SIDEBAR_EXPAND" desc="Tooltip of the button that expands the collapsed Lumo sidebar icon bar.">
+       サイドバーを展開する
+     </message>
++    <message name="IDS_EXTENSIONS_LUMO_GITHUB_ADD_BUTTON" desc="Toolbar button on chrome://extensions, shown only in developer mode, that adds an extension which auto-updates from a GitHub repository.">
++      GitHub から自動更新する拡張を追加する
++    </message>
++    <message name="IDS_EXTENSIONS_LUMO_GITHUB_DIALOG_TITLE" desc="Title of the dialog that adds an auto-updating extension from a GitHub repository.">
++      GitHub から拡張を追加
++    </message>
++    <message name="IDS_EXTENSIONS_LUMO_GITHUB_DETAIL_TITLE" desc="Heading of the GitHub auto-update section on an extension's detail page on chrome://extensions.">
++      GitHub 自動更新 (Lumo)
++    </message>
++    <message name="IDS_LUMO_GITHUB_NOTIFY_UPDATED_TITLE" desc="Title of the notification shown when a GitHub-managed extension was auto-updated.">
++      拡張機能を更新しました
++    </message>
++    <message name="IDS_LUMO_GITHUB_NOTIFY_UPDATED_BODY" desc="Body of the notification shown when a GitHub-managed extension was auto-updated.">
++      <ph name="EXTENSION_NAME">$1<ex>GitHub 日本語化</ex></ph> を GitHub の Release <ph name="TAG">$2<ex>v1.2.3</ex></ph> に更新しました。
++    </message>
++    <message name="IDS_LUMO_GITHUB_NOTIFY_FAILED_TITLE" desc="Title of the notification shown when a GitHub-managed extension could not be updated.">
++      拡張機能を更新できませんでした
++    </message>
++    <message name="IDS_LUMO_GITHUB_NOTIFY_FAILED_BODY" desc="Body of the notification shown when a GitHub-managed extension failed verification or installation; the installed version is left untouched.">
++      <ph name="EXTENSION_NAME">$1<ex>GitHub 日本語化</ex></ph> の更新を確認できませんでした（<ph name="DETAIL">$2<ex>not newer</ex></ph>）。現在のバージョンのままにしています。
++    </message>
+     <message name="IDS_LUMO_LAUNCH_THORIUM_PROFILE" desc="App menu item that launches Lumo with the original Thorium user profile data directory.">
+diff --git a/chrome/common/pref_names.h b/chrome/common/pref_names.h
+index df42bff..a48b002
+--- a/chrome/common/pref_names.h
++++ b/chrome/common/pref_names.h
+@@ -100,5 +100,12 @@
+ // The pref name is "default_apps" for backwards compatibility. This pref used
+ // to control both apps and extensions, and before that just apps.
+ inline constexpr char kPreinstalledExtensions[] = "default_apps";
+ 
++// Lumo GitHub extension updater (patch 0048, task 36): extensions
++// the user added from a GitHub repository and keeps updated from
++// its releases. A dictionary keyed by extension ID; each entry
++// holds "repo" ("owner/repo"), "tag", "version", "asset",
++// "interval_hours" and "last_check_unix".
++inline constexpr char kLumoGithubExtensions[] =
++    "lumo.github_extensions";
+ // Lumo sidebar (patches 0037/0038): the URL currently shown in the
+diff --git a/chrome/browser/ui/browser_ui_prefs.cc b/chrome/browser/ui/browser_ui_prefs.cc
+index 00057bf..a48b003
+--- a/chrome/browser/ui/browser_ui_prefs.cc
++++ b/chrome/browser/ui/browser_ui_prefs.cc
+@@ -100,1 +100,3 @@
++  // Lumo GitHub extension updater (patch 0048, task 36).
++  registry->RegisterDictionaryPref(prefs::kLumoGithubExtensions);
+   registry->RegisterBooleanPref(prefs::kWebAppCreateOnDesktop, true);
+diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
+index a90742b..a48b004
+--- a/chrome/browser/BUILD.gn
++++ b/chrome/browser/BUILD.gn
+@@ -100,7 +100,9 @@
+     "lumo/lumo_debugger_reporter.cc",
+     "lumo/lumo_debugger_reporter.h",
+     "lumo/lumo_launch_notify.cc",
+     "lumo/lumo_launch_notify.h",
+     "lumo/lumo_ui_font.cc",
+     "lumo/lumo_ui_font.h",
++    "lumo/lumo_github_extension_updater.cc",
++    "lumo/lumo_github_extension_updater.h",
+     "lumo/lumo_upgrade_welcome.cc",
+@@ -147,2 +149,4 @@
+     "//services/network/public/cpp",
++    "//components/crx_file",
++    "//third_party/zlib/google:zip",
+     "//ui/base:ozone_buildflags",
+diff --git a/chrome/browser/chrome_browser_main.cc b/chrome/browser/chrome_browser_main.cc
+index e80b61c..a48b005
+--- a/chrome/browser/chrome_browser_main.cc
++++ b/chrome/browser/chrome_browser_main.cc
+@@ -100,2 +100,3 @@
+ #include "chrome/browser/lumo/lumo_debugger_reporter.h"
++#include "chrome/browser/lumo/lumo_github_extension_updater.h"
+ #include "chrome/browser/media/router/chrome_media_router_factory.h"
+@@ -142,8 +143,13 @@
+   lumo::debugger::StartSession();
+ 
+   // Lumo (patch 0046): one launch notification ping per launch
+   // (task 41). Fire-and-forget on a background thread; no-op
+   // unless this build carries a distribution id and signing key.
+   lumo::NotifyLaunchOnStartup();
++
++  // Lumo (patch 0048, task 36): create the GitHub extension
++  // updater for every loaded profile so its startup check runs.
++  // No-op for profiles with no registered repositories.
++  lumo::github_updater::StartForLoadedProfiles();
+ 
+   browser_process_->browser_policy_connector()->OnBrowserStarted();
+diff --git a/chrome/browser/lumo/lumo_github_extension_updater.h b/chrome/browser/lumo/lumo_github_extension_updater.h
+new file mode 100644
+index 0000000..a48b006
+--- /dev/null
++++ b/chrome/browser/lumo/lumo_github_extension_updater.h
+@@ -100,0 +100,196 @@
++// Copyright 2026 seasea1010
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_LUMO_LUMO_GITHUB_EXTENSION_UPDATER_H_
++#define CHROME_BROWSER_LUMO_LUMO_GITHUB_EXTENSION_UPDATER_H_
++
++#include <map>
++#include <optional>
++#include <string>
++#include <string_view>
++#include <utility>
++#include <vector>
++
++#include "base/functional/callback.h"
++#include "base/memory/raw_ptr.h"
++#include "base/memory/scoped_refptr.h"
++#include "base/memory/weak_ptr.h"
++#include "base/timer/timer.h"
++#include "base/values.h"
++#include "components/keyed_service/core/keyed_service.h"
++#include "extensions/browser/extension_registry_observer.h"
++
++class Profile;
++
++namespace extensions {
++class ExtensionRegistry;
++}  // namespace extensions
++
++namespace lumo::github_updater {
++
++// One asset of a GitHub release that can be installed (a .crx file).
++struct ReleaseAsset {
++  std::string name;
++  std::string download_url;
++};
++
++// The subset of a GitHub "latest release" response the updater
++// needs: the tag and every .crx asset attached to the release.
++struct ReleaseInfo {
++  std::string tag;
++  std::vector<ReleaseAsset> crx_assets;
++};
++
++// Parses what the user typed into the add dialog: either a full
++// GitHub URL ("https://github.com/owner/repo", with an optional
++// trailing "/" or ".git") or the bare "owner/repo" form. Returns
++// the (owner, repo) pair, or nullopt for anything else. Only the
++// two name components are ever used to build the API URL, so a
++// hostile string cannot redirect the request away from
++// api.github.com.
++std::optional<std::pair<std::string, std::string>> ParseRepoInput(
++    std::string_view input);
++
++// Update-check intervals, in hours. 0 means "only at startup".
++inline constexpr int kIntervalStartupOnly = 0;
++inline constexpr int kIntervalDefaultHours = 24;
++
++// Whether a periodic check is due for an entry: never for the
++// startup-only interval, otherwise when at least |interval_hours|
++// have elapsed since |last_check_unix| (seconds since the epoch).
++bool IsCheckDue(int interval_hours, double last_check_unix, double now_unix);
++
++// Whether |candidate| is a usable, strictly newer version than the
++// currently installed |current| (an empty |current| means the
++// extension is not installed yet, so any valid candidate applies).
++bool IsNewerVersion(std::string_view candidate, std::string_view current);
++
++// Derives the extension ID a CRX3 package claims: the ID is a
++// function of the signing public key in the CRX3 header (see
++// extensions::id_util::GenerateId), so comparing the derived ID
++// against the registered one proves the downloaded package was
++// signed with the same key as the installed extension. Returns
++// nullopt when the bytes are not a CRX3 package with an RSA proof.
++std::optional<std::string> DeriveExtensionIdFromCrx(
++    std::string_view crx_bytes);
++
++// Per-profile service behind Lumo patch 0048 (task 36): tracks the
++// extensions the user added from GitHub releases, checks for new
++// releases at startup and on each entry's interval, verifies every
++// downloaded CRX before applying it (signature key / extension ID
++// match, strictly newer version, parseable manifest), and installs
++// it through the normal CrxInstaller path, which re-verifies the
++// CRX3 signature cryptographically. Nothing is ever fetched or
++// installed for a repository the user did not explicitly enter.
++//
++// Registrations live in the profile pref |prefs::kLumoGithubExtensions|:
++// a dictionary keyed by extension ID with "repo" ("owner/repo"),
++// "tag", "version", "asset", "interval_hours" and "last_check_unix"
++// entries.
++class LumoGithubExtensionUpdater : public KeyedService,
++                                   public extensions::ExtensionRegistryObserver {
++ public:
++  using FetchCallback =
++      base::OnceCallback<void(std::optional<ReleaseInfo> release,
++                              std::string error)>;
++  using AddCallback =
++      base::OnceCallback<void(bool success, std::string id_or_error)>;
++
++  explicit LumoGithubExtensionUpdater(Profile* profile);
++  LumoGithubExtensionUpdater(const LumoGithubExtensionUpdater&) = delete;
++  LumoGithubExtensionUpdater& operator=(const LumoGithubExtensionUpdater&) =
++      delete;
++  ~LumoGithubExtensionUpdater() override;
++
++  // Fetches the latest release of |repo_input| ("owner/repo" or a
++  // github.com URL) and reports its tag and .crx assets. Used by
++  // the add dialog before anything is downloaded or installed.
++  void FetchLatestRelease(std::string repo_input, FetchCallback callback);
++
++  // Downloads the named .crx asset of the latest release, verifies
++  // it, installs it, and on success records the registration in the
++  // pref with the chosen check interval.
++  void AddExtension(std::string repo_input,
++                    std::string asset_name,
++                    int interval_hours,
++                    AddCallback callback);
++
++  // Changes one registered extension's check interval (from the
++  // extension's detail page on chrome://extensions).
++  void SetUpdateInterval(const std::string& extension_id, int interval_hours);
++
++  // Whether |extension_id| was added through this updater (drives
++  // the " (Github)" suffix and the detail-page section).
++  bool IsGithubManaged(const std::string& extension_id) const;
++
++  // The registration fields the extensions WebUI shows on the
++  // detail page ("repo", "tag", "interval_hours"); empty when the
++  // extension is not GitHub-managed.
++  base::DictValue GetWebUiInfo(const std::string& extension_id) const;
++
++  // Checks every registered extension now. |startup| checks also
++  // run for startup-only entries and ignore the per-entry interval.
++  void CheckForUpdates(bool startup);
++
++  // KeyedService:
++  void Shutdown() override;
++
++ private:
++  struct PendingInstall;
++
++  void OnReleaseForAdd(std::string repo,
++                       std::string asset_name,
++                       int interval_hours,
++                       AddCallback callback,
++                       std::optional<ReleaseInfo> release,
++                       std::string error);
++  void OnReleaseForUpdate(std::string extension_id,
++                          std::optional<ReleaseInfo> release,
++                          std::string error);
++  void DownloadCrx(
++      std::string download_url,
++      base::OnceCallback<void(std::optional<std::string> crx_bytes,
++                              std::string error)> callback);
++  void VerifyAndInstall(scoped_refptr<PendingInstall> pending,
++                        std::optional<std::string> crx_bytes,
++                        std::string error);
++  void FinishInstall(const std::string& extension_id, bool success);
++  void SaveEntry(const std::string& extension_id,
++                 const std::string& repo,
++                 const std::string& tag,
++                 const std::string& version,
++                 const std::string& asset,
++                 int interval_hours);
++  void NotifyUser(const std::string& extension_id,
++                  bool updated,
++                  const std::string& detail);
++
++  // extensions::ExtensionRegistryObserver:
++  void OnExtensionInstalled(content::BrowserContext* browser_context,
++                            const extensions::Extension* extension,
++                            bool is_update) override;
++  void OnExtensionUninstalled(content::BrowserContext* browser_context,
++                               const extensions::Extension* extension,
++                               extensions::UninstallReason reason) override;
++
++  raw_ptr<Profile> profile_;
++  std::map<std::string, scoped_refptr<PendingInstall>> pending_installs_;
++  base::RepeatingTimer check_timer_;
++  base::ScopedObservation<extensions::ExtensionRegistry,
++                          extensions::ExtensionRegistryObserver>
++      registry_observation_{this};
++  base::WeakPtrFactory<LumoGithubExtensionUpdater> weak_factory_{this};
++};
++
++// Returns the profile's updater, creating it on first use.
++LumoGithubExtensionUpdater* GetForProfile(Profile* profile);
++
++// Creates the updater for every loaded, non-incognito profile.
++// Called once from ChromeBrowserMainParts::PostBrowserStart (patch
++// 0048); the WebUI reaches the same instances through the factory.
++void StartForLoadedProfiles();
++
++}  // namespace lumo::github_updater
++
++#endif  // CHROME_BROWSER_LUMO_LUMO_GITHUB_EXTENSION_UPDATER_H_
+diff --git a/chrome/browser/lumo/lumo_github_extension_updater.cc b/chrome/browser/lumo/lumo_github_extension_updater.cc
+new file mode 100644
+index 0000000..a48b007
+--- /dev/null
++++ b/chrome/browser/lumo/lumo_github_extension_updater.cc
+@@ -100,0 +100,805 @@
++// Copyright 2026 seasea1010
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/lumo/lumo_github_extension_updater.h"
++
++#include <cstdint>
++#include <memory>
++#include <string>
++#include <utility>
++#include <vector>
++
++#include "base/files/file_path.h"
++#include "base/files/file_util.h"
++#include "base/files/scoped_temp_dir.h"
++#include "base/functional/bind.h"
++#include "base/json/json_reader.h"
++#include "base/json/json_writer.h"
++#include "base/logging.h"
++#include "base/no_destructor.h"
++#include "base/strings/string_number_conversions.h"
++#include "base/strings/string_split.h"
++#include "base/strings/string_util.h"
++#include "base/task/sequenced_task_runner.h"
++#include "base/task/thread_pool.h"
++#include "base/time/time.h"
++#include "base/version.h"
++#include "chrome/browser/browser_process.h"
++#include "chrome/browser/extensions/crx_installer.h"
++#include "chrome/browser/net/system_network_context_manager.h"
++#include "chrome/browser/notifications/notification_display_service.h"
++#include "chrome/browser/notifications/notification_display_service_factory.h"
++#include "chrome/browser/notifications/notification_handler.h"
++#include "chrome/browser/profiles/profile_selections.h"
++#include "chrome/grit/generated_resources.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/profiles/profile_manager.h"
++#include "chrome/common/pref_names.h"
++#include "components/crx_file/crx3.pb.h"
++#include "components/keyed_service/content/browser_context_dependency_manager.h"
++#include "components/keyed_service/core/keyed_service_factory.h"
++#include "components/prefs/pref_service.h"
++#include "content/public/browser/browser_context.h"
++#include "extensions/browser/extension_registry.h"
++#include "extensions/common/extension.h"
++#include "extensions/browser/extension_system.h"
++#include "extensions/browser/install/crx_file_info.h"
++#include "extensions/common/id_util.h"
++#include "net/base/load_flags.h"
++#include "net/http/http_request_headers.h"
++#include "net/traffic_annotation/network_traffic_annotation.h"
++#include "services/network/public/cpp/resource_request.h"
++#include "services/network/public/cpp/simple_url_loader.h"
++#include "third_party/zlib/google/zip.h"
++#include "ui/base/l10n/l10n_util.h"
++#include "ui/message_center/public/cpp/notification.h"
++#include "ui/message_center/public/cpp/notification_delegate.h"
++#include "ui/message_center/public/cpp/notifier_id.h"
++
++namespace lumo::github_updater {
++
++namespace {
++
++// GitHub's API caps unauthenticated requests at 60/hour per IP; the
++// largest plausible extension CRX is far below this download cap.
++constexpr int64_t kMaxCrxDownloadBytes = 64 * 1024 * 1024;
++constexpr char kGithubApiBase[] = "https://api.github.com/repos/";
++constexpr char kNotifierId[] = "lumo_github_extension_updater";
++
++bool IsValidRepoComponent(std::string_view part) {
++  if (part.empty() || part.size() > 100 || part == "." || part == "..") {
++    return false;
++  }
++  for (char c : part) {
++    if (!base::IsAsciiAlphaNumeric(c) && c != '-' && c != '_' && c != '.') {
++      return false;
++    }
++  }
++  return true;
++}
++
++network::mojom::URLLoaderFactory* GetLoaderFactory() {
++  if (!g_browser_process) {
++    return nullptr;
++  }
++  auto* manager = g_browser_process->system_network_context_manager();
++  return manager ? manager->GetURLLoaderFactory() : nullptr;
++}
++
++void GetJson(
++    const GURL& url,
++    base::OnceCallback<void(std::optional<std::string> body)> callback) {
++  auto* factory = GetLoaderFactory();
++  if (!factory) {
++    std::move(callback).Run(std::nullopt);
++    return;
++  }
++  auto request = std::make_unique<network::ResourceRequest>();
++  request->url = url;
++  request->method = "GET";
++  request->load_flags = net::LOAD_BYPASS_CACHE | net::LOAD_DISABLE_CACHE;
++  request->credentials_mode = network::mojom::CredentialsMode::kOmit;
++  request->headers.SetHeader(net::HttpRequestHeaders::kAccept,
++                             "application/vnd.github+json");
++  request->headers.SetHeader(net::HttpRequestHeaders::kUserAgent,
++                             "Lumo-Browser");
++  static constexpr net::NetworkTrafficAnnotationTag kAnnotation =
++      net::DefineNetworkTrafficAnnotation("lumo_github_extension_update", R"(
++        semantics {
++          sender: "Lumo GitHub Extension Updater"
++          description:
++            "Fetches the latest GitHub release (metadata, then the "
++            ".crx asset) of a repository the user explicitly "
++            "registered on chrome://extensions, to install or "
++            "update that extension. No repository is contacted "
++            "unless the user added it."
++          trigger:
++            "Browser startup and a per-extension interval for "
++            "registered repositories, and when the user adds a new "
++            "repository in the chrome://extensions dialog."
++          data:
++            "The repository owner/name in the API URL. No "
++            "credentials, cookies, or profile data."
++          destination: WEBSITE
++        }
++        policy {
++          cookies_allowed: NO
++          setting:
++            "Only repositories the user added on "
++            "chrome://extensions are ever queried."
++          policy_exception_justification:
++            "User-registered extension update source for the "
++            "browser owner's own extensions."
++        })");
++  auto loader =
++      network::SimpleURLLoader::Create(std::move(request), kAnnotation);
++  loader->SetTimeoutDuration(base::Seconds(30));
++  network::SimpleURLLoader* loader_ptr = loader.get();
++  loader_ptr->DownloadToString(
++      factory,
++      base::BindOnce(
++          [](std::unique_ptr<network::SimpleURLLoader> owned_loader,
++             base::OnceCallback<void(std::optional<std::string> body)>
++                 callback,
++             std::optional<std::string> body) {
++            if (owned_loader->NetError() != net::OK) {
++              body = std::nullopt;
++            }
++            std::move(callback).Run(std::move(body));
++          },
++          std::move(loader), std::move(callback)),
++      kMaxCrxDownloadBytes);
++}
++
++// Parses a GitHub "latest release" JSON body into the tag and the
++// .crx assets. Returns nullopt on any shape mismatch.
++std::optional<ReleaseInfo> ParseReleaseJson(const std::string& body) {
++  std::optional<base::Value> parsed =
++      base::JSONReader::Read(body, base::JSON_PARSE_RFC);
++  if (!parsed || !parsed->is_dict()) {
++    return std::nullopt;
++  }
++  const base::DictValue& dict = parsed->GetDict();
++  const std::string* tag = dict.FindString("tag_name");
++  const base::ListValue* assets = dict.FindList("assets");
++  if (!tag || tag->empty() || !assets) {
++    return std::nullopt;
++  }
++  ReleaseInfo info;
++  info.tag = *tag;
++  for (const base::Value& item : *assets) {
++    if (!item.is_dict()) {
++      continue;
++    }
++    const std::string* name = item.GetDict().FindString("name");
++    const std::string* url =
++        item.GetDict().FindString("browser_download_url");
++    if (name && url && base::EndsWith(*name, ".crx",
++                                      base::CompareCase::INSENSITIVE_ASCII)) {
++      info.crx_assets.push_back({*name, *url});
++    }
++  }
++  return info;
++}
++
++// Result of the pre-apply verification (task 36 requirement (b)),
++// computed off the UI thread because it touches the file system.
++struct CrxVerification {
++  std::string extension_id;
++  std::string version;
++  std::string error;
++  // Where the verified bytes were stored for CrxInstaller (under
++  // the profile's "Lumo GitHub Extensions" directory).
++  base::FilePath crx_path;
++};
++
++CrxVerification VerifyCrxBytes(std::string crx_bytes,
++                               base::FilePath profile_path) {
++  CrxVerification result;
++  std::optional<std::string> id = DeriveExtensionIdFromCrx(crx_bytes);
++  if (!id) {
++    result.error = "not a CRX3 package signed with an RSA key";
++    return result;
++  }
++  result.extension_id = *id;
++  // The manifest lives in the zip payload after the CRX header.
++  if (crx_bytes.size() < 12) {
++    result.error = "truncated CRX";
++    return result;
++  }
++  uint32_t header_len = static_cast<uint8_t>(crx_bytes[8]) |
++                        (static_cast<uint8_t>(crx_bytes[9]) << 8) |
++                        (static_cast<uint8_t>(crx_bytes[10]) << 16) |
++                        (static_cast<uint8_t>(crx_bytes[11]) << 24);
++  const size_t zip_offset = 12 + static_cast<size_t>(header_len);
++  if (zip_offset >= crx_bytes.size()) {
++    result.error = "truncated CRX header";
++    return result;
++  }
++  base::ScopedTempDir temp_dir;
++  if (!temp_dir.CreateUniqueTempDir()) {
++    result.error = "could not create a temp directory";
++    return result;
++  }
++  const base::FilePath zip_path = temp_dir.GetPath().AppendASCII("pkg.zip");
++  const base::FilePath out_dir = temp_dir.GetPath().AppendASCII("out");
++  if (!base::WriteFile(zip_path,
++                       std::string_view(crx_bytes).substr(zip_offset)) ||
++      !base::CreateDirectory(out_dir) || !zip::Unzip(zip_path, out_dir)) {
++    result.error = "CRX payload is not a readable zip";
++    return result;
++  }
++  std::string manifest_json;
++  if (!base::ReadFileToString(out_dir.AppendASCII("manifest.json"),
++                              &manifest_json)) {
++    result.error = "CRX payload has no manifest.json";
++    return result;
++  }
++  std::optional<base::Value> manifest =
++      base::JSONReader::Read(manifest_json, base::JSON_PARSE_RFC);
++  if (!manifest || !manifest->is_dict() ||
++      !manifest->GetDict().FindString("name")) {
++    result.error = "manifest.json is not a valid extension manifest";
++    return result;
++  }
++  const std::string* version = manifest->GetDict().FindString("version");
++  if (!version || !base::Version(*version).IsValid()) {
++    result.error = "manifest.json has no valid version";
++    return result;
++  }
++  result.version = *version;
++  // Persist the verified bytes where CrxInstaller can read them
++  // asynchronously (the same reason patch 0026 keeps the uBlock
++  // Origin source in the profile). One file per extension ID,
++  // overwritten by the next verified update.
++  const base::FilePath dir =
++      profile_path.AppendASCII("Lumo GitHub Extensions");
++  const base::FilePath path = dir.AppendASCII(result.extension_id + ".crx");
++  if (!base::CreateDirectory(dir) || !base::WriteFile(path, crx_bytes)) {
++    result.error = "could not store the verified CRX in the profile";
++    result.crx_path.clear();
++    return result;
++  }
++  result.crx_path = path;
++  return result;
++}
++
++class UpdaterFactory : public ProfileKeyedServiceFactory {
++ public:
++  static LumoGithubExtensionUpdater* GetForProfile(Profile* profile) {
++    return static_cast<LumoGithubExtensionUpdater*>(
++        GetInstance()->GetServiceForBrowserContext(profile, /*create=*/true));
++  }
++  static UpdaterFactory* GetInstance() {
++    static base::NoDestructor<UpdaterFactory> instance;
++    return instance.get();
++  }
++
++ private:
++  UpdaterFactory()
++      : ProfileKeyedServiceFactory(
++            "LumoGithubExtensionUpdater",
++            ProfileSelections::Builder()
++                .WithRegular(ProfileSelection::kOriginalOnly)
++                .Build()) {}
++  std::unique_ptr<KeyedService> BuildServiceInstanceFor(
++      content::BrowserContext* context) const override {
++    return std::make_unique<LumoGithubExtensionUpdater>(
++        Profile::FromBrowserContext(context));
++  }
++};
++
++}  // namespace
++
++std::optional<std::pair<std::string, std::string>> ParseRepoInput(
++    std::string_view input) {
++  std::string text(base::TrimWhitespaceASCII(input, base::TRIM_ALL));
++  constexpr std::string_view kPrefix = "https://github.com/";
++  constexpr std::string_view kPrefixHttp = "http://github.com/";
++  if (base::StartsWith(text, kPrefix)) {
++    text = text.substr(kPrefix.size());
++  } else if (base::StartsWith(text, kPrefixHttp)) {
++    text = text.substr(kPrefixHttp.size());
++  } else if (text.find("://") != std::string::npos ||
++             text.find('@') != std::string::npos) {
++    return std::nullopt;
++  }
++  base::TrimString(text, "/", &text);
++  if (base::EndsWith(text, ".git")) {
++    text = text.substr(0, text.size() - 4);
++  }
++  std::vector<std::string> parts = base::SplitString(
++      text, "/", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
++  if (parts.size() != 2 || !IsValidRepoComponent(parts[0]) ||
++      !IsValidRepoComponent(parts[1])) {
++    return std::nullopt;
++  }
++  return std::make_pair(parts[0], parts[1]);
++}
++
++bool IsCheckDue(int interval_hours, double last_check_unix, double now_unix) {
++  if (interval_hours <= 0) {
++    return false;
++  }
++  return now_unix - last_check_unix >= interval_hours * 3600.0;
++}
++
++bool IsNewerVersion(std::string_view candidate, std::string_view current) {
++  base::Version candidate_version(candidate);
++  if (!candidate_version.IsValid()) {
++    return false;
++  }
++  if (current.empty()) {
++    return true;
++  }
++  base::Version current_version(current);
++  return current_version.IsValid() &&
++         candidate_version.CompareTo(current_version) > 0;
++}
++
++std::optional<std::string> DeriveExtensionIdFromCrx(
++    std::string_view crx_bytes) {
++  // CRX3 layout: "Cr24" magic, uint32 format version (3), uint32
++  // header length, then the CrxFileHeader protobuf whose first RSA
++  // proof carries the signing public key (SPKI DER).
++  if (crx_bytes.size() < 12 || crx_bytes.substr(0, 4) != "Cr24") {
++    return std::nullopt;
++  }
++  auto read_u32 = [&crx_bytes](size_t offset) {
++    return static_cast<uint32_t>(static_cast<uint8_t>(crx_bytes[offset])) |
++           (static_cast<uint32_t>(static_cast<uint8_t>(crx_bytes[offset + 1]))
++            << 8) |
++           (static_cast<uint32_t>(static_cast<uint8_t>(crx_bytes[offset + 2]))
++            << 16) |
++           (static_cast<uint32_t>(static_cast<uint8_t>(crx_bytes[offset + 3]))
++            << 24);
++  };
++  if (read_u32(4) != 3) {
++    return std::nullopt;
++  }
++  const uint32_t header_len = read_u32(8);
++  if (12 + static_cast<size_t>(header_len) > crx_bytes.size()) {
++    return std::nullopt;
++  }
++  crx_file::CrxFileHeader header;
++  if (!header.ParseFromArray(crx_bytes.data() + 12, header_len) ||
++      header.sha256_with_rsa_size() == 0 ||
++      header.sha256_with_rsa(0).public_key().empty()) {
++    return std::nullopt;
++  }
++  return extensions::id_util::GenerateId(
++      header.sha256_with_rsa(0).public_key());
++}
++
++struct LumoGithubExtensionUpdater::PendingInstall
++    : public base::RefCounted<PendingInstall> {
++  std::string extension_id;
++  std::string repo;
++  std::string tag;
++  std::string asset;
++  int interval_hours = kIntervalDefaultHours;
++  bool is_update = false;
++  AddCallback add_callback;
++};
++
++LumoGithubExtensionUpdater::LumoGithubExtensionUpdater(Profile* profile)
++    : profile_(profile) {
++  if (auto* registry = extensions::ExtensionRegistry::Get(profile_)) {
++    registry_observation_.Observe(registry);
++  }
++  check_timer_.Start(FROM_HERE, base::Hours(1),
++                     base::BindRepeating(
++                         &LumoGithubExtensionUpdater::CheckForUpdates,
++                         weak_factory_.GetWeakPtr(), /*startup=*/false));
++  // Startup check, delayed so the network stack and the extension
++  // service are up; startup checks ignore the per-entry interval.
++  base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
++      FROM_HERE,
++      base::BindOnce(&LumoGithubExtensionUpdater::CheckForUpdates,
++                     weak_factory_.GetWeakPtr(), /*startup=*/true),
++      base::Seconds(20));
++}
++
++LumoGithubExtensionUpdater::~LumoGithubExtensionUpdater() = default;
++
++void LumoGithubExtensionUpdater::Shutdown() {
++  check_timer_.Stop();
++  pending_installs_.clear();
++}
++
++void LumoGithubExtensionUpdater::FetchLatestRelease(
++    std::string repo_input,
++    FetchCallback callback) {
++  auto parsed = ParseRepoInput(repo_input);
++  if (!parsed) {
++    std::move(callback).Run(std::nullopt, "invalid repository");
++    return;
++  }
++  const GURL url(kGithubApiBase + parsed->first + "/" + parsed->second +
++                 "/releases/latest");
++  GetJson(url, base::BindOnce(
++                   [](FetchCallback callback,
++                      std::optional<std::string> body) {
++                     if (!body) {
++                       std::move(callback).Run(std::nullopt,
++                                               "network error");
++                       return;
++                     }
++                     std::optional<ReleaseInfo> info =
++                         ParseReleaseJson(*body);
++                     if (!info) {
++                       std::move(callback).Run(
++                           std::nullopt, "no release found");
++                       return;
++                     }
++                     if (info->crx_assets.empty()) {
++                       std::move(callback).Run(
++                           std::nullopt,
++                           "the latest release has no .crx asset");
++                       return;
++                     }
++                     std::move(callback).Run(std::move(info), "");
++                   },
++                   std::move(callback)));
++}
++
++void LumoGithubExtensionUpdater::AddExtension(std::string repo_input,
++                                              std::string asset_name,
++                                              int interval_hours,
++                                              AddCallback callback) {
++  auto parsed = ParseRepoInput(repo_input);
++  if (!parsed) {
++    std::move(callback).Run(false, "invalid repository");
++    return;
++  }
++  FetchLatestRelease(
++      repo_input,
++      base::BindOnce(&LumoGithubExtensionUpdater::OnReleaseForAdd,
++                     weak_factory_.GetWeakPtr(),
++                     parsed->first + "/" + parsed->second, asset_name,
++                     interval_hours, std::move(callback)));
++}
++
++void LumoGithubExtensionUpdater::OnReleaseForAdd(
++    std::string repo,
++    std::string asset_name,
++    int interval_hours,
++    AddCallback callback,
++    std::optional<ReleaseInfo> release,
++    std::string error) {
++  if (!release) {
++    std::move(callback).Run(false, error);
++    return;
++  }
++  const ReleaseAsset* chosen = nullptr;
++  for (const ReleaseAsset& asset : release->crx_assets) {
++    if (asset.name == asset_name) {
++      chosen = &asset;
++      break;
++    }
++  }
++  if (!chosen) {
++    std::move(callback).Run(false, "asset not found in the latest release");
++    return;
++  }
++  auto pending = base::MakeRefCounted<PendingInstall>();
++  pending->repo = repo;
++  pending->tag = release->tag;
++  pending->asset = asset_name;
++  pending->interval_hours = interval_hours;
++  pending->is_update = false;
++  pending->add_callback = std::move(callback);
++  DownloadCrx(chosen->download_url,
++              base::BindOnce(&LumoGithubExtensionUpdater::VerifyAndInstall,
++                             weak_factory_.GetWeakPtr(), pending));
++}
++
++void LumoGithubExtensionUpdater::DownloadCrx(
++    std::string download_url,
++    base::OnceCallback<void(std::optional<std::string> crx_bytes,
++                            std::string error)> callback) {
++  GetJson(GURL(download_url),
++          base::BindOnce(
++              [](base::OnceCallback<void(std::optional<std::string>,
++                                         std::string)> callback,
++                 std::optional<std::string> body) {
++                if (!body) {
++                  std::move(callback).Run(std::nullopt, "download failed");
++                  return;
++                }
++                std::move(callback).Run(std::move(body), "");
++              },
++              std::move(callback)));
++}
++
++void LumoGithubExtensionUpdater::VerifyAndInstall(
++    scoped_refptr<PendingInstall> pending,
++    std::optional<std::string> crx_bytes,
++    std::string error) {
++  if (!crx_bytes) {
++    FinishInstall(pending->extension_id, /*success=*/false);
++    if (pending->add_callback) {
++      std::move(pending->add_callback).Run(false, error);
++    } else {
++      NotifyUser(pending->extension_id, /*updated=*/false, error);
++    }
++    return;
++  }
++  base::ThreadPool::PostTaskAndReplyWithResult(
++      FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
++      base::BindOnce(&VerifyCrxBytes, std::move(*crx_bytes),
++                     profile_->GetPath()),
++      base::BindOnce(
++          [](scoped_refptr<PendingInstall> pending,
++             base::WeakPtr<LumoGithubExtensionUpdater> self,
++             CrxVerification verification) {
++            if (!self) {
++              return;
++            }
++            // Verification (b): the package must parse, and for an
++            // update its derived ID must equal the registered ID
++            // (same signing key) and its manifest version must be
++            // strictly newer than the installed one.
++            if (!verification.error.empty()) {
++              self->FinishInstall(pending->extension_id, false);
++              if (pending->add_callback) {
++                std::move(pending->add_callback)
++                    .Run(false, verification.error);
++              } else {
++                self->NotifyUser(pending->extension_id, false,
++                                 verification.error);
++              }
++              return;
++            }
++            pending->extension_id = verification.extension_id;
++            if (pending->is_update) {
++              const extensions::Extension* installed =
++                  extensions::ExtensionRegistry::Get(self->profile_)
++                      ->GetInstalledExtension(pending->extension_id);
++              const std::string current =
++                  installed ? installed->VersionString() : "";
++              if (current.empty() ||
++                  !IsNewerVersion(verification.version, current)) {
++                self->FinishInstall(pending->extension_id, false);
++                self->NotifyUser(pending->extension_id, false,
++                                 "not newer than the installed version");
++                return;
++              }
++            }
++            // The verified bytes are already stored in the
++            // profile (VerifyCrxBytes); CrxInstaller reads them
++            // from there and re-verifies the CRX3 signature itself
++            // before anything is applied.
++            auto* service =
++                extensions::ExtensionSystem::Get(self->profile_)
++                    ->extension_service();
++            scoped_refptr<extensions::CrxInstaller> installer(
++                extensions::CrxInstaller::Create(service));
++            self->pending_installs_[pending->extension_id] = pending;
++            installer->InstallCrxFile(extensions::CrxFileInfo(
++                verification.crx_path, std::string()));
++          pending, weak_factory_.GetWeakPtr()));
++}
++
++void LumoGithubExtensionUpdater::FinishInstall(
++    const std::string& extension_id,
++    bool success) {
++  pending_installs_.erase(extension_id);
++}
++
++void LumoGithubExtensionUpdater::OnExtensionInstalled(
++    content::BrowserContext* browser_context,
++    const extensions::Extension* extension,
++    bool is_update) {
++  auto it = pending_installs_.find(extension->id());
++  if (it == pending_installs_.end()) {
++    return;
++  }
++  scoped_refptr<PendingInstall> pending = it->second;
++  pending_installs_.erase(it);
++  SaveEntry(extension->id(), pending->repo, pending->tag,
++            extension->VersionString(), pending->asset,
++            pending->interval_hours);
++  if (pending->add_callback) {
++    std::move(pending->add_callback).Run(true, extension->id());
++  } else {
++    NotifyUser(extension->id(), /*updated=*/true, pending->tag);
++  }
++}
++
++void LumoGithubExtensionUpdater::OnExtensionUninstalled(
++    content::BrowserContext* browser_context,
++    const extensions::Extension* extension,
++    extensions::UninstallReason reason) {
++  // Uninstalling a GitHub-managed extension also drops its
++  // registration, so it is never silently reinstalled.
++  PrefService* prefs = profile_->GetPrefs();
++  base::DictValue entries = prefs->GetDict(prefs::kLumoGithubExtensions).Clone();
++  if (entries.Remove(extension->id())) {
++    prefs->SetDict(prefs::kLumoGithubExtensions, std::move(entries));
++  }
++}
++
++void LumoGithubExtensionUpdater::SaveEntry(const std::string& extension_id,
++                                           const std::string& repo,
++                                           const std::string& tag,
++                                           const std::string& version,
++                                           const std::string& asset,
++                                           int interval_hours) {
++  PrefService* prefs = profile_->GetPrefs();
++  base::DictValue entries =
++      prefs->GetDict(prefs::kLumoGithubExtensions).Clone();
++  base::DictValue entry;
++  entry.Set("repo", repo);
++  entry.Set("tag", tag);
++  entry.Set("version", version);
++  entry.Set("asset", asset);
++  entry.Set("interval_hours", interval_hours);
++  entry.Set("last_check_unix",
++            base::Time::Now().InSecondsFSinceUnixEpoch());
++  entries.Set(extension_id, std::move(entry));
++  prefs->SetDict(prefs::kLumoGithubExtensions, std::move(entries));
++}
++
++void LumoGithubExtensionUpdater::SetUpdateInterval(
++    const std::string& extension_id,
++    int interval_hours) {
++  PrefService* prefs = profile_->GetPrefs();
++  base::DictValue entries =
++      prefs->GetDict(prefs::kLumoGithubExtensions).Clone();
++  base::DictValue* entry = entries.FindDict(extension_id);
++  if (!entry) {
++    return;
++  }
++  entry->Set("interval_hours", interval_hours);
++  prefs->SetDict(prefs::kLumoGithubExtensions, std::move(entries));
++}
++
++bool LumoGithubExtensionUpdater::IsGithubManaged(
++    const std::string& extension_id) const {
++  return profile_->GetPrefs()
++      ->GetDict(prefs::kLumoGithubExtensions)
++      .contains(extension_id);
++}
++
++base::DictValue LumoGithubExtensionUpdater::GetWebUiInfo(
++    const std::string& extension_id) const {
++  base::DictValue info;
++  const base::DictValue& entries =
++      profile_->GetPrefs()->GetDict(prefs::kLumoGithubExtensions);
++  const base::DictValue* entry = entries.FindDict(extension_id);
++  if (!entry) {
++    return info;
++  }
++  if (const std::string* repo = entry->FindString("repo")) {
++    info.Set("lumoGithubRepo", *repo);
++  }
++  if (const std::string* tag = entry->FindString("tag")) {
++    info.Set("lumoGithubTag", *tag);
++  }
++  info.Set("lumoGithubIntervalHours",
++           entry->FindInt("interval_hours").value_or(kIntervalDefaultHours));
++  return info;
++}
++
++void LumoGithubExtensionUpdater::CheckForUpdates(bool startup) {
++  const base::DictValue entries =
++      profile_->GetPrefs()->GetDict(prefs::kLumoGithubExtensions).Clone();
++  const double now = base::Time::Now().InSecondsFSinceUnixEpoch();
++  for (const auto [id, value] : entries) {
++    if (!value.is_dict()) {
++      continue;
++    }
++    const base::DictValue& entry = value.GetDict();
++    const std::string* repo = entry.FindString("repo");
++    const std::string* asset = entry.FindString("asset");
++    if (!repo || !asset) {
++      continue;
++    }
++    const int interval = entry.FindInt("interval_hours")
++                             .value_or(kIntervalDefaultHours);
++    const double last_check = entry.FindDouble("last_check_unix").value_or(0);
++    if (!startup && !IsCheckDue(interval, last_check, now)) {
++      continue;
++    }
++    FetchLatestRelease(
++        *repo, base::BindOnce(&LumoGithubExtensionUpdater::OnReleaseForUpdate,
++                              weak_factory_.GetWeakPtr(), id));
++  }
++}
++
++void LumoGithubExtensionUpdater::OnReleaseForUpdate(
++    std::string extension_id,
++    std::optional<ReleaseInfo> release,
++    std::string error) {
++  if (!release) {
++    NotifyUser(extension_id, /*updated=*/false, error);
++    return;
++  }
++  const base::DictValue& entries =
++      profile_->GetPrefs()->GetDict(prefs::kLumoGithubExtensions);
++  const base::DictValue* entry = entries.FindDict(extension_id);
++  if (!entry) {
++    return;
++  }
++  const std::string* asset_name = entry->FindString("asset");
++  const std::string* repo = entry->FindString("repo");
++  if (!asset_name || !repo) {
++    return;
++  }
++  const ReleaseAsset* chosen = nullptr;
++  for (const ReleaseAsset& asset : release->crx_assets) {
++    if (asset.name == *asset_name) {
++      chosen = &asset;
++      break;
++    }
++  }
++  if (!chosen) {
++    NotifyUser(extension_id, /*updated=*/false,
++               "the registered asset is gone from the latest release");
++    return;
++  }
++  auto pending = base::MakeRefCounted<PendingInstall>();
++  pending->extension_id = extension_id;
++  pending->repo = *repo;
++  pending->tag = release->tag;
++  pending->asset = *asset_name;
++  pending->interval_hours =
++      entry->FindInt("interval_hours").value_or(kIntervalDefaultHours);
++  pending->is_update = true;
++  DownloadCrx(chosen->download_url,
++              base::BindOnce(&LumoGithubExtensionUpdater::VerifyAndInstall,
++                             weak_factory_.GetWeakPtr(), pending));
++}
++
++void LumoGithubExtensionUpdater::NotifyUser(const std::string& extension_id,
++                                            bool updated,
++                                            const std::string& detail) {
++  NotificationDisplayService* display_service =
++      NotificationDisplayServiceFactory::GetForProfile(profile_);
++  if (!display_service) {
++    return;
++  }
++  const extensions::Extension* extension =
++      extensions::ExtensionRegistry::Get(profile_)
++          ->GetInstalledExtension(extension_id);
++  const std::u16string name =
++      extension ? extension->name()
++                : base::UTF8ToUTF16(extension_id);
++  message_center::Notification notification(
++      message_center::NotificationType::NOTIFICATION_TYPE_SIMPLE,
++      kNotifierId + extension_id,
++      l10n_util::GetStringUTF16(updated
++                                    ? IDS_LUMO_GITHUB_NOTIFY_UPDATED_TITLE
++                                    : IDS_LUMO_GITHUB_NOTIFY_FAILED_TITLE),
++      l10n_util::GetStringFUTF16(
++          updated ? IDS_LUMO_GITHUB_NOTIFY_UPDATED_BODY
++                  : IDS_LUMO_GITHUB_NOTIFY_FAILED_BODY,
++          name, base::UTF8ToUTF16(detail)),
++      ui::ImageModel(), std::u16string(), GURL(),
++      message_center::NotifierId(message_center::NotifierType::APPLICATION,
++                                 kNotifierId),
++      message_center::RichNotificationData(),
++      base::MakeRefCounted<message_center::NotificationDelegate>());
++  display_service->Display(NotificationHandler::Type::TRANSIENT,
++                           notification, /*metadata=*/nullptr);
++}
++
++LumoGithubExtensionUpdater* GetForProfile(Profile* profile) {
++  return UpdaterFactory::GetForProfile(profile);
++}
++
++void StartForLoadedProfiles() {
++  ProfileManager* manager = g_browser_process->profile_manager();
++  if (!manager) {
++    return;
++  }
++  for (Profile* profile : manager->GetLoadedProfiles()) {
++    if (profile && !profile->IsOffTheRecord()) {
++      UpdaterFactory::GetForProfile(profile);
++    }
++  }
++}
++
++}  // namespace lumo::github_updater
+diff --git a/chrome/browser/ui/webui/extensions/lumo_github_extensions_handler.h b/chrome/browser/ui/webui/extensions/lumo_github_extensions_handler.h
+new file mode 100644
+index 0000000..a48b008
+--- /dev/null
++++ b/chrome/browser/ui/webui/extensions/lumo_github_extensions_handler.h
+@@ -100,0 +100,52 @@
++// Copyright 2026 seasea1010
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_WEBUI_EXTENSIONS_LUMO_GITHUB_EXTENSIONS_HANDLER_H_
++#define CHROME_BROWSER_UI_WEBUI_EXTENSIONS_LUMO_GITHUB_EXTENSIONS_HANDLER_H_
++
++#include <string>
++
++#include "base/memory/raw_ptr.h"
++#include "base/memory/weak_ptr.h"
++#include "content/public/browser/web_ui_message_handler.h"
++
++class Profile;
++
++namespace base {
++class ListValue;
++}  // namespace base
++
++namespace extensions {
++
++// WebUI message handler for the Lumo GitHub extension updater
++// (patch 0048, task 36). Companion to ExtensionsHandler: it owns
++// the three "lumoGithub*" messages the chrome://extensions page
++// sends (fetch a repository's latest release, add the extension,
++// change one extension's update-check interval) and forwards them
++// to lumo::github_updater::LumoGithubExtensionUpdater. It has its
++// own WeakPtrFactory so a closed extensions page never receives a
++// late callback.
++class LumoGithubExtensionsHandler : public content::WebUIMessageHandler {
++ public:
++  explicit LumoGithubExtensionsHandler(Profile* profile);
++  LumoGithubExtensionsHandler(const LumoGithubExtensionsHandler&) = delete;
++  LumoGithubExtensionsHandler& operator=(const LumoGithubExtensionsHandler&) =
++      delete;
++  ~LumoGithubExtensionsHandler() override;
++
++  // content::WebUIMessageHandler:
++  void RegisterMessages() override;
++
++ private:
++  void HandleFetchRelease(const base::ListValue& args);
++  void HandleAddExtension(const base::ListValue& args);
++  void HandleSetUpdateInterval(const base::ListValue& args);
++
++  raw_ptr<Profile> profile_;
++  base::WeakPtrFactory<LumoGithubExtensionsHandler> weak_factory_{this};
++};
++
++}  // namespace extensions
++
++#endif  // CHROME_BROWSER_UI_WEBUI_EXTENSIONS_LUMO_GITHUB_EXTENSIONS_HANDLER_H_
+diff --git a/chrome/browser/ui/webui/extensions/lumo_github_extensions_handler.cc b/chrome/browser/ui/webui/extensions/lumo_github_extensions_handler.cc
+new file mode 100644
+index 0000000..a48b009
+--- /dev/null
++++ b/chrome/browser/ui/webui/extensions/lumo_github_extensions_handler.cc
+@@ -100,0 +100,114 @@
++// Copyright 2026 seasea1010
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/ui/webui/extensions/lumo_github_extensions_handler.h"
++
++#include <optional>
++#include <string>
++#include <utility>
++
++#include "base/functional/bind.h"
++#include "base/values.h"
++#include "chrome/browser/lumo/lumo_github_extension_updater.h"
++#include "chrome/browser/profiles/profile.h"
++
++namespace extensions {
++
++namespace {
++
++using ReleaseInfo = lumo::github_updater::ReleaseInfo;
++
++}  // namespace
++
++LumoGithubExtensionsHandler::LumoGithubExtensionsHandler(Profile* profile)
++    : profile_(profile) {}
++
++LumoGithubExtensionsHandler::~LumoGithubExtensionsHandler() = default;
++
++void LumoGithubExtensionsHandler::RegisterMessages() {
++  web_ui()->RegisterMessageCallback(
++      "lumoGithubFetchRelease",
++      base::BindRepeating(&LumoGithubExtensionsHandler::HandleFetchRelease,
++                          base::Unretained(this)));
++  web_ui()->RegisterMessageCallback(
++      "lumoGithubAddExtension",
++      base::BindRepeating(&LumoGithubExtensionsHandler::HandleAddExtension,
++                          base::Unretained(this)));
++  web_ui()->RegisterMessageCallback(
++      "lumoGithubSetUpdateInterval",
++      base::BindRepeating(
++          &LumoGithubExtensionsHandler::HandleSetUpdateInterval,
++          base::Unretained(this)));
++}
++
++void LumoGithubExtensionsHandler::HandleFetchRelease(
++    const base::ListValue& args) {
++  AllowJavascript();
++  const std::string& callback_id = args[0].GetString();
++  const std::string& repo = args[1].GetString();
++  auto* updater = lumo::github_updater::GetForProfile(profile_);
++  updater->FetchLatestRelease(
++      repo,
++      base::BindOnce(
++          [](base::WeakPtr<LumoGithubExtensionsHandler> self,
++             std::string callback_id,
++             std::optional<ReleaseInfo> release, std::string error) {
++            if (!self || !self->web_ui()) {
++              return;
++            }
++            if (!release) {
++              self->RejectJavascriptCallback(base::Value(callback_id),
++                                             base::Value(error));
++              return;
++            }
++            base::DictValue result;
++            result.Set("tag", release->tag);
++            base::ListValue assets;
++            for (const auto& asset : release->crx_assets) {
++              assets.Append(asset.name);
++            }
++            result.Set("assets", std::move(assets));
++            self->ResolveJavascriptCallback(base::Value(callback_id),
++                                            base::Value(std::move(result)));
++          },
++          weak_factory_.GetWeakPtr(), callback_id));
++}
++
++void LumoGithubExtensionsHandler::HandleAddExtension(
++    const base::ListValue& args) {
++  AllowJavascript();
++  const std::string& callback_id = args[0].GetString();
++  const std::string& repo = args[1].GetString();
++  const std::string& asset = args[2].GetString();
++  const int interval_hours = args[3].GetInt();
++  auto* updater = lumo::github_updater::GetForProfile(profile_);
++  updater->AddExtension(
++      repo, asset, interval_hours,
++      base::BindOnce(
++          [](base::WeakPtr<LumoGithubExtensionsHandler> self,
++             std::string callback_id, bool success,
++             std::string id_or_error) {
++            if (!self || !self->web_ui()) {
++              return;
++            }
++            if (success) {
++              self->ResolveJavascriptCallback(base::Value(callback_id),
++                                              base::Value(id_or_error));
++            } else {
++              self->RejectJavascriptCallback(base::Value(callback_id),
++                                             base::Value(id_or_error));
++            }
++          },
++          weak_factory_.GetWeakPtr(), callback_id));
++}
++
++void LumoGithubExtensionsHandler::HandleSetUpdateInterval(
++    const base::ListValue& args) {
++  const std::string& extension_id = args[0].GetString();
++  const int interval_hours = args[1].GetInt();
++  lumo::github_updater::GetForProfile(profile_)->SetUpdateInterval(
++      extension_id, interval_hours);
++}
++
++}  // namespace extensions
+diff --git a/chrome/browser/ui/webui/extensions/BUILD.gn b/chrome/browser/ui/webui/extensions/BUILD.gn
+index 1111111..a48b010
+--- a/chrome/browser/ui/webui/extensions/BUILD.gn
++++ b/chrome/browser/ui/webui/extensions/BUILD.gn
+@@ -100,3 +100,5 @@
+     "extensions_ui.cc",
+     "extensions_ui.h",
++    "lumo_github_extensions_handler.cc",
++    "lumo_github_extensions_handler.h",
+   ]
+diff --git a/chrome/browser/ui/webui/extensions/extensions_ui.cc b/chrome/browser/ui/webui/extensions/extensions_ui.cc
+index 2222222..a48b011
+--- a/chrome/browser/ui/webui/extensions/extensions_ui.cc
++++ b/chrome/browser/ui/webui/extensions/extensions_ui.cc
+@@ -100,2 +100,3 @@
+ #include "chrome/browser/ui/webui/extensions/extensions_ui.h"
++#include "chrome/browser/ui/webui/extensions/lumo_github_extensions_handler.h"
+ #include "chrome/browser/ui/webui/extensions/extension_info_generator.h"
+@@ -142,2 +143,7 @@
+       {"addExtensions", IDS_EXTENSIONS_MENU_ADD_EXTENSIONS},
++      {"lumoGithubAddButton", IDS_EXTENSIONS_LUMO_GITHUB_ADD_BUTTON},
++      {"lumoGithubDialogTitle",
++       IDS_EXTENSIONS_LUMO_GITHUB_DIALOG_TITLE},
++      {"lumoGithubDetailTitle",
++       IDS_EXTENSIONS_LUMO_GITHUB_DETAIL_TITLE},
+       {"allowFileAccess", IDS_EXTENSIONS_ALLOW_FILE_ACCESS},
+@@ -184,2 +190,5 @@
+   web_ui->AddMessageHandler(std::make_unique<ExtensionsHandler>());
++  // Lumo (patch 0048, task 36): the GitHub updater's messages.
++  web_ui->AddMessageHandler(
++      std::make_unique<LumoGithubExtensionsHandler>(profile));
+ }
+diff --git a/chrome/browser/ui/webui/extensions/extension_info_generator.cc b/chrome/browser/ui/webui/extensions/extension_info_generator.cc
+index 3333333..a48b012
+--- a/chrome/browser/ui/webui/extensions/extension_info_generator.cc
++++ b/chrome/browser/ui/webui/extensions/extension_info_generator.cc
+@@ -100,2 +100,4 @@
+ #include "chrome/browser/ui/webui/extensions/extension_info_generator.h"
++#include "chrome/browser/lumo/lumo_github_extension_updater.h"
++#include "chrome/browser/profiles/profile.h"
+ #include "extensions/common/extension.h"
+@@ -142,3 +144,22 @@
+   dict.Set("id", extension.id());
+-  dict.Set("name", extension.name());
++  // Lumo (patch 0048, task 36, requirement (c)): extensions
++  // added from GitHub carry the " (Github)" origin suffix
++  // after their name, and expose their registration to the
++  // detail page (repository, tag, check interval).
++  std::string lumo_name = extension.name();
++  if (Profile* profile =
++          Profile::FromBrowserContext(browser_context_)) {
++    if (auto* updater =
++            lumo::github_updater::GetForProfile(profile)) {
++      base::DictValue github_info =
++          updater->GetWebUiInfo(extension.id());
++      if (!github_info.empty()) {
++        lumo_name += " (Github)";
++        for (const auto [key, value] : github_info) {
++          dict.Set(key, value.Clone());
++        }
++      }
++    }
++  }
++  dict.Set("name", lumo_name);
+   dict.Set("version", extension.VersionString());

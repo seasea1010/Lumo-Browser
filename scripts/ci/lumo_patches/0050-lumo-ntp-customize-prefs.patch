@@ -1,0 +1,1044 @@
+diff --git a/chrome/common/pref_names.h b/chrome/common/pref_names.h
+index 0000000..0000000 100644
+@@ -100,4 +100,28 @@
+ // collapsed to its narrow strip.
+ inline constexpr char kLumoSidebarBarCollapsed[] =
+     "lumo.sidebar.bar_collapsed";
++
++// Lumo NTP customization (patches 0050-0052, task 38): the whole
++// new-tab customization as one dictionary pref (JSON-shaped; see
++// lumo_ntp_config.h for the schema). A single dictionary keeps the
++// Customize panel's instant preview and the NTP rendering on one
++// atomic value: every panel edit rewrites the dictionary and both
++// sides observe the same pref.
++inline constexpr char kLumoNtpConfig[] = "lumo.ntp.config";
++
++// Lumo NTP customization: the memo widget's text. Kept outside the
++// config dictionary because it is content, not layout.
++inline constexpr char kLumoNtpMemo[] = "lumo.ntp.memo";
++
++// Lumo NTP customization: the ToDo widget's items, a list of
++// dictionaries with "text" and "done" keys. Content, not layout,
++// so it also lives outside the config dictionary.
++inline constexpr char kLumoNtpTodos[] = "lumo.ntp.todos";
++
++// Lumo NTP customization: the local background image as a data URL
++// chosen through the Customize panel's file picker. Stored apart
++// from the config dictionary so config export/import stays small
++// and never embeds the image bytes.
++inline constexpr char kLumoNtpBackgroundImage[] =
++    "lumo.ntp.background_image";
+ 
+diff --git a/chrome/browser/ui/ui_features.h b/chrome/browser/ui/ui_features.h
+index 0000000..0000000 100644
+@@ -100,4 +100,9 @@
+ // Lumo Labs experiment (Lumo patches 0037/0038): Floorp-style
+ // sidebar with a vertical icon bar and a left-docked side panel.
+ BASE_DECLARE_FEATURE(kLumoSidebar);
++
++// Lumo NTP customization (Lumo patches 0050-0052, task 38): the
++// "Lumo をカスタマイズ" section in the standard Customize Chrome
++// side panel plus the customized rendering of the new tab page.
++BASE_DECLARE_FEATURE(kLumoNtpCustomize);
+ 
+diff --git a/chrome/browser/ui/ui_features.cc b/chrome/browser/ui/ui_features.cc
+index 0000000..0000000 100644
+@@ -100,2 +100,4 @@
+ BASE_FEATURE(kLumoSidebar, base::FEATURE_DISABLED_BY_DEFAULT);
++
++BASE_FEATURE(kLumoNtpCustomize, base::FEATURE_ENABLED_BY_DEFAULT);
+ 
+diff --git a/chrome/browser/thorium_flag_entries.h b/chrome/browser/thorium_flag_entries.h
+index 0000000..0000000 100644
+@@ -100,4 +100,9 @@
+      "Lumo Sidebar",
+      "Shows a Floorp-style vertical icon bar at the left edge of the window and docks the side panel on the left. Implemented by Lumo patches 0037 and 0038.",
+      kOsDesktop, FEATURE_VALUE_TYPE(features::kLumoSidebar)},
++
++    {"lumo-ntp-customize",
++     "Lumo 新規タブのカスタマイズ",
++     "新規タブページの背景・時計・検索バー・ショートカット・ウィジェットを、標準のカスタマイズパネルから細かく変更できるようにします（Lumo パッチ 0050〜0052）。",
++     kOsDesktop, FEATURE_VALUE_TYPE(features::kLumoNtpCustomize)},
+ 
+diff --git a/chrome/browser/ui/toolbar/chrome_labs/chrome_labs_model.cc b/chrome/browser/ui/toolbar/chrome_labs/chrome_labs_model.cc
+index 0000000..0000000 100644
+@@ -100,4 +100,18 @@
+         kLumoSidebarFlagDescription,
+         "chrome-labs-lumo-sidebar",
+         version_info::Channel::BETA);
++
++    const char kLumoNtpCustomizeFlagId[] = "lumo-ntp-customize";
++    const std::u16string kLumoNtpCustomizeFlagName =
++        l10n_util::GetStringUTF16(IDS_CHROMELABS_LUMO_NTP_CUSTOMIZE_NAME);
++    const std::u16string kLumoNtpCustomizeFlagDescription =
++        l10n_util::GetStringUTF16(
++            IDS_CHROMELABS_LUMO_NTP_CUSTOMIZE_DESCRIPTION);
++
++    lab_info.emplace_back(
++        kLumoNtpCustomizeFlagId,
++        kLumoNtpCustomizeFlagName,
++        kLumoNtpCustomizeFlagDescription,
++        "chrome-labs-lumo-ntp-customize",
++        version_info::Channel::BETA);
+ 
+diff --git a/chrome/app/generated_resources.grd b/chrome/app/generated_resources.grd
+index 0000000..0000000 100644
+@@ -100,4 +100,13 @@
+     <message name="IDS_LUMO_SIDEBAR_EXPAND" desc="Tooltip of the button that expands the collapsed Lumo sidebar icon bar.">
+       サイドバーを展開する
+     </message>
++    <message name="IDS_CHROMELABS_LUMO_NTP_CUSTOMIZE_NAME" desc="Name of the Lumo Labs experiment shown in the Labs bubble.">
++      新規タブのカスタマイズ (Lumo)
++    </message>
++    <message name="IDS_CHROMELABS_LUMO_NTP_CUSTOMIZE_DESCRIPTION" desc="Description of the Lumo Labs experiment shown in the Labs bubble.">
++      新規タブページの背景・時計・挨拶文・検索バー・ショートカット・ウィジェット・レイアウト・テーマを、標準のカスタマイズパネル内の「Lumo をカスタマイズ」から細かく変更できるようにします（Lumo パッチ 0050〜0052）。
++    </message>
++    <message name="IDS_LUMO_NTP_CUSTOMIZE_TITLE" desc="Title of the Lumo section in the standard Customize Chrome side panel.">
++      Lumo をカスタマイズ
++    </message>
+     <message name="IDS_LUMO_LAUNCH_THORIUM_PROFILE" desc="App menu item that launches Lumo with the original Thorium user profile data directory.">
+diff --git a/chrome/browser/ui/browser_ui_prefs.cc b/chrome/browser/ui/browser_ui_prefs.cc
+index 0000000..0000000 100644
+@@ -100,4 +100,169 @@
+   return panels;
+ }
+ 
++base::DictValue DefaultLumoNtpConfig() {
++  base::DictValue config;
++  config.Set("version", 1);
++  base::DictValue background;
++  background.Set("mode", "solid");
++  background.Set("color", "#ffffff");
++  background.Set("color2", "#00bcd4");
++  background.Set("gradientAngle", 135);
++  background.Set("pattern", "none");
++  background.Set("imageFit", "cover");
++  background.Set("imagePosition", "center");
++  background.Set("imageRepeat", false);
++  background.Set("darkness", 0);
++  background.Set("blur", 0);
++  background.Set("saturation", 100);
++  background.Set("overlayColor", "#000000");
++  background.Set("overlayOpacity", 0);
++  config.Set("background", std::move(background));
++  base::DictValue clock;
++  clock.Set("enabled", true);
++  clock.Set("format24h", true);
++  clock.Set("showSeconds", false);
++  clock.Set("size", 64);
++  clock.Set("weight", 300);
++  clock.Set("showDate", true);
++  clock.Set("dateFormat", "weekday-month-day");
++  clock.Set("align", "center");
++  clock.Set("color", "#202124");
++  clock.Set("opacity", 100);
++  config.Set("clock", std::move(clock));
++  base::DictValue greeting;
++  greeting.Set("enabled", true);
++  greeting.Set("useTimeOfDay", true);
++  greeting.Set("name", "");
++  greeting.Set("morning", "おはようございます");
++  greeting.Set("afternoon", "こんにちは");
++  greeting.Set("evening", "こんばんは");
++  config.Set("greeting", std::move(greeting));
++  base::DictValue search;
++  search.Set("enabled", true);
++  search.Set("engine", "default");
++  search.Set("width", 560);
++  search.Set("height", 48);
++  search.Set("radius", 24);
++  search.Set("bgOpacity", 90);
++  search.Set("blur", 0);
++  search.Set("placeholder", "検索、または URL を入力");
++  search.Set("align", "center");
++  config.Set("search", std::move(search));
++  base::DictValue layout;
++  layout.Set("verticalAlign", "center");
++  layout.Set("maxWidth", 960);
++  layout.Set("gap", 24);
++  layout.Set("density", "standard");
++  layout.Set("fontScale", 100);
++  config.Set("layout", std::move(layout));
++  base::DictValue theme;
++  theme.Set("mode", "system");
++  theme.Set("accent", "#00acc1");
++  config.Set("theme", std::move(theme));
++  base::DictValue shortcuts;
++  shortcuts.Set("columns", 5);
++  shortcuts.Set("rows", 2);
++  shortcuts.Set("tileSize", 96);
++  shortcuts.Set("gap", 16);
++  shortcuts.Set("radius", 16);
++  shortcuts.Set("bgColor", "#ffffff");
++  shortcuts.Set("bgOpacity", 70);
++  shortcuts.Set("showLabel", true);
++  shortcuts.Set("labelColor", "#202124");
++  shortcuts.Set("labelSize", 12);
++  shortcuts.Set("faviconSize", 32);
++  shortcuts.Set("openInNewTab", false);
++  base::ListValue shortcut_items;
++  {
++    base::DictValue item;
++    item.Set("title", "YouTube");
++    item.Set("url", "https://www.youtube.com/");
++    shortcut_items.Append(std::move(item));
++  }
++  {
++    base::DictValue item;
++    item.Set("title", "GitHub");
++    item.Set("url", "https://github.com/");
++    shortcut_items.Append(std::move(item));
++  }
++  shortcuts.Set("items", std::move(shortcut_items));
++  config.Set("shortcuts", std::move(shortcuts));
++  base::ListValue widgets;
++  {
++    base::DictValue widget;
++    widget.Set("id", "clock");
++    widget.Set("enabled", false);
++    widget.Set("order", 0);
++    widget.Set("width", 320);
++    widgets.Append(std::move(widget));
++  }
++  {
++    base::DictValue widget;
++    widget.Set("id", "calendar");
++    widget.Set("enabled", true);
++    widget.Set("order", 1);
++    widget.Set("width", 320);
++    widgets.Append(std::move(widget));
++  }
++  {
++    base::DictValue widget;
++    widget.Set("id", "bookmarks");
++    widget.Set("enabled", false);
++    widget.Set("order", 2);
++    widget.Set("width", 320);
++    widgets.Append(std::move(widget));
++  }
++  {
++    base::DictValue widget;
++    widget.Set("id", "recently_closed");
++    widget.Set("enabled", false);
++    widget.Set("order", 3);
++    widget.Set("width", 320);
++    widgets.Append(std::move(widget));
++  }
++  {
++    base::DictValue widget;
++    widget.Set("id", "downloads");
++    widget.Set("enabled", false);
++    widget.Set("order", 4);
++    widget.Set("width", 320);
++    widgets.Append(std::move(widget));
++  }
++  {
++    base::DictValue widget;
++    widget.Set("id", "memo");
++    widget.Set("enabled", true);
++    widget.Set("order", 5);
++    widget.Set("width", 320);
++    widgets.Append(std::move(widget));
++  }
++  {
++    base::DictValue widget;
++    widget.Set("id", "todo");
++    widget.Set("enabled", true);
++    widget.Set("order", 6);
++    widget.Set("width", 320);
++    widgets.Append(std::move(widget));
++  }
++  {
++    base::DictValue widget;
++    widget.Set("id", "open_tabs");
++    widget.Set("enabled", false);
++    widget.Set("order", 7);
++    widget.Set("width", 320);
++    widgets.Append(std::move(widget));
++  }
++  {
++    base::DictValue widget;
++    widget.Set("id", "lumo_info");
++    widget.Set("enabled", true);
++    widget.Set("order", 8);
++    widget.Set("width", 320);
++    widgets.Append(std::move(widget));
++  }
++  config.Set("widgets", std::move(widgets));
++  return config;
++}
++
+ }  // namespace
+@@ -144,4 +309,12 @@
+   registry->RegisterListPref(prefs::kLumoSidebarWebPanels,
+                              DefaultLumoSidebarWebPanels());
+   registry->RegisterBooleanPref(prefs::kLumoSidebarBarCollapsed, false);
++
++  // Lumo NTP customization (patches 0050-0052, task 38).
++  registry->RegisterDictionaryPref(prefs::kLumoNtpConfig,
++                                   DefaultLumoNtpConfig());
++  registry->RegisterStringPref(prefs::kLumoNtpMemo, std::string());
++  registry->RegisterListPref(prefs::kLumoNtpTodos, base::ListValue());
++  registry->RegisterStringPref(prefs::kLumoNtpBackgroundImage,
++                               std::string());
+ 
+diff --git a/chrome/browser/lumo/lumo_ntp_config.h b/chrome/browser/lumo/lumo_ntp_config.h
+new file mode 100644
+index 0000000..0000000
+--- /dev/null
++++ b/chrome/browser/lumo/lumo_ntp_config.h
+@@ -100,0 +100,754 @@
++// Copyright 2026 The Lumo Authors
++// Lumo NTP customization (patches 0050-0052, task 38): the schema
++// of the lumo.ntp.config dictionary pref and the built-in presets.
++//
++// Schema (version 1). Every key is optional on read: the renderer
++// and the Customize panel fall back to the registered default for
++// anything missing, so older or partial configs keep working.
++//
++//   background: mode(solid|gradient|pattern|image), color,
++//     color2, gradientAngle(0-360), pattern(none|dots|grid|
++//     diagonal), imageFit(cover|contain), imagePosition,
++//     imageRepeat, darkness(0-100), blur(0-40 px),
++//     saturation(0-200 %), overlayColor, overlayOpacity(0-100)
++//   clock: enabled, format24h, showSeconds, size(px), weight,
++//     showDate, dateFormat, align, color, opacity(0-100)
++//   greeting: enabled, useTimeOfDay, name, morning, afternoon,
++//     evening
++//   search: enabled, engine(default|google|bing|duckduckgo|
++//     yahoo_jp|brave), width, height, radius, bgOpacity, blur,
++//     placeholder, align
++//   shortcuts: columns(2-10), rows, tileSize, gap, radius,
++//     bgColor, bgOpacity, showLabel, labelColor, labelSize,
++//     faviconSize, openInNewTab, items[{title, url}]
++//   widgets: [{id, enabled, order, width}] with id one of
++//     clock, calendar, bookmarks, recently_closed, downloads,
++//     memo, todo, open_tabs, lumo_info
++//   layout: verticalAlign(top|center), maxWidth, gap,
++//     density(relaxed|standard|compact), fontScale(%)
++//   theme: mode(light|dark|system), accent
++//
++// The preset JSON below is the same data the Customize panel
++// offers; test_build33_task38.py parses both copies and requires
++// them to stay identical in shape.
++
++#ifndef CHROME_BROWSER_LUMO_LUMO_NTP_CONFIG_H_
++#define CHROME_BROWSER_LUMO_LUMO_NTP_CONFIG_H_
++
++namespace lumo {
++
++inline constexpr int kLumoNtpConfigVersion = 1;
++
++inline constexpr char kLumoNtpDefaultConfigJson[] =
++    R"LUMOJSON({
++  "version": 1,
++  "background": {
++    "mode": "solid",
++    "color": "#ffffff",
++    "color2": "#00bcd4",
++    "gradientAngle": 135,
++    "pattern": "none",
++    "imageFit": "cover",
++    "imagePosition": "center",
++    "imageRepeat": false,
++    "darkness": 0,
++    "blur": 0,
++    "saturation": 100,
++    "overlayColor": "#000000",
++    "overlayOpacity": 0
++  },
++  "clock": {
++    "enabled": true,
++    "format24h": true,
++    "showSeconds": false,
++    "size": 64,
++    "weight": 300,
++    "showDate": true,
++    "dateFormat": "weekday-month-day",
++    "align": "center",
++    "color": "#202124",
++    "opacity": 100
++  },
++  "greeting": {
++    "enabled": true,
++    "useTimeOfDay": true,
++    "name": "",
++    "morning": "おはようございます",
++    "afternoon": "こんにちは",
++    "evening": "こんばんは"
++  },
++  "search": {
++    "enabled": true,
++    "engine": "default",
++    "width": 560,
++    "height": 48,
++    "radius": 24,
++    "bgOpacity": 90,
++    "blur": 0,
++    "placeholder": "検索、または URL を入力",
++    "align": "center"
++  },
++  "shortcuts": {
++    "columns": 5,
++    "rows": 2,
++    "tileSize": 96,
++    "gap": 16,
++    "radius": 16,
++    "bgColor": "#ffffff",
++    "bgOpacity": 70,
++    "showLabel": true,
++    "labelColor": "#202124",
++    "labelSize": 12,
++    "faviconSize": 32,
++    "openInNewTab": false,
++    "items": [
++      {
++        "title": "YouTube",
++        "url": "https://www.youtube.com/"
++      },
++      {
++        "title": "GitHub",
++        "url": "https://github.com/"
++      }
++    ]
++  },
++  "widgets": [
++    {
++      "id": "clock",
++      "enabled": false,
++      "order": 0,
++      "width": 320
++    },
++    {
++      "id": "calendar",
++      "enabled": true,
++      "order": 1,
++      "width": 320
++    },
++    {
++      "id": "bookmarks",
++      "enabled": false,
++      "order": 2,
++      "width": 320
++    },
++    {
++      "id": "recently_closed",
++      "enabled": false,
++      "order": 3,
++      "width": 320
++    },
++    {
++      "id": "downloads",
++      "enabled": false,
++      "order": 4,
++      "width": 320
++    },
++    {
++      "id": "memo",
++      "enabled": true,
++      "order": 5,
++      "width": 320
++    },
++    {
++      "id": "todo",
++      "enabled": true,
++      "order": 6,
++      "width": 320
++    },
++    {
++      "id": "open_tabs",
++      "enabled": false,
++      "order": 7,
++      "width": 320
++    },
++    {
++      "id": "lumo_info",
++      "enabled": true,
++      "order": 8,
++      "width": 320
++    }
++  ],
++  "layout": {
++    "verticalAlign": "center",
++    "maxWidth": 960,
++    "gap": 24,
++    "density": "standard",
++    "fontScale": 100
++  },
++  "theme": {
++    "mode": "system",
++    "accent": "#00acc1"
++  }
++})LUMOJSON";
++
++inline constexpr char kLumoNtpPresetDefaultJson[] =
++    R"LUMOJSON({
++  "version": 1,
++  "background": {
++    "mode": "solid",
++    "color": "#ffffff",
++    "color2": "#00bcd4",
++    "gradientAngle": 135,
++    "pattern": "none",
++    "imageFit": "cover",
++    "imagePosition": "center",
++    "imageRepeat": false,
++    "darkness": 0,
++    "blur": 0,
++    "saturation": 100,
++    "overlayColor": "#000000",
++    "overlayOpacity": 0
++  },
++  "clock": {
++    "enabled": true,
++    "format24h": true,
++    "showSeconds": false,
++    "size": 64,
++    "weight": 300,
++    "showDate": true,
++    "dateFormat": "weekday-month-day",
++    "align": "center",
++    "color": "#202124",
++    "opacity": 100
++  },
++  "greeting": {
++    "enabled": true,
++    "useTimeOfDay": true,
++    "name": "",
++    "morning": "おはようございます",
++    "afternoon": "こんにちは",
++    "evening": "こんばんは"
++  },
++  "search": {
++    "enabled": true,
++    "engine": "default",
++    "width": 560,
++    "height": 48,
++    "radius": 24,
++    "bgOpacity": 90,
++    "blur": 0,
++    "placeholder": "検索、または URL を入力",
++    "align": "center"
++  },
++  "shortcuts": {
++    "columns": 5,
++    "rows": 2,
++    "tileSize": 96,
++    "gap": 16,
++    "radius": 16,
++    "bgColor": "#ffffff",
++    "bgOpacity": 70,
++    "showLabel": true,
++    "labelColor": "#202124",
++    "labelSize": 12,
++    "faviconSize": 32,
++    "openInNewTab": false,
++    "items": [
++      {
++        "title": "YouTube",
++        "url": "https://www.youtube.com/"
++      },
++      {
++        "title": "GitHub",
++        "url": "https://github.com/"
++      }
++    ]
++  },
++  "widgets": [
++    {
++      "id": "clock",
++      "enabled": false,
++      "order": 0,
++      "width": 320
++    },
++    {
++      "id": "calendar",
++      "enabled": true,
++      "order": 1,
++      "width": 320
++    },
++    {
++      "id": "bookmarks",
++      "enabled": false,
++      "order": 2,
++      "width": 320
++    },
++    {
++      "id": "recently_closed",
++      "enabled": false,
++      "order": 3,
++      "width": 320
++    },
++    {
++      "id": "downloads",
++      "enabled": false,
++      "order": 4,
++      "width": 320
++    },
++    {
++      "id": "memo",
++      "enabled": true,
++      "order": 5,
++      "width": 320
++    },
++    {
++      "id": "todo",
++      "enabled": true,
++      "order": 6,
++      "width": 320
++    },
++    {
++      "id": "open_tabs",
++      "enabled": false,
++      "order": 7,
++      "width": 320
++    },
++    {
++      "id": "lumo_info",
++      "enabled": true,
++      "order": 8,
++      "width": 320
++    }
++  ],
++  "layout": {
++    "verticalAlign": "center",
++    "maxWidth": 960,
++    "gap": 24,
++    "density": "standard",
++    "fontScale": 100
++  },
++  "theme": {
++    "mode": "system",
++    "accent": "#00acc1"
++  }
++})LUMOJSON";
++
++inline constexpr char kLumoNtpPresetMinimalJson[] =
++    R"LUMOJSON({
++  "version": 1,
++  "background": {
++    "mode": "solid",
++    "color": "#f8f9fa",
++    "color2": "#00bcd4",
++    "gradientAngle": 135,
++    "pattern": "none",
++    "imageFit": "cover",
++    "imagePosition": "center",
++    "imageRepeat": false,
++    "darkness": 0,
++    "blur": 0,
++    "saturation": 100,
++    "overlayColor": "#000000",
++    "overlayOpacity": 0
++  },
++  "clock": {
++    "enabled": false,
++    "format24h": true,
++    "showSeconds": false,
++    "size": 48,
++    "weight": 300,
++    "showDate": false,
++    "dateFormat": "month-day",
++    "align": "center",
++    "color": "#202124",
++    "opacity": 100
++  },
++  "greeting": {
++    "enabled": false,
++    "useTimeOfDay": true,
++    "name": "",
++    "morning": "おはようございます",
++    "afternoon": "こんにちは",
++    "evening": "こんばんは"
++  },
++  "search": {
++    "enabled": true,
++    "engine": "default",
++    "width": 560,
++    "height": 48,
++    "radius": 24,
++    "bgOpacity": 90,
++    "blur": 0,
++    "placeholder": "検索、または URL を入力",
++    "align": "center"
++  },
++  "shortcuts": {
++    "columns": 5,
++    "rows": 2,
++    "tileSize": 96,
++    "gap": 16,
++    "radius": 16,
++    "bgColor": "#ffffff",
++    "bgOpacity": 70,
++    "showLabel": true,
++    "labelColor": "#202124",
++    "labelSize": 12,
++    "faviconSize": 32,
++    "openInNewTab": false,
++    "items": [
++      {
++        "title": "YouTube",
++        "url": "https://www.youtube.com/"
++      },
++      {
++        "title": "GitHub",
++        "url": "https://github.com/"
++      }
++    ]
++  },
++  "widgets": [
++    {
++      "id": "clock",
++      "enabled": false,
++      "order": 0,
++      "width": 320
++    },
++    {
++      "id": "calendar",
++      "enabled": false,
++      "order": 1,
++      "width": 320
++    },
++    {
++      "id": "bookmarks",
++      "enabled": false,
++      "order": 2,
++      "width": 320
++    },
++    {
++      "id": "recently_closed",
++      "enabled": false,
++      "order": 3,
++      "width": 320
++    },
++    {
++      "id": "downloads",
++      "enabled": false,
++      "order": 4,
++      "width": 320
++    },
++    {
++      "id": "memo",
++      "enabled": false,
++      "order": 5,
++      "width": 320
++    },
++    {
++      "id": "todo",
++      "enabled": false,
++      "order": 6,
++      "width": 320
++    },
++    {
++      "id": "open_tabs",
++      "enabled": false,
++      "order": 7,
++      "width": 320
++    },
++    {
++      "id": "lumo_info",
++      "enabled": false,
++      "order": 8,
++      "width": 320
++    }
++  ],
++  "layout": {
++    "verticalAlign": "center",
++    "maxWidth": 960,
++    "gap": 24,
++    "density": "standard",
++    "fontScale": 100
++  },
++  "theme": {
++    "mode": "system",
++    "accent": "#00acc1"
++  }
++})LUMOJSON";
++
++inline constexpr char kLumoNtpPresetFocusJson[] =
++    R"LUMOJSON({
++  "version": 1,
++  "background": {
++    "mode": "gradient",
++    "color": "#102a43",
++    "color2": "#243b53",
++    "gradientAngle": 160,
++    "pattern": "none",
++    "imageFit": "cover",
++    "imagePosition": "center",
++    "imageRepeat": false,
++    "darkness": 0,
++    "blur": 0,
++    "saturation": 100,
++    "overlayColor": "#000000",
++    "overlayOpacity": 0
++  },
++  "clock": {
++    "enabled": true,
++    "format24h": true,
++    "showSeconds": false,
++    "size": 64,
++    "weight": 300,
++    "showDate": true,
++    "dateFormat": "weekday-month-day",
++    "align": "center",
++    "color": "#202124",
++    "opacity": 100
++  },
++  "greeting": {
++    "enabled": true,
++    "useTimeOfDay": true,
++    "name": "",
++    "morning": "おはようございます",
++    "afternoon": "こんにちは",
++    "evening": "こんばんは"
++  },
++  "search": {
++    "enabled": true,
++    "engine": "default",
++    "width": 560,
++    "height": 48,
++    "radius": 24,
++    "bgOpacity": 90,
++    "blur": 0,
++    "placeholder": "検索、または URL を入力",
++    "align": "center"
++  },
++  "shortcuts": {
++    "columns": 5,
++    "rows": 2,
++    "tileSize": 96,
++    "gap": 16,
++    "radius": 16,
++    "bgColor": "#ffffff",
++    "bgOpacity": 70,
++    "showLabel": true,
++    "labelColor": "#202124",
++    "labelSize": 12,
++    "faviconSize": 32,
++    "openInNewTab": false,
++    "items": [
++      {
++        "title": "YouTube",
++        "url": "https://www.youtube.com/"
++      },
++      {
++        "title": "GitHub",
++        "url": "https://github.com/"
++      }
++    ]
++  },
++  "widgets": [
++    {
++      "id": "clock",
++      "enabled": false,
++      "order": 0,
++      "width": 320
++    },
++    {
++      "id": "calendar",
++      "enabled": true,
++      "order": 1,
++      "width": 320
++    },
++    {
++      "id": "bookmarks",
++      "enabled": false,
++      "order": 2,
++      "width": 320
++    },
++    {
++      "id": "recently_closed",
++      "enabled": false,
++      "order": 3,
++      "width": 320
++    },
++    {
++      "id": "downloads",
++      "enabled": false,
++      "order": 4,
++      "width": 320
++    },
++    {
++      "id": "memo",
++      "enabled": true,
++      "order": 5,
++      "width": 320
++    },
++    {
++      "id": "todo",
++      "enabled": true,
++      "order": 6,
++      "width": 320
++    },
++    {
++      "id": "open_tabs",
++      "enabled": false,
++      "order": 7,
++      "width": 320
++    },
++    {
++      "id": "lumo_info",
++      "enabled": true,
++      "order": 8,
++      "width": 320
++    }
++  ],
++  "layout": {
++    "verticalAlign": "center",
++    "maxWidth": 720,
++    "gap": 32,
++    "density": "relaxed",
++    "fontScale": 110
++  },
++  "theme": {
++    "mode": "dark",
++    "accent": "#00acc1"
++  }
++})LUMOJSON";
++
++inline constexpr char kLumoNtpPresetColorfulJson[] =
++    R"LUMOJSON({
++  "version": 1,
++  "background": {
++    "mode": "pattern",
++    "color": "#e3f2fd",
++    "color2": "#00bcd4",
++    "gradientAngle": 135,
++    "pattern": "dots",
++    "imageFit": "cover",
++    "imagePosition": "center",
++    "imageRepeat": false,
++    "darkness": 0,
++    "blur": 0,
++    "saturation": 110,
++    "overlayColor": "#ffffff",
++    "overlayOpacity": 10
++  },
++  "clock": {
++    "enabled": true,
++    "format24h": true,
++    "showSeconds": false,
++    "size": 64,
++    "weight": 300,
++    "showDate": true,
++    "dateFormat": "weekday-month-day",
++    "align": "center",
++    "color": "#202124",
++    "opacity": 100
++  },
++  "greeting": {
++    "enabled": true,
++    "useTimeOfDay": true,
++    "name": "",
++    "morning": "おはようございます",
++    "afternoon": "こんにちは",
++    "evening": "こんばんは"
++  },
++  "search": {
++    "enabled": true,
++    "engine": "default",
++    "width": 560,
++    "height": 48,
++    "radius": 24,
++    "bgOpacity": 90,
++    "blur": 0,
++    "placeholder": "検索、または URL を入力",
++    "align": "center"
++  },
++  "shortcuts": {
++    "columns": 5,
++    "rows": 2,
++    "tileSize": 96,
++    "gap": 16,
++    "radius": 16,
++    "bgColor": "#ffffff",
++    "bgOpacity": 70,
++    "showLabel": true,
++    "labelColor": "#202124",
++    "labelSize": 12,
++    "faviconSize": 32,
++    "openInNewTab": false,
++    "items": [
++      {
++        "title": "YouTube",
++        "url": "https://www.youtube.com/"
++      },
++      {
++        "title": "GitHub",
++        "url": "https://github.com/"
++      }
++    ]
++  },
++  "widgets": [
++    {
++      "id": "clock",
++      "enabled": false,
++      "order": 0,
++      "width": 320
++    },
++    {
++      "id": "calendar",
++      "enabled": true,
++      "order": 1,
++      "width": 320
++    },
++    {
++      "id": "bookmarks",
++      "enabled": false,
++      "order": 2,
++      "width": 320
++    },
++    {
++      "id": "recently_closed",
++      "enabled": false,
++      "order": 3,
++      "width": 320
++    },
++    {
++      "id": "downloads",
++      "enabled": false,
++      "order": 4,
++      "width": 320
++    },
++    {
++      "id": "memo",
++      "enabled": true,
++      "order": 5,
++      "width": 320
++    },
++    {
++      "id": "todo",
++      "enabled": true,
++      "order": 6,
++      "width": 320
++    },
++    {
++      "id": "open_tabs",
++      "enabled": false,
++      "order": 7,
++      "width": 320
++    },
++    {
++      "id": "lumo_info",
++      "enabled": true,
++      "order": 8,
++      "width": 320
++    }
++  ],
++  "layout": {
++    "verticalAlign": "center",
++    "maxWidth": 960,
++    "gap": 24,
++    "density": "standard",
++    "fontScale": 100
++  },
++  "theme": {
++    "mode": "light",
++    "accent": "#fb8c00"
++  }
++})LUMOJSON";
++
++}  // namespace lumo
++
++#endif  // CHROME_BROWSER_LUMO_LUMO_NTP_CONFIG_H_

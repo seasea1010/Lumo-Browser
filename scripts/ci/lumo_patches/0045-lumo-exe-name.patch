@@ -1,0 +1,196 @@
+diff --git a/build/win/reorder-imports.py b/build/win/reorder-imports.py
+index d0195fbe1e500..0000000000000 100755
+--- a/build/win/reorder-imports.py
++++ b/build/win/reorder-imports.py
+@@ -100,7 +100,7 @@ import pefile
+ 
+ 
+ def reorder_imports(input_dir, output_dir, architecture):
+-    """Swap chrome_elf.dll to be the first import of thorium.exe.
++    """Swap chrome_elf.dll to be the first import of lumo.exe.
+     Also copy over any related files that might be needed
+     (pdbs, manifests etc.).
+     """
+@@ -147,8 +147,8 @@ def reorder_imports(input_dir, output_dir, architecture):
+     # correct executable in the first place, so that this script
+     # only needs to verify that and not write a whole new exe.
+ 
+-    input_image = os.path.join(input_dir, 'thorium.exe')
+-    output_image = os.path.join(output_dir, 'thorium.exe')
++    input_image = os.path.join(input_dir, 'lumo.exe')
++    output_image = os.path.join(output_dir, 'lumo.exe')
+ 
+     # pefile mmap()s the whole executable, and then parses parts of
+     # it into python data structures for ease of processing.
+@@ -195,7 +195,7 @@ def reorder_imports(input_dir, output_dir, architecture):
+ 
+     pe.write(filename=output_image)
+ 
+-    for fname in glob.iglob(os.path.join(input_dir, 'thorium.exe.*')):
++    for fname in glob.iglob(os.path.join(input_dir, 'lumo.exe.*')):
+         shutil.copy(fname, os.path.join(output_dir, os.path.basename(fname)))
+     return 0
+ 
+@@ -242,10 +242,10 @@ def main(argv):
+     usage = 'reorder_imports.py -i <input_dir> -o <output_dir> -a <target_arch>'
+     parser = optparse.OptionParser(usage=usage)
+     parser.add_option(
+-        '-i', '--input', help='reorder thorium.exe in DIR', metavar='DIR'
++        '-i', '--input', help='reorder lumo.exe in DIR', metavar='DIR'
+     )
+     parser.add_option(
+-        '-o', '--output', help='write new thorium.exe to DIR', metavar='DIR'
++        '-o', '--output', help='write new lumo.exe to DIR', metavar='DIR'
+     )
+     parser.add_option(
+         '-a', '--arch', help='architecture of build (optional)', default='ia32'
+diff --git a/chrome/BUILD.gn b/chrome/BUILD.gn
+index b3e9e96874fff..0000000000000 100644
+--- a/chrome/BUILD.gn
++++ b/chrome/BUILD.gn
+@@ -100,12 +100,12 @@ if (is_win) {
+     # initialexe/ is used so that the we can reorder imports and write back to
+     # the final destination at $root_out_dir/.
+     inputs = [
+-      "$root_out_dir/initialexe/thorium.exe",
+-      "$root_out_dir/initialexe/thorium.exe.pdb",
++      "$root_out_dir/initialexe/lumo.exe",
++      "$root_out_dir/initialexe/lumo.exe.pdb",
+     ]
+     outputs = [
+-      "$root_out_dir/thorium.exe",
+-      "$root_out_dir/thorium.exe.pdb",
++      "$root_out_dir/lumo.exe",
++      "$root_out_dir/lumo.exe.pdb",
+     ]
+     args = [
+       "-i",
+@@ -152,7 +152,7 @@ if (!is_android && !is_mac) {
+   }
+ 
+   if (is_win) {
+-    _chrome_output_name = "initialexe/thorium"
++    _chrome_output_name = "initialexe/lumo"
+   } else if (is_chromeos) {
+     _chrome_output_name = "chrome"
+   } else {
+diff --git a/chrome/app/chrome_exe.ver b/chrome/app/chrome_exe.ver
+index 000e0052c7a7b..0000000000000 100644
+--- a/chrome/app/chrome_exe.ver
++++ b/chrome/app/chrome_exe.ver
+@@ -100,2 +100,2 @@
+-INTERNAL_NAME=thorium_exe
+-ORIGINAL_FILENAME=thorium.exe
++INTERNAL_NAME=lumo_exe
++ORIGINAL_FILENAME=lumo.exe
+diff --git a/chrome/chrome_proxy/chrome_proxy_main_win.cc b/chrome/chrome_proxy/chrome_proxy_main_win.cc
+index 200df33828735..0000000000000 100644
+--- a/chrome/chrome_proxy/chrome_proxy_main_win.cc
++++ b/chrome/chrome_proxy/chrome_proxy_main_win.cc
+@@ -100,7 +100,7 @@
+ namespace {
+ 
+ constexpr base::FilePath::CharType kChromeExecutable[] =
+-    FILE_PATH_LITERAL("thorium.exe");
++    FILE_PATH_LITERAL("lumo.exe");
+ 
+ constexpr base::FilePath::CharType kChromeProxyExecutable[] =
+     FILE_PATH_LITERAL("chrome_proxy.exe");
+diff --git a/chrome/common/chrome_constants.cc b/chrome/common/chrome_constants.cc
+index 1b5159d3fec19..0000000000000 100644
+--- a/chrome/common/chrome_constants.cc
++++ b/chrome/common/chrome_constants.cc
+@@ -100,9 +100,9 @@ const char kChromeVersion[] = CHROME_VERSION_STRING;
+ 
+ #if BUILDFLAG(IS_WIN)
+ const base::FilePath::CharType kBrowserProcessExecutableName[] =
+-    FPL("thorium.exe");
++    FPL("lumo.exe");
+ const base::FilePath::CharType kHelperProcessExecutableName[] =
+-    FPL("thorium.exe");
++    FPL("lumo.exe");
+ #elif BUILDFLAG(IS_MAC)
+ const base::FilePath::CharType kBrowserProcessExecutableName[] =
+     FPL(PRODUCT_FULLNAME_STRING);
+@@ -149,9 +149,9 @@ const base::FilePath::CharType kHelperProcessExecutableName[] =
+ 
+ #if BUILDFLAG(IS_WIN)
+ const base::FilePath::CharType kBrowserProcessExecutablePath[] =
+-    FPL("thorium.exe");
++    FPL("lumo.exe");
+ const base::FilePath::CharType kHelperProcessExecutablePath[] =
+-    FPL("thorium.exe");
++    FPL("lumo.exe");
+ #elif BUILDFLAG(IS_MAC)
+ const base::FilePath::CharType kBrowserProcessExecutablePath[] =
+     FPL(PRODUCT_FULLNAME_STRING ".app/Contents/MacOS/" PRODUCT_FULLNAME_STRING);
+diff --git a/chrome/installer/launcher_support/chrome_launcher_support.cc b/chrome/installer/launcher_support/chrome_launcher_support.cc
+index fe7c07b924f14..0000000000000 100644
+--- a/chrome/installer/launcher_support/chrome_launcher_support.cc
++++ b/chrome/installer/launcher_support/chrome_launcher_support.cc
+@@ -100,7 +100,7 @@ const wchar_t kBrowserAppGuid[] = L"{8A69D345-D564-463c-AFF1-A69D9E530F96}";
+ #endif
+ 
+ // Copied from util_constants.cc.
+-const wchar_t kChromeExe[] = L"thorium.exe";
++const wchar_t kChromeExe[] = L"lumo.exe";
+ const wchar_t kUninstallStringField[] = L"UninstallString";
+ const wchar_t kVersionStringField[] = L"pv";
+ 
+diff --git a/chrome/installer/mini_installer/BUILD.gn b/chrome/installer/mini_installer/BUILD.gn
+index 46f5bcb3cffd6..0000000000000 100644
+--- a/chrome/installer/mini_installer/BUILD.gn
++++ b/chrome/installer/mini_installer/BUILD.gn
+@@ -100,7 +100,7 @@ action("mini_installer_archive") {
+   inputs = [
+     "$root_out_dir/chrome.dll",
+     "$root_out_dir/chrome_elf.dll",
+-    "$root_out_dir/thorium.exe",
++    "$root_out_dir/lumo.exe",
+     "$root_out_dir/locales/en-US.pak",
+     "$root_out_dir/setup.exe",
+     "//chrome/tools/build/win/makecab.py",
+diff --git a/chrome/installer/mini_installer/chrome.release b/chrome/installer/mini_installer/chrome.release
+index adb6a07f9c927..0000000000000 100644
+--- a/chrome/installer/mini_installer/chrome.release
++++ b/chrome/installer/mini_installer/chrome.release
+@@ -100,7 +100,7 @@
+ #
+ # Chrome Application dir entries, sorted alphabetically.
+ #
+-thorium.exe: %(ChromeDir)s\
++lumo.exe: %(ChromeDir)s\
+ chrome_proxy.exe: %(ChromeDir)s\
+ # thor_ver for Thorium-WinUpdater
+ thor_ver: %(ChromeDir)s\
+diff --git a/chrome/installer/mini_installer/mini_installer_constants.cc b/chrome/installer/mini_installer/mini_installer_constants.cc
+index dc849ba780cca..0000000000000 100644
+--- a/chrome/installer/mini_installer/mini_installer_constants.cc
++++ b/chrome/installer/mini_installer/mini_installer_constants.cc
+@@ -100,7 +100,7 @@ namespace mini_installer {
+ // Various filenames and prefixes.
+ // The target name of the installer extracted from resources.
+ const wchar_t kSetupExe[] = L"setup.exe";
+ // The browser executable launched after a successful first install.
+-const wchar_t kBrowserExe[] = L"thorium.exe";
++const wchar_t kBrowserExe[] = L"lumo.exe";
+ // The prefix of the chrome archive resource.
+ const wchar_t kChromeArchivePrefix[] = L"chrome";
+ // The prefix of the installer resource.
+diff --git a/chrome/installer/util/util_constants.h b/chrome/installer/util/util_constants.h
+index 3fdba90596635..0000000000000 100644
+--- a/chrome/installer/util/util_constants.h
++++ b/chrome/installer/util/util_constants.h
+@@ -100,9 +100,9 @@ inline constexpr char kGoogleUpdateIsMachineEnvVar[] = "GoogleUpdateIsMachine";
+ // Active Setup.
+ inline constexpr wchar_t kActiveSetupExe[] = L"chrmstp.exe";
+ inline constexpr wchar_t kChromeDll[] = L"chrome.dll";
+-inline constexpr wchar_t kChromeExe[] = L"thorium.exe";
+-inline constexpr wchar_t kChromeNewExe[] = L"new_thorium.exe";
+-inline constexpr wchar_t kChromeOldExe[] = L"old_thorium.exe";
++inline constexpr wchar_t kChromeExe[] = L"lumo.exe";
++inline constexpr wchar_t kChromeNewExe[] = L"new_lumo.exe";
++inline constexpr wchar_t kChromeOldExe[] = L"old_lumo.exe";
+ inline constexpr wchar_t kChromeProxyExe[] = L"chrome_proxy.exe";
+ inline constexpr wchar_t kChromeProxyNewExe[] = L"new_chrome_proxy.exe";
+ inline constexpr wchar_t kChromeProxyOldExe[] = L"old_chrome_proxy.exe";

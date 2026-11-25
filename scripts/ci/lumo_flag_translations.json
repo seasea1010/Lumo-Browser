@@ -15816,6 +15816,14 @@
    "en": "Hover Card Memory Usage",
    "ja": "ホバーカードのメモリ使用量"
   },
+  "chrome/browser/thorium_flag_entries.h|lumo-hover-show-close-button:description": {
+   "en": "Shows the close button on an inactive tab while it is hovered, even when the tab is too narrow to show one, so the tab can be closed directly. Enabled by default. Implemented by Lumo patch 0041.",
+   "ja": "タブが狭くて通常は閉じるボタンが表示されない場合でも、非アクティブなタブにホバーすると閉じるボタンを表示し、そのまま閉じられるようにします。既定で有効です。Lumo のパッチ 0041 で実装されています。"
+  },
+  "chrome/browser/thorium_flag_entries.h|lumo-hover-show-close-button:name": {
+   "en": "Show Close Button on Hovered Inactive Tabs",
+   "ja": "ホバー中の非アクティブなタブに閉じるボタンを表示"
+  },
   "chrome/browser/thorium_flag_entries.h|lumo-launch-thorium-profile:description": {
    "en": "Shows the app-menu item that launches Lumo with the original Thorium user profile data directory. The item is hidden by default so it cannot be clicked by accident.",
    "ja": "元の Thorium のユーザープロファイルデータフォルダを使って Lumo を起動する、アプリメニューの項目を表示します。誤ってクリックしないよう、既定では隠されています。"

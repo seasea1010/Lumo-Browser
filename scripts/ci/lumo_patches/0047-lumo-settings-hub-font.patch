@@ -1,0 +1,959 @@
+diff --git a/chrome/app/settings_strings.grdp b/chrome/app/settings_strings.grdp
+index 0000000..0000000 100644
+--- a/chrome/app/settings_strings.grdp
++++ b/chrome/app/settings_strings.grdp
+@@ -100,4 +100,37 @@
+     <message name="IDS_SETTINGS_LUMO_MONITOR_REFRESH" desc="Refresh button on the Lumo Monitor settings page (Lumo patch 0022)">
+       更新
+     </message>
++    <message name="IDS_SETTINGS_LUMO_PAGE_TITLE" desc="Title of the Lumo hub settings page (Lumo patch 0047)">
++      Lumo
++    </message>
++    <message name="IDS_SETTINGS_LUMO_HUB_MONITOR_LABEL" desc="Label of the Lumo Monitor entry on the Lumo hub settings page (Lumo patch 0047)">
++      Lumo Monitor
++    </message>
++    <message name="IDS_SETTINGS_LUMO_HUB_MONITOR_DESC" desc="Description of the Lumo Monitor entry on the Lumo hub settings page (Lumo patch 0047)">
++      バージョン、プロファイル、メモリ使用量、Sync の状態などを表示します
++    </message>
++    <message name="IDS_SETTINGS_LUMO_HUB_FONT_LABEL" desc="Label of the font entry on the Lumo hub settings page (Lumo patch 0047)">
++      フォント
++    </message>
++    <message name="IDS_SETTINGS_LUMO_HUB_FONT_DESC" desc="Description of the font entry on the Lumo hub settings page (Lumo patch 0047)">
++      ブラウザ全体の UI フォントを変更します
++    </message>
++    <message name="IDS_SETTINGS_LUMO_FONT_PAGE_TITLE" desc="Title of the Lumo font settings page (Lumo patch 0047)">
++      フォント
++    </message>
++    <message name="IDS_SETTINGS_LUMO_FONT_UI_LABEL" desc="Label for the UI font picker on the Lumo font settings page (Lumo patch 0047)">
++      UI フォント
++    </message>
++    <message name="IDS_SETTINGS_LUMO_FONT_UI_DESC" desc="Description of the UI font picker on the Lumo font settings page (Lumo patch 0047)">
++      タブ、ツールバー、アドレスバー、メニュー、設定画面、ダイアログなど、ブラウザ全体の文字に使うフォントです。Web サイトの表示には影響しません。変更は次回起動時から全体に適用されます。
++    </message>
++    <message name="IDS_SETTINGS_LUMO_FONT_DEFAULT_OPTION" desc="Option for the platform default UI font on the Lumo font settings page (Lumo patch 0047)">
++      既定のフォント
++    </message>
++    <message name="IDS_SETTINGS_LUMO_FONT_RESTART" desc="Restart button on the Lumo font settings page (Lumo patch 0047)">
++      今すぐ再起動して適用
++    </message>
++    <message name="IDS_SETTINGS_LUMO_FONT_CURRENT_LABEL" desc="Label for the current UI font on the Lumo font settings page (Lumo patch 0047)">
++      現在のフォント
++    </message>
+ </grit-part>
+diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
+index 0000000..0000000 100644
+--- a/chrome/browser/BUILD.gn
++++ b/chrome/browser/BUILD.gn
+@@ -100,8 +100,10 @@
+     "intranet_redirect_detector.cc",
+     "lumo/lumo_debugger_reporter.cc",
+     "lumo/lumo_debugger_reporter.h",
+     "lumo/lumo_launch_notify.cc",
+     "lumo/lumo_launch_notify.h",
++    "lumo/lumo_ui_font.cc",
++    "lumo/lumo_ui_font.h",
+     "lumo/lumo_upgrade_welcome.cc",
+     "lumo/lumo_upgrade_welcome.h",
+     "memory_details.cc",
+diff --git a/chrome/browser/lumo/lumo_ui_font.h b/chrome/browser/lumo/lumo_ui_font.h
+new file mode 100644
+index 0000000..0000000
+--- /dev/null
++++ b/chrome/browser/lumo/lumo_ui_font.h
+@@ -100,0 +100,34 @@
++// Copyright 2026 seasea1010
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_LUMO_LUMO_UI_FONT_H_
++#define CHROME_BROWSER_LUMO_LUMO_UI_FONT_H_
++
++class Profile;
++
++namespace lumo {
++
++// Applies the UI font chosen on the Lumo font settings page
++// (chrome://settings/lumoFont, Lumo patch 0047) to the whole browser
++// UI. The chosen family is stored in the profile pref
++// prefs::kLumoUiFontFamily; when it is non-empty this installs it as
++// the default gfx::FontList description (keeping the platform
++// default size), which is the single base every toolkit-views
++// surface derives its font from: tabs, the toolbar, the omnibox,
++// menus, dialogs, bubbles, context menus and popups. Web content is
++// not affected: renderer font settings are never touched.
++//
++// gfx::FontList::SetDefaultFontDescription() must run before the
++// default FontList is first materialised for the window being
++// created, so this is called from
++// StartupBrowserCreatorImpl::DetermineStartupTabs(), before the
++// first browser window exists. Changing the pref therefore takes
++// full effect on the next launch; the font page says so and offers
++// a restart button. Does nothing when no font is chosen (the
++// platform default stays in charge) or for off-the-record profiles.
++void ApplyLumoUiFontOverride(Profile* profile);
++
++}  // namespace lumo
++
++#endif  // CHROME_BROWSER_LUMO_LUMO_UI_FONT_H_
+diff --git a/chrome/browser/lumo/lumo_ui_font.cc b/chrome/browser/lumo/lumo_ui_font.cc
+new file mode 100644
+index 0000000..0000000
+--- /dev/null
++++ b/chrome/browser/lumo/lumo_ui_font.cc
+@@ -100,0 +100,41 @@
++// Copyright 2026 seasea1010
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/lumo/lumo_ui_font.h"
++
++#include <string>
++
++#include "base/strings/string_number_conversions.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/common/pref_names.h"
++#include "components/prefs/pref_service.h"
++#include "ui/gfx/font.h"
++#include "ui/gfx/font_list.h"
++
++namespace lumo {
++
++void ApplyLumoUiFontOverride(Profile* profile) {
++  if (!profile || profile->IsOffTheRecord()) {
++    return;
++  }
++  const std::string family =
++      profile->GetPrefs()->GetString(prefs::kLumoUiFontFamily);
++  if (family.empty()) {
++    return;
++  }
++  // Keep the platform default size (and, through FontList's own
++  // derivation, every relative size the UI uses); only the family
++  // changes. A FontList description is "<family list> <size>px",
++  // and a family name never contains a comma, so the chosen family
++  // can be used verbatim.
++  const gfx::Font default_font;
++  const int size_pixels = default_font.GetFontSize();
++  if (size_pixels <= 0) {
++    return;
++  }
++  gfx::FontList::SetDefaultFontDescription(
++      family + " " + base::NumberToString(size_pixels) + "px");
++}
++
++}  // namespace lumo
+diff --git a/chrome/browser/ui/browser_ui_prefs.cc b/chrome/browser/ui/browser_ui_prefs.cc
+index 0000000..0000000 100644
+--- a/chrome/browser/ui/browser_ui_prefs.cc
++++ b/chrome/browser/ui/browser_ui_prefs.cc
+@@ -100,8 +100,12 @@
+   // Lumo sidebar (patches 0037/0038).
+   registry->RegisterStringPref(prefs::kLumoSidebarWebPanelUrl,
+                                std::string());
+   registry->RegisterListPref(prefs::kLumoSidebarWebPanels,
+                              DefaultLumoSidebarWebPanels());
+   registry->RegisterBooleanPref(prefs::kLumoSidebarBarCollapsed, false);
++
++  // Lumo UI font (patch 0047): the font family chosen on the
++  // Lumo font settings page. Empty means the platform default.
++  registry->RegisterStringPref(prefs::kLumoUiFontFamily, std::string());
+ 
+   registry->RegisterBooleanPref(prefs::kWebAppCreateOnDesktop, true);
+diff --git a/chrome/common/pref_names.h b/chrome/common/pref_names.h
+index 0000000..0000000 100644
+--- a/chrome/common/pref_names.h
++++ b/chrome/common/pref_names.h
+@@ -100,6 +100,12 @@
+ inline constexpr char kLumoSidebarWebPanels[] = "lumo.sidebar.web_panels";
+ 
++// Lumo UI font (patch 0047): the font family chosen on the Lumo
++// font settings page, applied to the whole browser UI at startup
++// (see chrome/browser/lumo/lumo_ui_font.cc). Empty means the
++// platform default font.
++inline constexpr char kLumoUiFontFamily[] = "lumo.ui_font.family";
++
+ // Lumo sidebar (patches 0037/0038): whether the sidebar icon bar is
+ // collapsed to its narrow strip.
+ inline constexpr char kLumoSidebarBarCollapsed[] =
+     "lumo.sidebar.bar_collapsed";
+diff --git a/chrome/browser/ui/startup/startup_browser_creator_impl.cc b/chrome/browser/ui/startup/startup_browser_creator_impl.cc
+index 0000000..0000000 100644
+--- a/chrome/browser/ui/startup/startup_browser_creator_impl.cc
++++ b/chrome/browser/ui/startup/startup_browser_creator_impl.cc
+@@ -100,3 +100,4 @@
+ #include "chrome/browser/lifetime/application_lifetime_desktop.h"
++#include "chrome/browser/lumo/lumo_ui_font.h"
+ #include "chrome/browser/lumo/lumo_upgrade_welcome.h"
+ #include "chrome/browser/prefs/session_startup_pref.h"
+@@ -143,5 +144,12 @@
+     if (profile_->IsNewProfile()) {
+       lumo::RecordWelcomeShownBuildNumber(profile_);
+     }
++
++    // Lumo (patch 0047): install the chosen UI font as the
++    // default FontList description before the first browser
++    // window (and every widget created from it) exists, so
++    // the whole UI -- tabs, toolbar, omnibox, menus, dialogs
++    // -- picks the font up. No-op when no font is chosen.
++    lumo::ApplyLumoUiFontOverride(profile_);
+ 
+     // If the user has set the preference indicating URLs to show on opening,
+diff --git a/chrome/browser/resources/settings/BUILD.gn b/chrome/browser/resources/settings/BUILD.gn
+index 0000000..0000000 100644
+--- a/chrome/browser/resources/settings/BUILD.gn
++++ b/chrome/browser/resources/settings/BUILD.gn
+@@ -100,5 +100,10 @@
+     "lazy_load.ts",
++    "lumo_font_page/lumo_font_browser_proxy.ts",
++    "lumo_font_page/lumo_font_page.html.ts",
++    "lumo_font_page/lumo_font_page.ts",
++    "lumo_hub_page/lumo_hub_page.html.ts",
++    "lumo_hub_page/lumo_hub_page.ts",
+     "lumo_monitor_page/lumo_monitor_browser_proxy.ts",
+     "lumo_monitor_page/lumo_monitor_page.html.ts",
+     "lumo_monitor_page/lumo_monitor_page.ts",
+     "metrics_browser_proxy.ts",
+@@ -145,3 +150,5 @@
+     "languages_page/spell_check_page.css",
++    "lumo_font_page/lumo_font_page.css",
++    "lumo_hub_page/lumo_hub_page.css",
+     "lumo_monitor_page/lumo_monitor_page.css",
+     "on_startup_page/startup_url_entry.css",
+diff --git a/chrome/browser/resources/settings/lumo_hub_page/lumo_hub_page.css b/chrome/browser/resources/settings/lumo_hub_page/lumo_hub_page.css
+new file mode 100644
+index 0000000..0000000
+--- /dev/null
++++ b/chrome/browser/resources/settings/lumo_hub_page/lumo_hub_page.css
+@@ -100,0 +100,11 @@
++/* Copyright 2026 seasea1010
++ * Use of this source code is governed by a BSD-style license that can be
++ * found in the LICENSE file. */
++
++/* #css_wrapper_metadata_start
++ * #type=style-lit
++ * #import=chrome://resources/cr_elements/cr_shared_style_lit.css.js
++ * #import=chrome://resources/cr_elements/cr_shared_vars.css.js
++ * #import=../settings_shared_lit.css.js
++ * #include=cr-shared-style-lit settings-shared-lit
++ * #css_wrapper_metadata_end */
+diff --git a/chrome/browser/resources/settings/lumo_hub_page/lumo_hub_page.html.ts b/chrome/browser/resources/settings/lumo_hub_page/lumo_hub_page.html.ts
+new file mode 100644
+index 0000000..0000000
+--- /dev/null
++++ b/chrome/browser/resources/settings/lumo_hub_page/lumo_hub_page.html.ts
+@@ -100,0 +100,21 @@
++// Copyright 2026 seasea1010
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++import {html} from '//resources/lit/v3_0/lit.rollup.js';
++
++import type {SettingsLumoHubPageElement} from './lumo_hub_page.js';
++
++export function getHtml(this: SettingsLumoHubPageElement) {
++  return html`<!--_html_template_start_-->
++<settings-section page-title="$i18n{lumoPageTitle}">
++  <cr-link-row class="hr" label="$i18n{lumoHubMonitorLabel}"
++      sub-label="$i18n{lumoHubMonitorDesc}"
++      @click="${this.onMonitorClick_}">
++  </cr-link-row>
++  <cr-link-row label="$i18n{lumoHubFontLabel}"
++      sub-label="$i18n{lumoHubFontDesc}"
++      @click="${this.onFontClick_}">
++  </cr-link-row>
++</settings-section><!--_html_template_end_-->`;
++}
+diff --git a/chrome/browser/resources/settings/lumo_hub_page/lumo_hub_page.ts b/chrome/browser/resources/settings/lumo_hub_page/lumo_hub_page.ts
+new file mode 100644
+index 0000000..0000000
+--- /dev/null
++++ b/chrome/browser/resources/settings/lumo_hub_page/lumo_hub_page.ts
+@@ -100,0 +100,58 @@
++// Copyright 2026 seasea1010
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++/**
++ * @fileoverview 'settings-lumo-hub-page' is the Lumo hub settings
++ * page (Lumo patch 0047): the single "Lumo" entry in the settings
++ * menu, right below About. It links to the Lumo Monitor page
++ * (patch 0022, which no longer has a menu item of its own) and to
++ * the Lumo font page (patch 0047).
++ */
++
++import 'chrome://resources/cr_elements/cr_link_row/cr_link_row.js';
++import '../settings_page/settings_section.js';
++
++import {I18nMixinLit} from 'chrome://resources/cr_elements/i18n_mixin_lit.js';
++import {CrLitElement} from 'chrome://resources/lit/v3_0/lit.rollup.js';
++
++import {Router} from '../router.js';
++
++import {getCss} from './lumo_hub_page.css.js';
++import {getHtml} from './lumo_hub_page.html.js';
++
++const SettingsLumoHubPageElementBase = I18nMixinLit(CrLitElement);
++
++export class SettingsLumoHubPageElement extends
++    SettingsLumoHubPageElementBase {
++  static get is() {
++    return 'settings-lumo-hub-page';
++  }
++
++  static override get styles() {
++    return getCss();
++  }
++
++  override render() {
++    return getHtml.bind(this)();
++  }
++
++  protected onMonitorClick_() {
++    Router.getInstance().navigateTo(
++        Router.getInstance().getRoutes().LUMO_MONITOR);
++  }
++
++  protected onFontClick_() {
++    Router.getInstance().navigateTo(
++        Router.getInstance().getRoutes().LUMO_FONT);
++  }
++}
++
++declare global {
++  interface HTMLElementTagNameMap {
++    'settings-lumo-hub-page': SettingsLumoHubPageElement;
++  }
++}
++
++customElements.define(
++    SettingsLumoHubPageElement.is, SettingsLumoHubPageElement);
+diff --git a/chrome/browser/resources/settings/lumo_font_page/lumo_font_page.css b/chrome/browser/resources/settings/lumo_font_page/lumo_font_page.css
+new file mode 100644
+index 0000000..0000000
+--- /dev/null
++++ b/chrome/browser/resources/settings/lumo_font_page/lumo_font_page.css
+@@ -100,0 +100,11 @@
++/* Copyright 2026 seasea1010
++ * Use of this source code is governed by a BSD-style license that can be
++ * found in the LICENSE file. */
++
++/* #css_wrapper_metadata_start
++ * #type=style-lit
++ * #import=chrome://resources/cr_elements/cr_shared_style_lit.css.js
++ * #import=chrome://resources/cr_elements/cr_shared_vars.css.js
++ * #import=../settings_shared_lit.css.js
++ * #include=cr-shared-style-lit settings-shared-lit
++ * #css_wrapper_metadata_end */
+diff --git a/chrome/browser/resources/settings/lumo_font_page/lumo_font_browser_proxy.ts b/chrome/browser/resources/settings/lumo_font_page/lumo_font_browser_proxy.ts
+new file mode 100644
+index 0000000..0000000
+--- /dev/null
++++ b/chrome/browser/resources/settings/lumo_font_page/lumo_font_browser_proxy.ts
+@@ -100,0 +100,53 @@
++// Copyright 2026 seasea1010
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++import {sendWithPromise} from 'chrome://resources/js/cr.js';
++
++/**
++ * @fileoverview Browser proxy for the Lumo font settings page
++ * (Lumo patch 0047).
++ */
++
++/**
++ * State of the UI font setting, mirroring the dictionary built by
++ * settings::LumoFontHandler.
++ */
++export interface LumoUiFontInfo {
++  /** The chosen font family, or '' for the platform default. */
++  currentFont: string;
++  /** The platform default font family (for display only). */
++  platformDefault: string;
++  /** Font families installed on this machine, sorted by name. */
++  fonts: string[];
++}
++
++export interface LumoFontBrowserProxy {
++  getLumoUiFontInfo(): Promise<LumoUiFontInfo>;
++  setLumoUiFont(family: string): Promise<LumoUiFontInfo>;
++  resetLumoUiFont(): Promise<LumoUiFontInfo>;
++}
++
++export class LumoFontBrowserProxyImpl implements LumoFontBrowserProxy {
++  getLumoUiFontInfo() {
++    return sendWithPromise<LumoUiFontInfo>('getLumoUiFontInfo');
++  }
++
++  setLumoUiFont(family: string) {
++    return sendWithPromise<LumoUiFontInfo>('setLumoUiFont', family);
++  }
++
++  resetLumoUiFont() {
++    return sendWithPromise<LumoUiFontInfo>('resetLumoUiFont');
++  }
++
++  static getInstance(): LumoFontBrowserProxy {
++    return instance || (instance = new LumoFontBrowserProxyImpl());
++  }
++
++  static setInstance(obj: LumoFontBrowserProxy) {
++    instance = obj;
++  }
++}
++
++let instance: LumoFontBrowserProxy|null = null;
+diff --git a/chrome/browser/resources/settings/lumo_font_page/lumo_font_page.html.ts b/chrome/browser/resources/settings/lumo_font_page/lumo_font_page.html.ts
+new file mode 100644
+index 0000000..0000000
+--- /dev/null
++++ b/chrome/browser/resources/settings/lumo_font_page/lumo_font_page.html.ts
+@@ -100,0 +100,44 @@
++// Copyright 2026 seasea1010
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++import {html} from '//resources/lit/v3_0/lit.rollup.js';
++
++import type {SettingsLumoFontPageElement} from './lumo_font_page.js';
++
++export function getHtml(this: SettingsLumoFontPageElement) {
++  return html`<!--_html_template_start_-->
++<settings-section page-title="$i18n{lumoFontPageTitle}">
++  <div class="cr-row first">
++    <div class="flex cr-padded-text">
++      <div>$i18n{lumoFontUiLabel}</div>
++      <div class="secondary">$i18n{lumoFontUiDesc}</div>
++    </div>
++    ${this.info_ ? html`
++    <select id="lumoUiFontSelect" @change="${this.onFontChange_}"
++        aria-label="$i18n{lumoFontUiLabel}">
++      <option value=""
++          ?selected="${this.info_.currentFont === ''}">
++        $i18n{lumoFontDefaultOption}
++      </option>
++      ${this.info_.fonts.map(family => html`
++      <option value="${family}"
++          ?selected="${family === this.info_.currentFont}">
++        ${family}
++      </option>`)}
++    </select>` : ''}
++  </div>
++  ${this.info_ ? html`
++  <div class="cr-row">
++    <div class="flex cr-padded-text">
++      <div>$i18n{lumoFontCurrentLabel}</div>
++      <div class="secondary">${this.currentFontText_()}</div>
++    </div>
++  </div>` : ''}
++  <div class="cr-row">
++    <cr-button id="lumoFontRestart" @click="${this.onRestartClick_}">
++      $i18n{lumoFontRestart}
++    </cr-button>
++  </div>
++</settings-section><!--_html_template_end_-->`;
++}
+diff --git a/chrome/browser/resources/settings/lumo_font_page/lumo_font_page.ts b/chrome/browser/resources/settings/lumo_font_page/lumo_font_page.ts
+new file mode 100644
+index 0000000..0000000
+--- /dev/null
++++ b/chrome/browser/resources/settings/lumo_font_page/lumo_font_page.ts
+@@ -100,0 +100,96 @@
++// Copyright 2026 seasea1010
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++/**
++ * @fileoverview 'settings-lumo-font-page' is the Lumo font settings
++ * page (Lumo patch 0047), reached from the Lumo hub page. It lets
++ * the user pick one of the fonts installed on this machine as the
++ * font for the whole browser UI (tabs, toolbar, omnibox, menus,
++ * dialogs, popups). The choice is stored by
++ * settings::LumoFontHandler in the profile pref
++ * prefs::kLumoUiFontFamily and applied at the next launch by
++ * lumo::ApplyLumoUiFontOverride() as the default FontList
++ * description, so it covers every toolkit-views surface at once.
++ * Web content fonts are never touched.
++ */
++
++import 'chrome://resources/cr_elements/cr_button/cr_button.js';
++import '../settings_page/settings_section.js';
++
++import {I18nMixinLit} from 'chrome://resources/cr_elements/i18n_mixin_lit.js';
++import {CrLitElement} from 'chrome://resources/lit/v3_0/lit.rollup.js';
++
++import {LifetimeBrowserProxyImpl} from '../lifetime_browser_proxy.js';
++
++import {getCss} from './lumo_font_page.css.js';
++import {getHtml} from './lumo_font_page.html.js';
++import type {LumoUiFontInfo} from './lumo_font_browser_proxy.js';
++import {LumoFontBrowserProxyImpl} from './lumo_font_browser_proxy.js';
++
++const SettingsLumoFontPageElementBase = I18nMixinLit(CrLitElement);
++
++export class SettingsLumoFontPageElement extends
++    SettingsLumoFontPageElementBase {
++  static get is() {
++    return 'settings-lumo-font-page';
++  }
++
++  static override get styles() {
++    return getCss();
++  }
++
++  override render() {
++    return getHtml.bind(this)();
++  }
++
++  static override get properties() {
++    return {
++      info_: {type: Object},
++    };
++  }
++
++  protected accessor info_: LumoUiFontInfo|null = null;
++
++  private browserProxy_ = LumoFontBrowserProxyImpl.getInstance();
++
++  override connectedCallback() {
++    super.connectedCallback();
++    this.browserProxy_.getLumoUiFontInfo().then(info => {
++      this.info_ = info;
++    });
++  }
++
++  protected onFontChange_(event: Event) {
++    const family = (event.target as HTMLSelectElement).value;
++    const request = family === '' ?
++        this.browserProxy_.resetLumoUiFont() :
++        this.browserProxy_.setLumoUiFont(family);
++    request.then(info => {
++      this.info_ = info;
++    });
++  }
++
++  protected onRestartClick_() {
++    LifetimeBrowserProxyImpl.getInstance().restartBrowser();
++  }
++
++  protected currentFontText_(): string {
++    if (!this.info_ || this.info_.currentFont === '') {
++      return this.info_ ?
++          `${this.i18n('lumoFontDefaultOption')} (${
++              this.info_.platformDefault})` :
++          '';
++    }
++    return this.info_.currentFont;
++  }
++}
++
++declare global {
++  interface HTMLElementTagNameMap {
++    'settings-lumo-font-page': SettingsLumoFontPageElement;
++  }
++}
++
++customElements.define(
++    SettingsLumoFontPageElement.is, SettingsLumoFontPageElement);
+diff --git a/chrome/browser/resources/settings/route.ts b/chrome/browser/resources/settings/route.ts
+index 0000000..0000000 100644
+--- a/chrome/browser/resources/settings/route.ts
++++ b/chrome/browser/resources/settings/route.ts
+@@ -100,9 +100,21 @@
++  // Lumo hub (Lumo patch 0047): a section right below About. It
++  // links to the Lumo Monitor page and to the Lumo font page;
++  // the Monitor section itself has no menu item of its own.
++  r.LUMO = r.BASIC.createSection(
++      '/lumo', 'lumo', loadTimeData.getString('lumoPageTitle'));
++
+   // Lumo: Monitor page (Lumo patch 0022). Reached from the Lumo
+   // hub page (patch 0047); there is no direct menu item for it
+   // (the hub has the menu item instead).
+   r.LUMO_MONITOR = r.BASIC.createSection(
+       '/lumoMonitor', 'lumoMonitor',
+       loadTimeData.getString('lumoMonitorPageTitle'));
++
++  // Lumo font page (Lumo patch 0047): a child of the hub, so
++  // the settings framework shows it as a subpage of the hub.
++  r.LUMO_FONT = r.LUMO.createChild(
++      '/lumoFont', 'lumoFont',
++      loadTimeData.getString('lumoFontPageTitle'));
+ 
+   // Search page.
+   r.SEARCH = r.BASIC.createSection(
+diff --git a/chrome/browser/resources/settings/router.ts b/chrome/browser/resources/settings/router.ts
+index 0000000..0000000 100644
+--- a/chrome/browser/resources/settings/router.ts
++++ b/chrome/browser/resources/settings/router.ts
+@@ -100,3 +100,5 @@
+   LANGUAGES: Route;
++  LUMO: Route;
++  LUMO_FONT: Route;
+   LUMO_MONITOR: Route;
+   MANAGE_PROFILE: Route;
+diff --git a/chrome/browser/resources/settings/settings.ts b/chrome/browser/resources/settings/settings.ts
+index 0000000..0000000 100644
+--- a/chrome/browser/resources/settings/settings.ts
++++ b/chrome/browser/resources/settings/settings.ts
+@@ -100,4 +100,8 @@
+ export {SettingsAboutPageElement} from './about_page/about_page.js';
++export {SettingsLumoFontPageElement} from './lumo_font_page/lumo_font_page.js';
++export {LumoFontBrowserProxyImpl} from './lumo_font_page/lumo_font_browser_proxy.js';
++export type {LumoUiFontInfo, LumoFontBrowserProxy} from './lumo_font_page/lumo_font_browser_proxy.js';
++export {SettingsLumoHubPageElement} from './lumo_hub_page/lumo_hub_page.js';
+ export {SettingsLumoMonitorPageElement} from './lumo_monitor_page/lumo_monitor_page.js';
+ export {LumoMonitorBrowserProxyImpl} from './lumo_monitor_page/lumo_monitor_browser_proxy.js';
+ export type {LumoMonitorInfo, LumoMonitorBrowserProxy} from './lumo_monitor_page/lumo_monitor_browser_proxy.js';
+diff --git a/chrome/browser/resources/settings/settings_main/settings_main.ts b/chrome/browser/resources/settings/settings_main/settings_main.ts
+index 0000000..0000000 100644
+--- a/chrome/browser/resources/settings/settings_main/settings_main.ts
++++ b/chrome/browser/resources/settings/settings_main/settings_main.ts
+@@ -100,3 +100,5 @@
+ import '../autofill_page/autofill_page_index.js';
++import '../lumo_font_page/lumo_font_page.js';
++import '../lumo_hub_page/lumo_hub_page.js';
+ import '../lumo_monitor_page/lumo_monitor_page.js';
+ import '../on_startup_page/on_startup_page.js';
+diff --git a/chrome/browser/resources/settings/settings_main/settings_main.html b/chrome/browser/resources/settings/settings_main/settings_main.html
+index 0000000..0000000 100644
+--- a/chrome/browser/resources/settings/settings_main/settings_main.html
++++ b/chrome/browser/resources/settings/settings_main/settings_main.html
+@@ -100,9 +100,27 @@
++  <div slot="view" id="lumo">
++    <template is="dom-if" if="[[renderPlugin_(
++        routes_.LUMO, lastRoute_, inSearchMode_)]]">
++      <settings-lumo-hub-page role="main"
++          class="cr-centered-card-container">
++      </settings-lumo-hub-page>
++    </template>
++  </div>
++
+   <div slot="view" id="lumoMonitor">
+     <template is="dom-if" if="[[renderPlugin_(
+         routes_.LUMO_MONITOR, lastRoute_, inSearchMode_)]]">
+       <settings-lumo-monitor-page role="main"
+           class="cr-centered-card-container">
+       </settings-lumo-monitor-page>
+     </template>
+   </div>
++
++  <div slot="view" id="lumoFont">
++    <template is="dom-if" if="[[renderPlugin_(
++        routes_.LUMO_FONT, lastRoute_, inSearchMode_)]]">
++      <settings-lumo-font-page role="main"
++          class="cr-centered-card-container">
++      </settings-lumo-font-page>
++    </template>
++  </div>
+ </cr-view-manager>
+diff --git a/chrome/browser/resources/settings/settings_menu/settings_menu.html b/chrome/browser/resources/settings/settings_menu/settings_menu.html
+index 0000000..0000000 100644
+--- a/chrome/browser/resources/settings/settings_menu/settings_menu.html
++++ b/chrome/browser/resources/settings/settings_menu/settings_menu.html
+@@ -100,5 +100,11 @@
+           <span class="menu-label">$i18n{aboutPageTitle}</span>
+           <cr-ripple></cr-ripple>
+         </a>
++        <a role="menuitem" id="lumo-menu" href="/lumo"
++            class="cr-nav-menu-item">
++          <cr-icon icon="settings20:dashboard"></cr-icon>
++          <span class="menu-label">$i18n{lumoPageTitle}</span>
++          <cr-ripple></cr-ripple>
++        </a>
+       </cr-menu-selector>
+     </div>
+diff --git a/chrome/browser/resources/settings/lumo_monitor_page/lumo_monitor_page.html.ts b/chrome/browser/resources/settings/lumo_monitor_page/lumo_monitor_page.html.ts
+index 0000000..0000000 100644
+--- a/chrome/browser/resources/settings/lumo_monitor_page/lumo_monitor_page.html.ts
++++ b/chrome/browser/resources/settings/lumo_monitor_page/lumo_monitor_page.html.ts
+@@ -100,3 +100,6 @@
+ <settings-section page-title="$i18n{lumoMonitorPageTitle}">
++  <cr-icon-button class="icon-arrow-back" id="lumoMonitorBack"
++      @click="${this.onBackClick_}" aria-label="Lumo">
++  </cr-icon-button>
+   ${this.info_ ? html`
+   <div class="cr-row first">
+diff --git a/chrome/browser/resources/settings/lumo_monitor_page/lumo_monitor_page.ts b/chrome/browser/resources/settings/lumo_monitor_page/lumo_monitor_page.ts
+index 0000000..0000000 100644
+--- a/chrome/browser/resources/settings/lumo_monitor_page/lumo_monitor_page.ts
++++ b/chrome/browser/resources/settings/lumo_monitor_page/lumo_monitor_page.ts
+@@ -100,3 +100,5 @@
+ import {CrLitElement} from 'chrome://resources/lit/v3_0/lit.rollup.js';
++
++import {Router} from '../router.js';
+ 
+ import {getCss} from './lumo_monitor_page.css.js';
+@@ -143,5 +145,12 @@
+   protected onRefreshClick_() {
+     this.refresh_();
+   }
++
++  // Lumo (patch 0047): the Monitor page is reached from the
++  // Lumo hub page and carries a back arrow to it.
++  protected onBackClick_() {
++    Router.getInstance().navigateTo(
++        Router.getInstance().getRoutes().LUMO);
++  }
+ 
+   private refresh_() {
+diff --git a/chrome/browser/ui/webui/settings/BUILD.gn b/chrome/browser/ui/webui/settings/BUILD.gn
+index 0000000..0000000 100644
+--- a/chrome/browser/ui/webui/settings/BUILD.gn
++++ b/chrome/browser/ui/webui/settings/BUILD.gn
+@@ -100,3 +100,4 @@
+     "languages_handler.h",
++    "lumo_font_handler.h",
+     "lumo_monitor_handler.h",
+     "metrics_reporting_handler.h",
+@@ -143,3 +144,4 @@
+     "languages_handler.cc",
++    "lumo_font_handler.cc",
+     "lumo_monitor_handler.cc",
+     "metrics_reporting_handler.cc",
+diff --git a/chrome/browser/ui/webui/settings/lumo_font_handler.h b/chrome/browser/ui/webui/settings/lumo_font_handler.h
+new file mode 100644
+index 0000000..0000000
+--- /dev/null
++++ b/chrome/browser/ui/webui/settings/lumo_font_handler.h
+@@ -100,0 +100,63 @@
++// Copyright 2026 seasea1010
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_WEBUI_SETTINGS_LUMO_FONT_HANDLER_H_
++#define CHROME_BROWSER_UI_WEBUI_SETTINGS_LUMO_FONT_HANDLER_H_
++
++#include <string>
++#include <vector>
++
++#include "base/memory/raw_ptr.h"
++#include "base/values.h"
++#include "chrome/browser/ui/webui/settings/settings_page_ui_handler.h"
++
++class Profile;
++
++namespace settings {
++
++// WebUI message handler for the Lumo font settings page
++// (Lumo patch 0047). Serves three requests:
++//   "getLumoUiFontInfo" - the current choice plus the font
++//       families installed on this machine (enumerated from the
++//       OS: EnumFontFamiliesEx on Windows);
++//   "setLumoUiFont"     - stores a chosen family in the profile
++//       pref prefs::kLumoUiFontFamily (validated against the
++//       enumerated list, so the page cannot store arbitrary
++//       strings);
++//   "resetLumoUiFont"   - clears the pref (platform default).
++// The pref is applied to the whole browser UI at the next launch
++// by lumo::ApplyLumoUiFontOverride(); this handler never touches
++// renderer (web content) font settings.
++class LumoFontHandler : public SettingsPageUIHandler {
++ public:
++  explicit LumoFontHandler(Profile* profile);
++
++  LumoFontHandler(const LumoFontHandler&) = delete;
++  LumoFontHandler& operator=(const LumoFontHandler&) = delete;
++
++  ~LumoFontHandler() override;
++
++  // SettingsPageUIHandler:
++  void RegisterMessages() override;
++  void OnJavascriptAllowed() override;
++  void OnJavascriptDisallowed() override;
++
++ private:
++  // Font families installed on this machine, sorted, without the
++  // vertical-writing "@"-prefixed aliases EnumFontFamiliesEx also
++  // reports. Empty off Windows (Lumo ships for Windows only).
++  static std::vector<std::string> EnumerateInstalledFonts();
++
++  base::DictValue BuildInfo();
++
++  void HandleGetLumoUiFontInfo(const base::ListValue& args);
++  void HandleSetLumoUiFont(const base::ListValue& args);
++  void HandleResetLumoUiFont(const base::ListValue& args);
++
++  const raw_ptr<Profile> profile_;
++};
++
++}  // namespace settings
++
++#endif  // CHROME_BROWSER_UI_WEBUI_SETTINGS_LUMO_FONT_HANDLER_H_
+diff --git a/chrome/browser/ui/webui/settings/lumo_font_handler.cc b/chrome/browser/ui/webui/settings/lumo_font_handler.cc
+new file mode 100644
+index 0000000..0000000
+--- /dev/null
++++ b/chrome/browser/ui/webui/settings/lumo_font_handler.cc
+@@ -100,0 +100,133 @@
++// Copyright 2026 seasea1010
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/ui/webui/settings/lumo_font_handler.h"
++
++#include <algorithm>
++#include <set>
++#include <string>
++#include <utility>
++
++#include "base/check.h"
++#include "base/functional/bind.h"
++#include "base/strings/utf_string_conversions.h"
++#include "build/build_config.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/common/pref_names.h"
++#include "components/prefs/pref_service.h"
++#include "ui/gfx/font.h"
++
++#if BUILDFLAG(IS_WIN)
++#include <windows.h>
++#endif  // BUILDFLAG(IS_WIN)
++
++namespace settings {
++
++namespace {
++
++#if BUILDFLAG(IS_WIN)
++// EnumFontFamiliesEx callback: collects the face name of every
++// enumerated font family into |families| (a std::set<std::string>
++// passed as LPARAM). The "@"-prefixed names are vertical-writing
++// aliases of the same families, not separate fonts, and are
++// skipped.
++int CALLBACK CollectFontFamily(const LOGFONTW* log_font,
++                               const TEXTMETRICW* text_metric,
++                               DWORD font_type,
++                               LPARAM param) {
++  auto* families = reinterpret_cast<std::set<std::string>*>(param);
++  const std::wstring face_name(log_font->lfFaceName);
++  if (!face_name.empty() && face_name.front() != L'@') {
++    families->insert(base::WideToUTF8(face_name));
++  }
++  return 1;
++}
++#endif  // BUILDFLAG(IS_WIN)
++
++}  // namespace
++
++LumoFontHandler::LumoFontHandler(Profile* profile) : profile_(profile) {}
++
++LumoFontHandler::~LumoFontHandler() = default;
++
++void LumoFontHandler::RegisterMessages() {
++  web_ui()->RegisterMessageCallback(
++      "getLumoUiFontInfo",
++      base::BindRepeating(&LumoFontHandler::HandleGetLumoUiFontInfo,
++                          base::Unretained(this)));
++  web_ui()->RegisterMessageCallback(
++      "setLumoUiFont",
++      base::BindRepeating(&LumoFontHandler::HandleSetLumoUiFont,
++                          base::Unretained(this)));
++  web_ui()->RegisterMessageCallback(
++      "resetLumoUiFont",
++      base::BindRepeating(&LumoFontHandler::HandleResetLumoUiFont,
++                          base::Unretained(this)));
++}
++
++void LumoFontHandler::OnJavascriptAllowed() {}
++
++void LumoFontHandler::OnJavascriptDisallowed() {}
++
++// static
++std::vector<std::string> LumoFontHandler::EnumerateInstalledFonts() {
++  std::set<std::string> families;
++#if BUILDFLAG(IS_WIN)
++  LOGFONTW log_font = {};
++  log_font.lfCharSet = DEFAULT_CHARSET;
++  HDC dc = ::GetDC(nullptr);
++  if (dc) {
++    ::EnumFontFamiliesExW(dc, &log_font, &CollectFontFamily,
++                          reinterpret_cast<LPARAM>(&families), 0);
++    ::ReleaseDC(nullptr, dc);
++  }
++#endif  // BUILDFLAG(IS_WIN)
++  return std::vector<std::string>(families.begin(), families.end());
++}
++
++base::DictValue LumoFontHandler::BuildInfo() {
++  base::DictValue info;
++  info.Set("currentFont",
++           profile_->GetPrefs()->GetString(prefs::kLumoUiFontFamily));
++  info.Set("platformDefault", gfx::Font().GetFontName());
++  base::ListValue fonts;
++  for (const std::string& family : EnumerateInstalledFonts()) {
++    fonts.Append(family);
++  }
++  info.Set("fonts", std::move(fonts));
++  return info;
++}
++
++void LumoFontHandler::HandleGetLumoUiFontInfo(
++    const base::ListValue& args) {
++  AllowJavascript();
++  CHECK_EQ(1U, args.size());
++  ResolveJavascriptCallback(args[0], base::Value(BuildInfo()));
++}
++
++void LumoFontHandler::HandleSetLumoUiFont(const base::ListValue& args) {
++  AllowJavascript();
++  CHECK_EQ(2U, args.size());
++  const std::string* family = args[1].GetIfString();
++  if (family && !family->empty()) {
++    // Only families the OS actually reports may be stored, so the
++    // pref always names a font the FontList override can resolve.
++    const std::vector<std::string> installed = EnumerateInstalledFonts();
++    if (std::find(installed.begin(), installed.end(), *family) !=
++        installed.end()) {
++      profile_->GetPrefs()->SetString(prefs::kLumoUiFontFamily, *family);
++    }
++  }
++  ResolveJavascriptCallback(args[0], base::Value(BuildInfo()));
++}
++
++void LumoFontHandler::HandleResetLumoUiFont(
++    const base::ListValue& args) {
++  AllowJavascript();
++  CHECK_EQ(1U, args.size());
++  profile_->GetPrefs()->ClearPref(prefs::kLumoUiFontFamily);
++  ResolveJavascriptCallback(args[0], base::Value(BuildInfo()));
++}
++
++}  // namespace settings
+diff --git a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
+index 0000000..0000000 100644
+--- a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
++++ b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
+@@ -100,4 +100,17 @@
+       {"lumoMonitorCrashLabel",
+        IDS_SETTINGS_LUMO_MONITOR_CRASH_LABEL},
+       {"lumoMonitorRefresh", IDS_SETTINGS_LUMO_MONITOR_REFRESH},
++      {"lumoPageTitle", IDS_SETTINGS_LUMO_PAGE_TITLE},
++      {"lumoHubMonitorLabel", IDS_SETTINGS_LUMO_HUB_MONITOR_LABEL},
++      {"lumoHubMonitorDesc", IDS_SETTINGS_LUMO_HUB_MONITOR_DESC},
++      {"lumoHubFontLabel", IDS_SETTINGS_LUMO_HUB_FONT_LABEL},
++      {"lumoHubFontDesc", IDS_SETTINGS_LUMO_HUB_FONT_DESC},
++      {"lumoFontPageTitle", IDS_SETTINGS_LUMO_FONT_PAGE_TITLE},
++      {"lumoFontUiLabel", IDS_SETTINGS_LUMO_FONT_UI_LABEL},
++      {"lumoFontUiDesc", IDS_SETTINGS_LUMO_FONT_UI_DESC},
++      {"lumoFontDefaultOption",
++       IDS_SETTINGS_LUMO_FONT_DEFAULT_OPTION},
++      {"lumoFontRestart", IDS_SETTINGS_LUMO_FONT_RESTART},
++      {"lumoFontCurrentLabel",
++       IDS_SETTINGS_LUMO_FONT_CURRENT_LABEL},
+       {"aboutProductTitle", IDS_PRODUCT_NAME},
+diff --git a/chrome/browser/ui/webui/settings/settings_ui.cc b/chrome/browser/ui/webui/settings/settings_ui.cc
+index 0000000..0000000 100644
+--- a/chrome/browser/ui/webui/settings/settings_ui.cc
++++ b/chrome/browser/ui/webui/settings/settings_ui.cc
+@@ -100,3 +100,4 @@
+ #include "chrome/browser/ui/webui/settings/about_handler.h"
++#include "chrome/browser/ui/webui/settings/lumo_font_handler.h"
+ #include "chrome/browser/ui/webui/settings/lumo_monitor_handler.h"
+ #include "chrome/browser/ui/webui/settings/accessibility_main_handler.h"
+@@ -143,4 +144,7 @@
+   AddSettingsPageUIHandler(std::make_unique<AboutHandler>(profile));
++  // Lumo: UI font page handler (Lumo patch 0047).
++  AddSettingsPageUIHandler(
++      std::make_unique<LumoFontHandler>(profile));
+   // Lumo: state snapshot page (Lumo patch 0022).
+   AddSettingsPageUIHandler(
+       std::make_unique<LumoMonitorHandler>(profile));

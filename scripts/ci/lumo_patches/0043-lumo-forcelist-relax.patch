@@ -1,0 +1,31 @@
+diff --git a/chrome/browser/extensions/extension_management.cc b/chrome/browser/extensions/extension_management.cc
+index 70216f3..01314e2 100644
+--- a/chrome/browser/extensions/extension_management.cc
++++ b/chrome/browser/extensions/extension_management.cc
+@@ -100,9 +100,25 @@ bool g_allow_unpacked_without_developer_mode_for_testing = false;
+ }
+ 
+ #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
++// Lumo patch 0043 (task 35): keep the low-trust off-store block off by
++// default. Upstream enables it by default, which makes
++// ExtensionManagement::ShouldBlockForceInstalledOffstoreExtension()
++// permanently disable (DISABLE_NOT_VERIFIED, via
++// StandardManagementPolicyProvider::MustRemainDisabled) every
++// force-installed extension whose update URL is not the Chrome Web
++// Store whenever the machine is not enterprise managed (no domain
++// join, MDM, or Chrome Browser Cloud Management enrollment) -- so on
++// a personal PC, ExtensionInstallForcelist entries pointing at a
++// self-hosted CRX never take effect. Lumo is a personal browser, so
++// the block is relaxed here. The relaxation is scoped to this one
++// feature: ShouldBlockForceInstalledOffstoreExtension() is its only
++// consumer, and it already only applies to forced, policy-location,
++// off-store extensions. The neighbouring low-trust protections (the
++// greylist block and the DSE/NTP override block) keep their upstream
++// defaults, and no other extension security check is touched.
+ // Disables off-store force-installed extensions in low trust environments.
+ BASE_FEATURE(kDisableOffstoreForceInstalledExtensionsInLowTrustEnviroment,
+-             base::FEATURE_ENABLED_BY_DEFAULT);
++             base::FEATURE_DISABLED_BY_DEFAULT);
+ 
+ // Disables force-installed extensions in low trust environments when
+ // greylisted.
