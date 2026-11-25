@@ -178,6 +178,7 @@ jobs:
           # resuming a quietly incomplete tree (stage.py only
           # verifies the zip it wrote exists and is non-empty).
           # Exit 1 is a warning only — the same tolerance
+          
           # checkpoint() applies when writing; exit >= 2 is fatal.
           7z t build-state/${{ env.BUILD_STATE_ZIP }}
           if ($LASTEXITCODE -ge 2) { throw "Checkpoint integrity check failed (7z t exit $LASTEXITCODE): build-state/${{ env.BUILD_STATE_ZIP }} is corrupt or truncated; refusing to resume from it." }
@@ -199,10 +200,13 @@ jobs:
           GOOGLE_DEFAULT_CLIENT_SECRET: ${{ secrets.GOOGLE_DEFAULT_CLIENT_SECRET }}
           LUMO_LOCK_HASH: ${{ secrets.LUMO_LOCK_HASH }}
           LUMO_LOCK_HASH_2: ${{ secrets.LUMO_LOCK_HASH_2 }}
+          LUMO_LAUNCH_DIST_ID: ${{ secrets.LUMO_LAUNCH_DIST_ID }}
+          LUMO_LAUNCH_KEY: ${{ secrets.LUMO_LAUNCH_KEY }}
           LUMO_BUILD_NUMBER: ${{ inputs.build-number }}
         run: |
           set +e
           python scripts/ci/stage.py \
+        
             --build-root "$BUILD_ROOT" \
             --repo-root "$GITHUB_WORKSPACE" \
             --state-zip "$GITHUB_WORKSPACE/${{ env.BUILD_STATE_ZIP }}" \
