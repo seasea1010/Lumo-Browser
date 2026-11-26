@@ -10,7 +10,7 @@ index 9b70823..3dc6d81 100644
 +           developer mode is on (the same condition that
 +           reveals this drawer). -->
 +      <cr-button id="lumoGithubAdd" @click="${this.onLumoGithubAddClick_}"
-+          ?hidden="${!this.devModeOn}">
++          ?hidden="${!this.inDevMode}">
 +        ${this.i18n('lumoGithubAddButton')}
 +      </cr-button>
 +      <extensions-github-dialog></extensions-github-dialog>
@@ -38,7 +38,7 @@ new file mode 100644
 index 0000000..a49b004
 --- /dev/null
 +++ b/chrome/browser/resources/extensions/github_dialog.ts
-@@ -100,0 +100,115 @@
+@@ -100,0 +100,117 @@
 +// Copyright 2026 seasea1010
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -52,8 +52,8 @@ index 0000000..a49b004
 +// verifies and installs it. Nothing is fetched for a repository the
 +// user did not type here.
 +
++import {I18nMixinLit} from 'chrome://resources/cr_elements/i18n_mixin_lit.js';
 +import {CrLitElement} from '//resources/lit/v3_0/lit.rollup.js';
-+import type {PropertyValues} from '//resources/lit/v3_0/lit.rollup.js';
 +
 +import {Service} from './service.js';
 +import {getHtml} from './github_dialog.html.js';
@@ -66,7 +66,9 @@ index 0000000..a49b004
 +  };
 +}
 +
-+export class ExtensionsGithubDialogElement extends CrLitElement {
++const ExtensionsGithubDialogElementBase = I18nMixinLit(CrLitElement);
++
++export class ExtensionsGithubDialogElement extends ExtensionsGithubDialogElementBase {
 +  static get is() {
 +    return 'extensions-github-dialog';
 +  }
