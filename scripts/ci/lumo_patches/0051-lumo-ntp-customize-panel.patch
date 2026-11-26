@@ -693,11 +693,16 @@ new file mode 100644
 index 0000000..0000000
 --- /dev/null
 +++ b/chrome/browser/resources/side_panel/customize_chrome/lumo_ntp_section.css
-@@ -100,0 +100,38 @@
+@@ -100,0 +100,43 @@
 +/* Copyright 2026 The Lumo Authors
 + * Lumo NTP customization (patch 0051, task 38): flat card styling
 + * in the standard Customize Chrome idiom (surface roles, no
 + * gradients or glow). */
++
++/* #css_wrapper_metadata_start
++ * #type=style-lit
++ * #scheme=relative
++ * #css_wrapper_metadata_end */
 +
 +.lumo-section {
 +  display: flex;
@@ -1310,13 +1315,16 @@ index 0000000..0000000
 +(window as unknown as {LUMO_NTP_PRESETS: unknown}).LUMO_NTP_PRESETS = LUMO_NTP_PRESETS;
 diff --git a/chrome/browser/resources/side_panel/customize_chrome/BUILD.gn b/chrome/browser/resources/side_panel/customize_chrome/BUILD.gn
 index 0000000..0000000 100644
-@@ -100,2 +100,6 @@
+@@ -100,2 +100,5 @@
      "hover_button.ts",
 +    "lumo_ntp_presets.ts",
-+    "lumo_ntp_section.css",
 +    "lumo_ntp_section.html.ts",
 +    "lumo_ntp_section.ts",
      "shortcuts.html.ts",
+@@ -100,2 +100,3 @@
+     "hover_button.css",
++    "lumo_ntp_section.css",
+     "shortcuts.css",
 diff --git a/chrome/browser/resources/side_panel/customize_chrome/app.ts b/chrome/browser/resources/side_panel/customize_chrome/app.ts
 index 0000000..0000000 100644
 @@ -100,2 +100,3 @@

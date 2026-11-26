@@ -3,7 +3,7 @@ new file mode 100644
 index 0000000..0000000
 --- /dev/null
 +++ b/chrome/browser/resources/new_tab_page/lumo_ntp_customizer.ts
-@@ -100,0 +100,387 @@
+@@ -100,0 +100,389 @@
 +// Copyright 2026 The Lumo Authors
 +// Lumo NTP customization (patch 0052, task 38): renders the
 +// customized new tab page from the lumo.ntp.config dictionary
@@ -12,6 +12,8 @@ index 0000000..0000000
 +// every config reply, which is what makes the Customize panel's
 +// edits preview instantly (the panel and this page share the
 +// handler messages).
++
++import './lumo_ntp_customizer.css.js';
 +
 +interface ShortcutItem { title: string, url: string }
 +interface WidgetConfig {
@@ -396,12 +398,16 @@ new file mode 100644
 index 0000000..0000000
 --- /dev/null
 +++ b/chrome/browser/resources/new_tab_page/lumo_ntp_customizer.css
-@@ -100,0 +100,95 @@
+@@ -100,0 +100,99 @@
 +/* Copyright 2026 The Lumo Authors
 + * Lumo NTP customization (patch 0052, task 38): flat styling for
 + * the customized new tab page. All geometry and colors come from
 + * the config at runtime; this file only carries the static shape.
 + */
++
++/* #css_wrapper_metadata_start
++ * #type=vars
++ * #css_wrapper_metadata_end */
 +
 +#lumo-ntp-root {
 +  display: flex;
@@ -527,8 +533,11 @@ index 0000000..0000000 100644
      <script type="module" src="new_tab_page.js"></script>
 diff --git a/chrome/browser/resources/new_tab_page/new_tab_page.gni b/chrome/browser/resources/new_tab_page/new_tab_page.gni
 index 0000000..0000000 100644
-@@ -100,2 +100,4 @@
+@@ -100,2 +100,3 @@
                   "new_tab_page.ts",
-+                 "lumo_ntp_customizer.css",
 +                 "lumo_ntp_customizer.ts",
                   "ntp_composebox.html.ts",
+@@ -100,2 +100,3 @@
+       "logo.css",
++      "lumo_ntp_customizer.css",
+       "ntp_composebox.css",
