@@ -15832,6 +15832,22 @@
    "en": "Launch with Thorium Profile Menu Item",
    "ja": "Thorium プロファイルで起動するメニュー項目"
   },
+  "chrome/browser/thorium_flag_entries.h|lumo-ntp-customize:description": {
+   "en": "新規タブページの背景・時計・検索バー・ショートカット・ウィジェットを、標準のカスタマイズパネルから細かく変更できるようにします（Lumo パッチ 0050〜0052）。",
+   "ja": "新規タブページの背景・時計・検索バー・ショートカット・ウィジェットを、標準のカスタマイズパネルから細かく変更できるようにします（Lumo パッチ 0050〜0052）。"
+  },
+  "chrome/browser/thorium_flag_entries.h|lumo-ntp-customize:name": {
+   "en": "Lumo 新規タブのカスタマイズ",
+   "ja": "Lumo 新規タブのカスタマイズ"
+  },
+  "chrome/browser/thorium_flag_entries.h|lumo-sidebar:description": {
+   "en": "Shows a Floorp-style vertical icon bar at the left edge of the window and docks the side panel on the left. Implemented by Lumo patches 0037 and 0038.",
+   "ja": "ウィンドウの左端に Floorp 風の縦アイコンバーを表示し、サイドパネルを左側にドッキングします（Lumo パッチ 0037・0038）。"
+  },
+  "chrome/browser/thorium_flag_entries.h|lumo-sidebar:name": {
+   "en": "Lumo Sidebar",
+   "ja": "Lumo サイドバー"
+  },
   "chrome/browser/thorium_flag_entries.h|lumo-tab-group-session-save:description": {
    "en": "Saves tab groups as sessions and restores them later, from the app menu. Implemented by Lumo patch 0018.",
    "ja": "タブグループをセッションとして保存し、アプリメニューから後で復元できるようにします。Lumo のパッチ 0018 で実装されています。"
