@@ -47,14 +47,22 @@
 #
 # Build profile: AVX2 only (target machine: Intel Core i5-8350U, AVX2
 # confirmed). No SSE3 build is produced. The Thorium patches build
-# thorium.exe; Lumo patch 0045 renames it at the source level, so the
- # build emits lumo.exe directly (task 40, build #33).
+# thorium.exe; build-final renames it to lumo.exe in the package.
+#
 # Status: the stage chain ran end to end in run #12 (2026-11-15)
 # and the build completed in build-4. build-final failed in #12 on
 # disk space (it extracted the whole ~20.7 GiB tree next to the
 # ~10 GB checkpoint zip) and was rewritten afterwards to extract
 # only out/thorium and prune the build-only files; the rewritten
 # build-final has not run in CI yet. See scripts/ci/stage.py.
+#
+# Build-failure notification (task 47): the notify-failure job at
+# the end of this file POSTs a signed notice to a Cloudflare Worker
+# whenever any build stage or build-final fails, so Muse learns
+# about a failure immediately instead of waiting for a status check.
+# It is best-effort: it always exits 0, never changes the build
+# result, and is skipped when the LUMO_BUILD_NOTIFY_KEY secret is
+# not registered.
 name: Build Lumo for Windows
 
 on:
@@ -437,9 +445,9 @@ jobs:
           & 7z @xargs
           if ($LASTEXITCODE -ge 2) { throw "7z selective extraction failed: $LASTEXITCODE" }
           if ($LASTEXITCODE -eq 1) { Write-Host 'WARNING: 7z exited 1 (some files could not be extracted); the package verification below decides whether the tree is usable.' }
-          $exe = 'C:\lumo-package\lumo-build\src\out\thorium\lumo.exe'
+          $exe = 'C:\lumo-package\lumo-build\src\out\thorium\thorium.exe'
           if (-not (Test-Path $exe)) {
-            Write-Host 'lumo.exe not found after selective extraction; top of the archive listing:'
+            Write-Host 'thorium.exe not found after selective extraction; top of the archive listing:'
             7z l build-state\build-state.zip | Select-Object -First 40
             throw "Built binary not found: $exe"
           }
@@ -558,6 +566,24 @@ jobs:
           $bytes = ($files | Measure-Object Length -Sum).Sum
           Write-Host "Pruned tree: $($files.Count) files, $bytes bytes (salvage reference: 552 files / 641938482 bytes, minus setup.exe, setup.ex_ and the Thorium Shell companion files)."
 
+      - name: Rename thorium.exe to lumo.exe
+        shell: pwsh
+        run: |
+          $outDir = 'C:\lumo-package\lumo-build\src\out\thorium'
+          $exe = Join-Path $outDir 'thorium.exe'
+          if (-not (Test-Path $exe)) { throw "Built binary not found: $exe" }
+          # Thorium's patches name the binary thorium.exe; the
+          # portable package ships it as lumo.exe. The rename is
+          # VERIFIED: the run #12 salvage package with this rename
+          # launched on seasea1010's Windows PC (2026-11-15). The
+          # mini installer is NOT included, and setup.exe is
+          # pruned above: both would install the product as
+          # Thorium until Lumo rebranding patches exist (see
+          # PLAN.md).
+          Rename-Item $exe 'lumo.exe'
+          if (-not (Test-Path (Join-Path $outDir 'lumo.exe'))) { throw 'lumo.exe missing after rename' }
+          if (Test-Path (Join-Path $outDir 'thorium.exe')) { throw 'thorium.exe still present after rename' }
+
       - name: Sign lumo.exe (self-signed certificate)
         shell: pwsh
         env:
@@ -565,7 +591,7 @@ jobs:
           LUMO_SIGN_PASSWORD: ${{ secrets.LUMO_SIGN_PASSWORD }}
         run: |
           # Self-signing (task 18, decided by the owner on
-          # 2026-11-18): sign lumo.exe — and only
+          # 2026-11-18): sign the renamed lumo.exe — and only
           # lumo.exe — with a self-signed code signing
           # certificate whose subject is seasea1019 (the signing
           # identity is 1019 on purpose; every other name in
@@ -634,8 +660,8 @@ jobs:
           https://github.com/gorhill/uBlock
           https://github.com/gorhill/uBO-Scope
           '@ | Set-Content -Path (Join-Path $outDir 'README-LUMO.txt') -Encoding UTF8
-          if (-not (Test-Path (Join-Path $outDir 'lumo.exe'))) { throw 'lumo.exe missing in package tree' }
-          if (Test-Path (Join-Path $outDir 'thorium.exe')) { throw 'thorium.exe still present in package tree' }
+          if (-not (Test-Path (Join-Path $outDir 'lumo.exe'))) { throw 'lumo.exe missing after rename' }
+          if (Test-Path (Join-Path $outDir 'thorium.exe')) { throw 'thorium.exe still present after rename' }
           if (Test-Path (Join-Path $outDir 'setup.exe')) { throw 'setup.exe still present after prune' }
           # Core runtime files (the salvage package's assertions):
           # the browser cannot start without these. The locales
@@ -661,3 +687,37 @@ jobs:
           path: lumo-windows-x64.zip
           if-no-files-found: error
           retention-days: 30
+
+  notify-failure:
+    name: Notify build failure
+    needs: [build-1, build-2, build-3, build-4, build-5, build-6, build-7, build-8, build-9, build-10, build-11, build-12, build-13, build-14, build-15, build-final]
+    if: ${{ always() && contains(needs.*.result, 'failure') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify build failure
+        shell: bash
+        env:
+          NOTIFY_KEY: ${{ secrets.LUMO_BUILD_NOTIFY_KEY }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          set +e
+          if [ -z "$NOTIFY_KEY" ]; then
+            echo "LUMO_BUILD_NOTIFY_KEY not set; skipping build-failure notification."
+            exit 0
+          fi
+          TS=$(date +%s)
+          FAILED=$(printf '%s' "$NEEDS_JSON" | jq -r 'to_entries | map(select(.value.result == "failure") | .key) | join(",")')
+          MSG="${GITHUB_REPOSITORY}.${GITHUB_RUN_ID}.${TS}"
+          SIG=$(printf '%s' "$MSG" | openssl dgst -sha256 -hmac "$NOTIFY_KEY" | awk '{print $NF}')
+          BODY=$(jq -n \
+            --arg repo "$GITHUB_REPOSITORY" \
+            --arg workflow "$GITHUB_WORKFLOW" \
+            --argjson run_id "$GITHUB_RUN_ID" \
+            --argjson run_number "$GITHUB_RUN_NUMBER" \
+            --arg failed "$FAILED" \
+            --arg head_sha "$GITHUB_SHA" \
+            --argjson ts "$TS" \
+            --arg sig "$SIG" \
+            '{repo: $repo, workflow: $workflow, run_id: $run_id, run_number: $run_number, conclusion: "failure", failed_jobs: ($failed | split(",") | map(select(length > 0))), head_sha: $head_sha, ts: $ts, sig: $sig}')
+          curl --silent --max-time 30 -A "Mozilla/5.0" -H 'content-type: application/json' -d "$BODY" https://lumo-build-notify.l-quiet-relay3813.workers.dev/notify || true
+          exit 0
