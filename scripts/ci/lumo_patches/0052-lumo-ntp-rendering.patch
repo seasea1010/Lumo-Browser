@@ -541,3 +541,14 @@ index 0000000..0000000 100644
        "logo.css",
 +      "lumo_ntp_customizer.css",
        "ntp_composebox.css",
+diff --git a/chrome/browser/resources/new_tab_page/BUILD.gn b/chrome/browser/resources/new_tab_page/BUILD.gn
+index 0000000..0000000 100644
+--- a/chrome/browser/resources/new_tab_page/BUILD.gn
++++ b/chrome/browser/resources/new_tab_page/BUILD.gn
+@@ -100,3 +100,4 @@
+   ts_definitions = [
+     "//tools/typescript/definitions/chrome_histograms.d.ts",
++    "//tools/typescript/definitions/chrome_send.d.ts",
+     "//tools/typescript/definitions/metrics_private.d.ts",
+     "//tools/typescript/definitions/pending.d.ts",
+   ]
