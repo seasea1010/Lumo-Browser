@@ -5199,8 +5199,8 @@ _LUMO_RESUME_FIXUP_REPLACEMENTS = (
     ),
     (
         _PRODUCT_LOGO_ANIMATION_REL,
-        b"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 256 256\"><rect x=\"4\" y=\"4\" width=\"248\" height=\"248\" rx=\"52\" fill=\"#191d49\"/><path d=\"M72 48h38v124h78v36H72z\" fill=\"#00a8de\"/></svg>\n",
-        b"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 512 512\"><g transform=\"translate(128 128)\"><rect x=\"4\" y=\"4\" width=\"248\" height=\"248\" rx=\"52\" fill=\"#191d49\"/><path d=\"M72 48h38v124h78v36H72z\" fill=\"#00a8de\"/></g></svg>\n",
+        b"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 256 256\"><rect width=\"256\" height=\"256\" fill=\"#191d49\"/><path d=\"M72 48h38v124h78v36H72z\" fill=\"#00a8de\"/></svg>\n",
+        b"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 512 512\"><g transform=\"translate(128 128)\"><rect width=\"256\" height=\"256\" fill=\"#191d49\"/><path d=\"M72 48h38v124h78v36H72z\" fill=\"#00a8de\"/></g></svg>\n",
         "product_logo_animation.svg -> padded (50% padding) variant",
     ),
     (
