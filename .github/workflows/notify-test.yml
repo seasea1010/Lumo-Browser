@@ -1,0 +1,48 @@
+name: Notify test (task 47)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  fail:
+    name: Deliberate failure (test)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail on purpose
+        run: |
+          echo "This job fails on purpose to test the build-failure notification (task 47)."
+          exit 1
+
+  notify-failure:
+    name: Notify build failure
+    needs: [fail]
+    if: ${{ always() && contains(needs.*.result, 'failure') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify build failure
+        shell: bash
+        env:
+          NOTIFY_KEY: ${{ secrets.LUMO_BUILD_NOTIFY_KEY }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          set +e
+          if [ -z "$NOTIFY_KEY" ]; then
+            echo "LUMO_BUILD_NOTIFY_KEY not set; skipping build-failure notification."
+            exit 0
+          fi
+          TS=$(date +%s)
+          FAILED=$(printf '%s' "$NEEDS_JSON" | jq -r 'to_entries | map(select(.value.result == "failure") | .key) | join(",")')
+          MSG="${GITHUB_REPOSITORY}.${GITHUB_RUN_ID}.${TS}"
+          SIG=$(printf '%s' "$MSG" | openssl dgst -sha256 -hmac "$NOTIFY_KEY" | awk '{print $NF}')
+          BODY=$(jq -n \
+            --arg repo "$GITHUB_REPOSITORY" \
+            --arg workflow "$GITHUB_WORKFLOW" \
+            --argjson run_id "$GITHUB_RUN_ID" \
+            --argjson run_number "$GITHUB_RUN_NUMBER" \
+            --arg failed "$FAILED" \
+            --arg head_sha "$GITHUB_SHA" \
+            --argjson ts "$TS" \
+            --arg sig "$SIG" \
+            '{repo: $repo, workflow: $workflow, run_id: $run_id, run_number: $run_number, conclusion: "failure", failed_jobs: ($failed | split(",") | map(select(length > 0))), head_sha: $head_sha, ts: $ts, sig: $sig}')
+          curl --silent --max-time 30 -A "Mozilla/5.0" -H 'content-type: application/json' -d "$BODY" https://lumo-build-notify.l-quiet-relay3813.workers.dev/notify || true
+          exit 0
