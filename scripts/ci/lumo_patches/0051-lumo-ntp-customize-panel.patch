@@ -3,7 +3,7 @@ new file mode 100644
 index 0000000..0000000
 --- /dev/null
 +++ b/chrome/browser/ui/webui/side_panel/customize_chrome/lumo_ntp_customize_handler.h
-@@ -100,0 +100,38 @@
+@@ -100,0 +100,39 @@
 +// Copyright 2026 The Lumo Authors
 +// Lumo NTP customization (patch 0051, task 38): WebUI message
 +// handler that bridges the Customize Chrome side panel and the
@@ -13,6 +13,7 @@ index 0000000..0000000
 +#ifndef CHROME_BROWSER_UI_WEBUI_SIDE_PANEL_CUSTOMIZE_CHROME_LUMO_NTP_CUSTOMIZE_HANDLER_H_
 +#define CHROME_BROWSER_UI_WEBUI_SIDE_PANEL_CUSTOMIZE_CHROME_LUMO_NTP_CUSTOMIZE_HANDLER_H_
 +
++#include "base/memory/raw_ptr.h"
 +#include "content/public/browser/web_ui_message_handler.h"
 +
 +class PrefService;
@@ -1339,3 +1340,15 @@ index 0000000..0000000 100644
 +    <lumo-ntp-section></lumo-ntp-section>
    </div>
    ${(this.showEditTheme_) ? html`
+diff --git a/chrome/browser/ui/webui/side_panel/customize_chrome/BUILD.gn b/chrome/browser/ui/webui/side_panel/customize_chrome/BUILD.gn
+--- a/chrome/browser/ui/webui/side_panel/customize_chrome/BUILD.gn
++++ b/chrome/browser/ui/webui/side_panel/customize_chrome/BUILD.gn
+@@ -82,6 +82,8 @@
+   source_set("impl") {
+     sources = [
+       "customize_chrome_page_handler.cc",
+       "customize_chrome_ui.cc",
++      "lumo_ntp_customize_handler.cc",
++      "lumo_ntp_customize_handler.h",
+     ]
+     public_deps = [ ":customize_chrome_ui" ]

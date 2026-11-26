@@ -128,6 +128,8 @@ EXIT_FAILURE = 1
 # filled completely (see _disk_watchdog). A real failure for the job,
 # but one that leaves the runner — and this log — alive.
 EXIT_DISK_ABORT = 44
+# Exit code 2 (main() only, no constant): no usable time budget left
+# in this job. The workflow treats it as a failure, like 1 and 44.
 
 # Disk watchdog tuning. Run #6 filled the disk so completely that the
 # Actions runner itself crashed writing its own diagnostic log, and
@@ -4202,11 +4204,32 @@ SETUP_DONE_MARKER_NAME = "lumo-thorium-setup-done.json"
 SETUP_PROFILE_VERSION_DIRS = {"avx2": "AVX2", "sse3": "SSE3"}
 
 
-def _record_thorium_setup_done(ctx, args):
+def _record_thorium_setup_done(ctx, args, dropped_series=None):
     marker = ctx["build_root"] / SETUP_DONE_MARKER_NAME
+    if dropped_series is None:
+        # Preserve the list recorded by the stage that actually ran
+        # the series filters (this function is also called on the
+        # setup-skip path, where no filtering happened).
+        try:
+            existing = json.loads(marker.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            existing = None
+        if isinstance(existing, dict):
+            dropped_series = existing.get("dropped_series") or []
+        else:
+            dropped_series = []
     payload = {
         "thorium_commit": args.thorium_commit,
         "chromium_tag": args.chromium_tag,
+        # Series entries the runtime filters dropped on THIS tree
+        # (e.g. because a mirror fetch failed transiently). The
+        # drops are decided by runtime conditions, not by any
+        # fingerprinted input, so without this record two trees
+        # with the same setup fingerprint could silently carry
+        # different Thorium patch sets (the build #35 shape). The
+        # marker rides along in every checkpoint, which makes the
+        # difference visible after the fact.
+        "dropped_series": list(dropped_series),
     }
     marker.write_text(json.dumps(payload), encoding="utf-8")
 
@@ -4289,7 +4312,8 @@ def _thorium_setup_done(ctx, args):
 SETUP_FINGERPRINT_FILE_NAME = "lumo-setup-fingerprint.json"
 
 
-def lumo_setup_fingerprint(repo_root):
+def lumo_setup_fingerprint(repo_root, thorium_commit="",
+                           chromium_tag="", profile=""):
     """Hash of everything phase_setup bakes into the tree."""
     digest = hashlib.sha256()
 
@@ -4306,19 +4330,38 @@ def lumo_setup_fingerprint(repo_root):
     translations = ci_dir / "lumo_flag_translations.json"
     if translations.is_file():
         feed("lumo_flag_translations.json", translations.read_bytes())
+    # write_args_gn() renders out/thorium/args.gn from this template;
+    # a template-only change must also invalidate old checkpoints,
+    # or a resumed build phase would silently keep the old GN args
+    # (gn gen is not re-run on the build-phase resume path).
+    args_template = repo_root / "args.gn.example"
+    if args_template.is_file():
+        feed("args.gn.example", args_template.read_bytes())
     for sub in ("lumo_patches", "lumo_branding", "lumo_extensions"):
         folder = ci_dir / sub
         if not folder.is_dir():
             continue
         for path in sorted(folder.rglob("*")):
+            if "__pycache__" in path.parts or path.suffix == ".pyc":
+                continue
             if path.is_file():
                 feed(f"{sub}/{path.relative_to(folder).as_posix()}",
                      path.read_bytes())
+    # The Thorium inputs are pinned outside this repo (workflow
+    # inputs); the series content is fully determined by the pinned
+    # commit, so feed the pins themselves. Without this, changing
+    # THORIUM_COMMIT / CHROMIUM_TAG / the depot profile would let a
+    # tree set up from the old Thorium resume into gn/build.
+    feed("thorium_commit", thorium_commit.encode("utf-8"))
+    feed("chromium_tag", chromium_tag.encode("utf-8"))
+    feed("profile", profile.encode("utf-8"))
     return digest.hexdigest()
 
 
-def _record_setup_fingerprint(ctx):
-    fingerprint = lumo_setup_fingerprint(ctx["repo_root"])
+def _record_setup_fingerprint(ctx, args):
+    fingerprint = lumo_setup_fingerprint(
+        ctx["repo_root"], args.thorium_commit, args.chromium_tag,
+        args.profile)
     payload = {"fingerprint": fingerprint}
     marker = ctx["build_root"] / SETUP_FINGERPRINT_FILE_NAME
     marker.write_text(
@@ -4326,7 +4369,7 @@ def _record_setup_fingerprint(ctx):
     log(f"Setup fingerprint recorded: {fingerprint[:16]}...")
 
 
-def verify_setup_fingerprint(ctx):
+def verify_setup_fingerprint(ctx, args):
     """Refuse a gn/build phase whose tree was set up from other
     inputs than the current repo's (see the section header)."""
     marker = ctx["build_root"] / SETUP_FINGERPRINT_FILE_NAME
@@ -4346,7 +4389,9 @@ def verify_setup_fingerprint(ctx):
             "Refusing to resume from it; a fresh build (from "
             "stage 1) is required."
         )
-    current = lumo_setup_fingerprint(ctx["repo_root"])
+    current = lumo_setup_fingerprint(
+        ctx["repo_root"], args.thorium_commit, args.chromium_tag,
+        args.profile)
     if recorded != current:
         raise StageError(
             "setup fingerprint mismatch: the Lumo patch set, "
@@ -4413,7 +4458,7 @@ def phase_setup(args, ctx, deadline):
         )
         _record_thorium_setup_done(ctx, args)
         apply_lumo_branding(args, ctx, deadline)
-        _record_setup_fingerprint(ctx)
+        _record_setup_fingerprint(ctx, args)
         log("\nSetup phase complete.")
         return
     thorium_root = ctx["thorium_root"]
@@ -4422,9 +4467,11 @@ def phase_setup(args, ctx, deadline):
         thorium_root, chromium_src, args.chromium_tag
     )
     fetch_missing_test_fonts(chromium_src, args.chromium_tag)
-    filter_unappliable_series(thorium_root, chromium_src)
+    dropped_filter = filter_unappliable_series(
+        thorium_root, chromium_src)
     apply_lumo_series_overrides(thorium_root)
-    verify_series_sequentially(thorium_root, chromium_src)
+    dropped_sequential = verify_series_sequentially(
+        thorium_root, chromium_src)
     log(f"\nApplying Thorium setup for profile --{args.profile} "
         "(overlays, patch series, GRD rebase).")
     run_checked(
@@ -4439,9 +4486,12 @@ def phase_setup(args, ctx, deadline):
         env=ctx["env"],
         timeout_at=deadline,
     )
-    _record_thorium_setup_done(ctx, args)
+    _record_thorium_setup_done(
+        ctx, args,
+        dropped_series=[rel for rel, _missing in dropped_filter]
+        + list(dropped_sequential))
     apply_lumo_branding(args, ctx, deadline)
-    _record_setup_fingerprint(ctx)
+    _record_setup_fingerprint(ctx, args)
     log("\nSetup phase complete.")
 
 
@@ -4584,7 +4634,7 @@ def phase_gn(args, ctx, deadline):
     # inputs, and its Secret-bearing generated files (kept out of
     # the checkpoint zip) must be restored before anything reads
     # them. Both are no-ops on a from-scratch run of this stage.
-    verify_setup_fingerprint(ctx)
+    verify_setup_fingerprint(ctx, args)
     restore_generated_secret_files(args, ctx)
     write_args_gn(args, ctx)
     chromium_src = ctx["chromium_src"]
@@ -4833,6 +4883,10 @@ _SETTINGS_RESOURCES_BUILD_GN_REL = (
 _LUMO_MONITOR_PAGE_HTML_TS_REL = (
     "chrome/browser/resources/settings/lumo_monitor_page/"
     "lumo_monitor_page.html.ts"
+)
+_LUMO_FONT_PAGE_TS_REL = (
+    "chrome/browser/resources/settings/lumo_font_page/"
+    "lumo_font_page.ts"
 )
 _PREF_NAMES_REL = "chrome/common/pref_names.h"
 _BROWSER_UI_PREFS_REL = "chrome/browser/ui/browser_ui_prefs.cc"
@@ -5897,6 +5951,15 @@ _LUMO_RESUME_FIXUP_REPLACEMENTS = (
      b'    if (profile_->IsNewProfile()) {\n      lumo::RecordWelcomeShownBuildNumber(profile_);\n    }\n\n    // If the user has set the preference indicating URLs to show on opening,\n',
      b'    if (profile_->IsNewProfile()) {\n      lumo::RecordWelcomeShownBuildNumber(profile_);\n    }\n\n    // Lumo (patch 0047): install the chosen UI font as the\n    // default FontList description before the first browser\n    // window (and every widget created from it) exists, so\n    // the whole UI -- tabs, toolbar, omnibox, menus, dialogs\n    // -- picks the font up. No-op when no font is chosen.\n    lumo::ApplyLumoUiFontOverride(profile_);\n\n    // If the user has set the preference indicating URLs to show on opening,\n',
      'chrome/browser/ui/startup/startup_browser_creator_impl.cc (patch 0047)'),
+    (_LUMO_FONT_PAGE_TS_REL,
+        b"import {LifetimeBrowserProxyImpl} from "
+        b"'../lifetime_browser_proxy.js';\n",
+        b"import {LifetimeBrowserProxyImpl} from "
+        b"'../settings.js';\n",
+        "lumo_font_page.ts: LifetimeBrowserProxyImpl import path "
+        "(patch 0047; the proxy lives in settings_shared and is "
+        "re-exported by settings.ts)",
+    ),
     (_SETTINGS_RESOURCES_BUILD_GN_REL,
      b'    "lazy_load.ts",\n    "lumo_monitor_page/lumo_monitor_browser_proxy.ts",\n    "lumo_monitor_page/lumo_monitor_page.html.ts",\n    "lumo_monitor_page/lumo_monitor_page.ts",\n    "metrics_browser_proxy.ts",\n',
      b'    "lazy_load.ts",\n    "lumo_font_page/lumo_font_browser_proxy.ts",\n    "lumo_font_page/lumo_font_page.html.ts",\n    "lumo_font_page/lumo_font_page.ts",\n    "lumo_hub_page/lumo_hub_page.html.ts",\n    "lumo_hub_page/lumo_hub_page.ts",\n    "lumo_monitor_page/lumo_monitor_browser_proxy.ts",\n    "lumo_monitor_page/lumo_monitor_page.html.ts",\n    "lumo_monitor_page/lumo_monitor_page.ts",\n    "metrics_browser_proxy.ts",\n',
@@ -6104,6 +6167,15 @@ _LUMO_RESUME_FIXUP_INSERTIONS = (
      b'    "lumo_ntp_section.css",\n',
      b'    "lumo_ntp_section.css",\n    "shortcuts.css",\n', False,
      'chrome/browser/resources/side_panel/customize_chrome/BUILD.gn (patch 0051 css)'),
+    (
+        "chrome/browser/ui/webui/side_panel/customize_chrome/"
+        "BUILD.gn",
+        b'      "customize_chrome_page_handler.cc",\n'
+        b'      "customize_chrome_ui.cc",\n',
+        b'      "lumo_ntp_customize_handler.cc",\n'
+        b'      "lumo_ntp_customize_handler.h",\n',
+        b'lumo_ntp_customize_handler.cc', False,
+        'chrome/browser/ui/webui/side_panel/customize_chrome/BUILD.gn (patch 0051)'),
     (_CUSTOMIZE_CHROME_TS_REL,
      b"import './appearance.js';\n",
      b"import './lumo_ntp_section.js';\n",
@@ -7155,7 +7227,7 @@ def phase_build(args, ctx, deadline):
     # A resumed tree must have been set up from the current repo's
     # inputs; refuse before touching it when it was not (the fix
     # for a stale checkpoint is a fresh build, not a fixup).
-    verify_setup_fingerprint(ctx)
+    verify_setup_fingerprint(ctx, args)
     # A resumed tree still carries the sources its setup phase
     # produced; bring them up to the fixed patches before building
     # (no-op on a from-scratch tree). See apply_lumo_resume_fixups.
@@ -7293,6 +7365,65 @@ def _checkpoint_secret_entries(zip_path):
     return bad
 
 
+_SECRET_VALUE_ENVS = (
+    "GOOGLE_API_KEY", "GOOGLE_DEFAULT_CLIENT_ID",
+    "GOOGLE_DEFAULT_CLIENT_SECRET",
+    "LUMO_LOCK_HASH", "LUMO_LOCK_HASH_2", "LUMO_LAUNCH_KEY",
+)
+_SECRET_SCAN_SUFFIXES = (
+    ".gn", ".h", ".cc", ".txt", ".log", ".json", ".ninja",
+    ".py", ".md", ".html", ".ts", ".spec",
+)
+
+
+def _checkpoint_secret_value_hits(zip_path, environ=None):
+    """Entry names whose TEXT content contains a live secret value.
+
+    The name check (_checkpoint_secret_entries) only catches the
+    four generated files under their own names. A secret value can
+    also reach the zip inside another file -- a copy under a
+    different name, a generated file a future patch adds, or
+    stage.log if a command line or error ever echoes one -- so scan
+    the contents of text-like entries for the actual values from
+    this stage's environment. Binary entries are out of scope by
+    design: compiled binaries legitimately embed the API key and
+    the lock/launch material, exactly as the shipped browser does.
+    Returns the list of offending entry names, [] when clean, or
+    None when the archive cannot be read.
+    """
+    if environ is None:
+        environ = os.environ
+    values = []
+    for name in _SECRET_VALUE_ENVS:
+        raw = (environ.get(name) or "").strip()
+        if not raw:
+            continue
+        values.append(raw.encode("utf-8"))
+        if ":" in raw:  # lock hash: scan salt and hash halves too
+            for part in raw.split(":"):
+                if len(part) >= 32:
+                    values.append(part.encode("utf-8"))
+    if not values:
+        return []
+    hits = []
+    try:
+        with zipfile.ZipFile(zip_path) as archive:
+            for info in archive.infolist():
+                leaf = info.filename.replace("\\", "/").rsplit(
+                    "/", 1)[-1]
+                if not leaf.lower().endswith(_SECRET_SCAN_SUFFIXES):
+                    continue
+                if info.file_size > 64 * 1024 * 1024:
+                    continue
+                with archive.open(info) as fh:
+                    data = fh.read()
+                if any(v in data for v in values):
+                    hits.append(info.filename)
+    except (OSError, zipfile.BadZipFile):
+        return None
+    return hits
+
+
 def checkpoint(args, ctx):
     """Zip the whole build root for the next stage (Helium-style).
 
@@ -7424,10 +7555,15 @@ def checkpoint(args, ctx):
     # the stage (a failed stage uploads nothing).
     secret_entries = _checkpoint_secret_entries(zip_path)
     if secret_entries is None:
-        log("WARNING: could not read the checkpoint zip's "
-            "directory to verify the secret exclusion; continuing "
-            "(the next stage's 7z integrity check still gates "
-            "the archive).")
+        # Fail closed: an archive whose directory cannot be read
+        # cannot be verified, and the next stage's `7z t` checks
+        # integrity (CRC), not secret exclusion. Never upload an
+        # unverified checkpoint to the public repository.
+        zip_path.unlink()
+        raise StageError(
+            "could not read the checkpoint zip's directory to "
+            "verify the secret exclusion; refusing to upload an "
+            "unverified checkpoint. The zip was deleted.")
     elif secret_entries:
         zip_path.unlink()
         raise StageError(
@@ -7441,6 +7577,27 @@ def checkpoint(args, ctx):
         log("Checkpoint verified: no Secret-bearing generated "
             "files (args.gn, lumo_lock_config*.h, "
             "lumo_launch_config.h) are inside.")
+    # Second layer: the name check above cannot see a secret VALUE
+    # that reached the zip inside some other file (a copy under a
+    # different name, or stage.log). Scan text-like entries for the
+    # live values from this stage's environment.
+    value_hits = _checkpoint_secret_value_hits(zip_path)
+    if value_hits is None:
+        zip_path.unlink()
+        raise StageError(
+            "could not read the checkpoint zip to scan for secret "
+            "values; refusing to upload an unverified checkpoint. "
+            "The zip was deleted.")
+    elif value_hits:
+        zip_path.unlink()
+        raise StageError(
+            "checkpoint zip contains live secret value(s) in: "
+            + ", ".join(value_hits) + "; uploading this artifact "
+            "would publish build Secrets. The zip was deleted; "
+            "refusing to finish the checkpoint.")
+    else:
+        log("Checkpoint verified: no secret values in text "
+            "entries.")
     size_gb = zip_path.stat().st_size / (1024 ** 3)
     zip_minutes = (time.time() - zip_started) / 60
     log(f"Checkpoint written: {zip_path} ({size_gb:.1f} GiB, "

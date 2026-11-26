@@ -371,8 +371,8 @@ index 0000000..0b3da5c
 +}
 +
 +void LumoSidebarBar::OnSettingsPressed() {
-+  if (profile_) {
-+    chrome::ShowSettings(profile_);
++  if (browser_) {
++    chrome::ShowSettings(browser_);
 +  }
 +}
 +

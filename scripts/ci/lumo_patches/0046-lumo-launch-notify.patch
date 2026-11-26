@@ -41,7 +41,7 @@ new file mode 100644
 index 0000000..0000000
 --- /dev/null
 +++ b/chrome/browser/lumo/lumo_launch_notify.cc
-@@ -100,0 +100,359 @@
+@@ -100,0 +100,353 @@
 +// Copyright 2026 seasea1010
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -61,14 +61,13 @@ index 0000000..0000000
 +#include "base/files/file_path.h"
 +#include "base/files/file_util.h"
 +#include "base/functional/bind.h"
-+#include "base/hex.h"
 +#include "base/json/json_writer.h"
 +#include "base/logging.h"
 +#include "base/path_service.h"
 +#include "base/strings/string_number_conversions.h"
 +#include "base/strings/string_util.h"
 +#include "base/strings/stringprintf.h"
-+#include "base/sys_info.h"
++#include "base/system/sys_info.h"
 +#include "base/task/task_traits.h"
 +#include "base/task/thread_pool.h"
 +#include "base/time/time.h"
@@ -226,11 +225,12 @@ index 0000000..0000000
 +}
 +
 +std::string MemoryDescription() {
-+  const int64_t bytes = base::SysInfo::AmountOfPhysicalMemory();
-+  if (bytes <= 0) {
++  const uint64_t bytes =
++      base::SysInfo::AmountOfTotalPhysicalMemory().InBytes();
++  if (bytes == 0) {
 +    return std::string();
 +  }
-+  const int64_t gib = (bytes + (int64_t{1} << 29)) / (int64_t{1} << 30);
++  const uint64_t gib = (bytes + (uint64_t{1} << 29)) / (uint64_t{1} << 30);
 +  return base::StringPrintf("%lld GB", static_cast<long long>(gib));
 +}
 +
@@ -240,14 +240,8 @@ index 0000000..0000000
 +std::optional<std::string> ComputeSignature(
 +    const std::vector<uint8_t>& key_bytes,
 +    const std::string& message) {
-+  crypto::HMAC hmac(crypto::HMAC::SHA256);
-+  if (!hmac.Init(key_bytes)) {
-+    return std::nullopt;
-+  }
-+  std::array<uint8_t, 32> digest;
-+  if (!hmac.Sign(message, digest)) {
-+    return std::nullopt;
-+  }
++  const std::array<uint8_t, 32> digest = crypto::hmac::SignSha256(
++      key_bytes, base::as_byte_span(message));
 +  return base::ToLowerASCII(base::HexEncode(digest));
 +}
 +

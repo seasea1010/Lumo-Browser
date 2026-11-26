@@ -170,7 +170,7 @@ index 0000000..a48b006
 +
 +// Derives the extension ID a CRX3 package claims: the ID is a
 +// function of the signing public key in the CRX3 header (see
-+// extensions::id_util::GenerateId), so comparing the derived ID
++// crx_file::id_util::GenerateId), so comparing the derived ID
 +// against the registered one proves the downloaded package was
 +// signed with the same key as the installed extension. Returns
 +// nullopt when the bytes are not a CRX3 package with an RSA proof.
@@ -301,7 +301,7 @@ new file mode 100644
 index 0000000..a48b007
 --- /dev/null
 +++ b/chrome/browser/lumo/lumo_github_extension_updater.cc
-@@ -100,0 +100,805 @@
+@@ -100,0 +100,804 @@
 +// Copyright 2026 seasea1010
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -330,7 +330,6 @@ index 0000000..a48b007
 +#include "base/time/time.h"
 +#include "base/version.h"
 +#include "chrome/browser/browser_process.h"
-+#include "chrome/browser/extensions/crx_installer.h"
 +#include "chrome/browser/net/system_network_context_manager.h"
 +#include "chrome/browser/notifications/notification_display_service.h"
 +#include "chrome/browser/notifications/notification_display_service_factory.h"
@@ -341,15 +340,18 @@ index 0000000..a48b007
 +#include "chrome/browser/profiles/profile_manager.h"
 +#include "chrome/common/pref_names.h"
 +#include "components/crx_file/crx3.pb.h"
++#include "chrome/browser/profiles/profile_keyed_service_factory.h"
 +#include "components/keyed_service/content/browser_context_dependency_manager.h"
 +#include "components/keyed_service/core/keyed_service_factory.h"
 +#include "components/prefs/pref_service.h"
 +#include "content/public/browser/browser_context.h"
 +#include "extensions/browser/extension_registry.h"
++#include "extensions/browser/crx_file_info.h"
++#include "extensions/browser/crx_installer.h"
++#include "components/crx_file/crx_verifier.h"
++#include "components/crx_file/id_util.h"
 +#include "extensions/common/extension.h"
 +#include "extensions/browser/extension_system.h"
-+#include "extensions/browser/install/crx_file_info.h"
-+#include "extensions/common/id_util.h"
 +#include "net/base/load_flags.h"
 +#include "net/http/http_request_headers.h"
 +#include "net/traffic_annotation/network_traffic_annotation.h"
@@ -672,7 +674,7 @@ index 0000000..a48b007
 +      header.sha256_with_rsa(0).public_key().empty()) {
 +    return std::nullopt;
 +  }
-+  return extensions::id_util::GenerateId(
++  return crx_file::id_util::GenerateId(
 +      header.sha256_with_rsa(0).public_key());
 +}
 +
@@ -875,14 +877,11 @@ index 0000000..a48b007
 +            // profile (VerifyCrxBytes); CrxInstaller reads them
 +            // from there and re-verifies the CRX3 signature itself
 +            // before anything is applied.
-+            auto* service =
-+                extensions::ExtensionSystem::Get(self->profile_)
-+                    ->extension_service();
 +            scoped_refptr<extensions::CrxInstaller> installer(
-+                extensions::CrxInstaller::Create(service));
++                extensions::CrxInstaller::CreateSilent(self->profile_));
 +            self->pending_installs_[pending->extension_id] = pending;
-+            installer->InstallCrxFile(extensions::CrxFileInfo(
-+                verification.crx_path, std::string()));
++            installer->InstallCrxFile(extensions::CRXFileInfo(
++                verification.crx_path, crx_file::VerifierFormat::CRX3));
 +          pending, weak_factory_.GetWeakPtr()));
 +}
 +
