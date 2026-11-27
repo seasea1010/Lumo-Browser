@@ -683,7 +683,7 @@ new file mode 100644
 index 0000000..d61a84a
 --- /dev/null
 +++ b/chrome/browser/ui/views/side_panel/lumo/lumo_media_item_view.h
-@@ -100,0 +100,127 @@
+@@ -100,0 +100,129 @@
 +// Copyright 2026 seasea1010
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -737,6 +737,8 @@ index 0000000..d61a84a
 + public:
 +  METADATA_HEADER(LumoMediaItemView,
 +                  media_message_center::MediaNotificationView)
++
++ public:
 +  LumoMediaItemView(
 +      const std::string& id,
 +      base::WeakPtr<media_message_center::MediaNotificationItem> item);
