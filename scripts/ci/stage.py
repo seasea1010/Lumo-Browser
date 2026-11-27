@@ -4888,6 +4888,10 @@ _LUMO_FONT_PAGE_TS_REL = (
     "chrome/browser/resources/settings/lumo_font_page/"
     "lumo_font_page.ts"
 )
+_LUMO_FONT_PAGE_HTML_TS_REL = (
+    "chrome/browser/resources/settings/lumo_font_page/"
+    "lumo_font_page.html.ts"
+)
 _PREF_NAMES_REL = "chrome/common/pref_names.h"
 _BROWSER_UI_PREFS_REL = "chrome/browser/ui/browser_ui_prefs.cc"
 _STARTUP_BROWSER_CREATOR_REL = (
@@ -5925,7 +5929,7 @@ _LUMO_RESUME_FIXUP_REPLACEMENTS = (
     ),
     (_ROUTE_TS_REL,
      b"  // Lumo: Monitor page (Lumo patch 0022). Reached from the Lumo\n  // hub page (patch 0047); there is no direct menu item for it\n  // (the hub has the menu item instead).\n  r.LUMO_MONITOR = r.BASIC.createSection(\n      '/lumoMonitor', 'lumoMonitor',\n      loadTimeData.getString('lumoMonitorPageTitle'));\n\n  // Search page.\n  r.SEARCH = r.BASIC.createSection(\n",
-     b"  // Lumo hub (Lumo patch 0047): a section right below About. It\n  // links to the Lumo Monitor page and to the Lumo font page;\n  // the Monitor section itself has no menu item of its own.\n  r.LUMO = r.BASIC.createSection(\n      '/lumo', 'lumo', loadTimeData.getString('lumoPageTitle'));\n\n  // Lumo: Monitor page (Lumo patch 0022). Reached from the Lumo\n  // hub page (patch 0047); there is no direct menu item for it\n  // (the hub has the menu item instead).\n  r.LUMO_MONITOR = r.BASIC.createSection(\n      '/lumoMonitor', 'lumoMonitor',\n      loadTimeData.getString('lumoMonitorPageTitle'));\n\n  // Lumo font page (Lumo patch 0047): a child of the hub, so\n  // the settings framework shows it as a subpage of the hub.\n  r.LUMO_FONT = r.LUMO.createChild(\n      '/lumoFont', 'lumoFont',\n      loadTimeData.getString('lumoFontPageTitle'));\n\n  // Search page.\n  r.SEARCH = r.BASIC.createSection(\n",
+     b"  // Lumo hub (Lumo patch 0047): a section right below About. It\n  // links to the Lumo Monitor page and to the Lumo font page;\n  // the Monitor section itself has no menu item of its own.\n  r.LUMO = r.BASIC.createSection(\n      '/lumo', 'lumo', loadTimeData.getString('lumoPageTitle'));\n\n  // Lumo: Monitor page (Lumo patch 0022). Reached from the Lumo\n  // hub page (patch 0047); there is no direct menu item for it\n  // (the hub has the menu item instead).\n  r.LUMO_MONITOR = r.BASIC.createSection(\n      '/lumoMonitor', 'lumoMonitor',\n      loadTimeData.getString('lumoMonitorPageTitle'));\n\n  // Lumo font page (Lumo patch 0047): a child of the hub, so\n  // the settings framework shows it as a subpage of the hub.\n  r.LUMO_FONT = r.LUMO.createChild(\n      '/lumoFont', loadTimeData.getString('lumoFontPageTitle'));\n\n  // Search page.\n  r.SEARCH = r.BASIC.createSection(\n",
      'chrome/browser/resources/settings/route.ts (patch 0047)'),
     (_SETTINGS_MAIN_HTML_REL,
      b'  <div slot="view" id="lumoMonitor">\n    <template is="dom-if" if="[[renderPlugin_(\n        routes_.LUMO_MONITOR, lastRoute_, inSearchMode_)]]">\n      <settings-lumo-monitor-page role="main"\n          class="cr-centered-card-container">\n      </settings-lumo-monitor-page>\n    </template>\n  </div>\n</cr-view-manager>\n',
@@ -5959,6 +5963,21 @@ _LUMO_RESUME_FIXUP_REPLACEMENTS = (
         "lumo_font_page.ts: LifetimeBrowserProxyImpl import path "
         "(patch 0047; the proxy lives in settings_shared and is "
         "re-exported by settings.ts)",
+    ),
+    (_LUMO_FONT_PAGE_TS_REL,
+     b"    LifetimeBrowserProxyImpl.getInstance().restartBrowser();\n",
+     b"    LifetimeBrowserProxyImpl.getInstance().restart();\n",
+     "lumo_font_page.ts: restartBrowser() is not a "
+     "LifetimeBrowserProxy method in Chromium 156 (patch 0047 "
+     "fix; the proxy's restart method is restart(), handled by "
+     "BrowserLifetimeHandler)",
+    ),
+    (_LUMO_FONT_PAGE_HTML_TS_REL,
+     b'          ?selected="${family === this.info_.currentFont}">\n',
+     b'          ?selected="${family === this.info_!.currentFont}">\n',
+     "lumo_font_page.html.ts: narrow this.info_ inside the "
+     ".map() closure (patch 0047 fix; TS2531, narrowing does not "
+     "cross the closure boundary)",
     ),
     (_SETTINGS_RESOURCES_BUILD_GN_REL,
      b'    "lazy_load.ts",\n    "lumo_monitor_page/lumo_monitor_browser_proxy.ts",\n    "lumo_monitor_page/lumo_monitor_page.html.ts",\n    "lumo_monitor_page/lumo_monitor_page.ts",\n    "metrics_browser_proxy.ts",\n',

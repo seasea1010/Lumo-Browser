@@ -434,7 +434,7 @@ index 0000000..0000000
 +      </option>
 +      ${this.info_.fonts.map(family => html`
 +      <option value="${family}"
-+          ?selected="${family === this.info_.currentFont}">
++          ?selected="${family === this.info_!.currentFont}">
 +        ${family}
 +      </option>`)}
 +    </select>` : ''}
@@ -533,7 +533,7 @@ index 0000000..0000000
 +  }
 +
 +  protected onRestartClick_() {
-+    LifetimeBrowserProxyImpl.getInstance().restartBrowser();
++    LifetimeBrowserProxyImpl.getInstance().restart();
 +  }
 +
 +  protected currentFontText_(): string {
@@ -559,7 +559,7 @@ diff --git a/chrome/browser/resources/settings/route.ts b/chrome/browser/resourc
 index 0000000..0000000 100644
 --- a/chrome/browser/resources/settings/route.ts
 +++ b/chrome/browser/resources/settings/route.ts
-@@ -100,9 +100,21 @@
+@@ -100,9 +100,20 @@
 +  // Lumo hub (Lumo patch 0047): a section right below About. It
 +  // links to the Lumo Monitor page and to the Lumo font page;
 +  // the Monitor section itself has no menu item of its own.
@@ -576,8 +576,7 @@ index 0000000..0000000 100644
 +  // Lumo font page (Lumo patch 0047): a child of the hub, so
 +  // the settings framework shows it as a subpage of the hub.
 +  r.LUMO_FONT = r.LUMO.createChild(
-+      '/lumoFont', 'lumoFont',
-+      loadTimeData.getString('lumoFontPageTitle'));
++      '/lumoFont', loadTimeData.getString('lumoFontPageTitle'));
  
    // Search page.
    r.SEARCH = r.BASIC.createSection(
