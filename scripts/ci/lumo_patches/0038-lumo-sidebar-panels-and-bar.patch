@@ -130,7 +130,7 @@ new file mode 100644
 index 0000000..0b3da5c
 --- /dev/null
 +++ b/chrome/browser/ui/views/side_panel/lumo/lumo_sidebar_bar.cc
-@@ -100,0 +100,263 @@
+@@ -100,0 +100,264 @@
 +// Copyright 2026 seasea1010
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -161,6 +161,7 @@ index 0000000..0b3da5c
 +#include "ui/actions/actions.h"
 +#include "ui/base/l10n/l10n_util.h"
 +#include "ui/base/models/image_model.h"
++#include "ui/compositor/layer.h"
 +#include "ui/gfx/geometry/insets.h"
 +#include "ui/gfx/text_constants.h"
 +#include "ui/views/background.h"
@@ -200,7 +201,7 @@ index 0000000..0b3da5c
 +      views::BoxLayout::MainAxisAlignment::kStart);
 +  layout->set_cross_axis_alignment(
 +      views::BoxLayout::CrossAxisAlignment::kCenter);
-+  SetBackground(views::CreateThemedSolidBackground(kColorToolbar));
++  SetBackground(views::CreateSolidBackground(kColorToolbar));
 +  // The bar overlaps the web contents, so it must paint to its own
 +  // layer to stay visible above the contents layer (the same reason
 +  // the patch 0008 label paints to a layer).
@@ -254,13 +255,13 @@ index 0000000..0b3da5c
 +
 +  AddSeparator();
 +
-+  AddUtilityButton(vector_icons::kDownloadIcon,
++  AddUtilityButton(kDownloadIcon,
 +                   l10n_util::GetStringUTF16(IDS_LUMO_SIDEBAR_DOWNLOADS),
 +                   "chrome://downloads/");
-+  AddUtilityButton(vector_icons::kPasswordIcon,
++  AddUtilityButton(kPasswordIcon,
 +                   l10n_util::GetStringUTF16(IDS_LUMO_SIDEBAR_PASSWORDS),
 +                   "chrome://password-manager/");
-+  AddUtilityButton(views::kMenuIcon,
++  AddUtilityButton(kGridViewIcon,
 +                   l10n_util::GetStringUTF16(IDS_LUMO_SIDEBAR_TOOLS),
 +                   "chrome://tools/");
 +
@@ -277,7 +278,7 @@ index 0000000..0b3da5c
 +  // Flexible spacer pushes the bottom controls down.
 +  auto spacer = std::make_unique<views::View>();
 +  views::View* spacer_ptr = AddChildView(std::move(spacer));
-+  static_cast<views::BoxLayout*>(layout_manager())
++  static_cast<views::BoxLayout*>(GetLayoutManager())
 +      ->SetFlexForView(spacer_ptr, 1);
 +  collapsible_children_.push_back(spacer_ptr);
 +
@@ -290,7 +291,7 @@ index 0000000..0b3da5c
 +  collapsible_children_.push_back(AddChildView(MakeIconButton(
 +      base::BindRepeating(&LumoSidebarBar::OnSettingsPressed,
 +                          base::Unretained(this)),
-+      vector_icons::kSettingsIcon,
++      kSettingsIcon,
 +      l10n_util::GetStringUTF16(IDS_LUMO_SIDEBAR_SETTINGS))));
 +
 +  RefreshCollapsedState();
@@ -313,7 +314,7 @@ index 0000000..0b3da5c
 +  collapsible_children_.push_back(AddChildView(MakeIconButton(
 +      base::BindRepeating(&LumoSidebarBar::ToggleEntry,
 +                          base::Unretained(this), key),
-+      *icon, item->GetText())));
++      *icon, std::u16string(item->GetText())));
 +}
 +
 +void LumoSidebarBar::AddWebPanelPresetButton(const std::string& name,

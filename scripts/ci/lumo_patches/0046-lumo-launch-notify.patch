@@ -270,10 +270,10 @@ index 0000000..0000000
 +  body.Set("build", build);
 +  body.Set("ts", static_cast<int>(ts));
 +  body.Set("sig", *sig);
-+  const std::string os = base::TrimWhitespaceASCII(
++  const std::string os = std::string(base::TrimWhitespaceASCII(
 +      base::SysInfo::OperatingSystemName() + " " +
 +          base::SysInfo::OperatingSystemVersion(),
-+      base::TRIM_ALL);
++      base::TRIM_ALL));
 +  if (!os.empty()) {
 +    body.Set("os", os);
 +  }

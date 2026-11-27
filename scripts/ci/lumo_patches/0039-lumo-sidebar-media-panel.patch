@@ -54,7 +54,7 @@ index 9b1f59d..5090962 100644
 +        SidePanelAction(SidePanelEntryId::kLumoMediaPanel,
 +                        IDS_LUMO_SIDEBAR_MEDIA_TITLE,
 +                        IDS_LUMO_SIDEBAR_MEDIA_TITLE,
-+                        vector_icons::kQueueMusicIcon,
++                        kQueueMusicIcon,
 +                        kActionSidePanelShowLumoMediaPanel, bwi, true)
 +            .Build());
 +  }
@@ -683,7 +683,7 @@ new file mode 100644
 index 0000000..d61a84a
 --- /dev/null
 +++ b/chrome/browser/ui/views/side_panel/lumo/lumo_media_item_view.h
-@@ -100,0 +100,125 @@
+@@ -100,0 +100,127 @@
 +// Copyright 2026 seasea1010
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -735,6 +735,8 @@ index 0000000..d61a84a
 +class LumoMediaItemView : public media_message_center::MediaNotificationView,
 +                          public global_media_controls::MediaItemUI {
 + public:
++  METADATA_HEADER(LumoMediaItemView,
++                  media_message_center::MediaNotificationView)
 +  LumoMediaItemView(
 +      const std::string& id,
 +      base::WeakPtr<media_message_center::MediaNotificationItem> item);
