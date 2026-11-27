@@ -167,7 +167,7 @@ diff --git a/chrome/installer/mini_installer/mini_installer_constants.cc b/chrom
 index dc849ba780cca..0000000000000 100644
 --- a/chrome/installer/mini_installer/mini_installer_constants.cc
 +++ b/chrome/installer/mini_installer/mini_installer_constants.cc
-@@ -100,7 +100,7 @@ namespace mini_installer {
+@@ -100,8 +100,8 @@ namespace mini_installer {
  // Various filenames and prefixes.
  // The target name of the installer extracted from resources.
  const wchar_t kSetupExe[] = L"setup.exe";

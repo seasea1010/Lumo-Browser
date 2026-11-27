@@ -545,7 +545,7 @@ diff --git a/chrome/browser/resources/new_tab_page/BUILD.gn b/chrome/browser/res
 index 0000000..0000000 100644
 --- a/chrome/browser/resources/new_tab_page/BUILD.gn
 +++ b/chrome/browser/resources/new_tab_page/BUILD.gn
-@@ -100,3 +100,4 @@
+@@ -100,5 +100,6 @@
    ts_definitions = [
      "//tools/typescript/definitions/chrome_histograms.d.ts",
 +    "//tools/typescript/definitions/chrome_send.d.ts",

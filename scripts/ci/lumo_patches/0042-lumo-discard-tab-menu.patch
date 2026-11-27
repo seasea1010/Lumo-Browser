@@ -54,7 +54,7 @@ index e03b98f..1110042 100644
 +                   : nullptr;
 +      return lifecycle_unit &&
 +             lifecycle_unit->GetTabState() !=
-+                 resource_coordinator::mojom::LifecycleUnitState::DISCARDED;
++                 mojom::LifecycleUnitState::DISCARDED;
 +    }
 +
      case CommandCloseAllTabs:
@@ -96,7 +96,7 @@ index e03b98f..1110042 100644
 +        if (neighbour) {
 +          ActivateTabAt(*neighbour,
 +                        TabStripUserGestureDetails(
-+                            TabStripUserGestureType::kOther));
++                            TabStripUserGestureDetails::GestureType::kOther));
 +        }
 +      }
 +
@@ -112,7 +112,7 @@ index e03b98f..1110042 100644
 +                     : nullptr;
 +        if (lifecycle_unit) {
 +          lifecycle_unit->DiscardTab(
-+              resource_coordinator::mojom::LifecycleUnitDiscardReason::
++              mojom::LifecycleUnitDiscardReason::
 +                  EXTERNAL);
 +        }
 +      }

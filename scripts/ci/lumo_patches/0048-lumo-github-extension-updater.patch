@@ -1111,7 +1111,7 @@ new file mode 100644
 index 0000000..a48b008
 --- /dev/null
 +++ b/chrome/browser/ui/webui/extensions/lumo_github_extensions_handler.h
-@@ -100,0 +100,52 @@
+@@ -0,0 +1,55 @@
 +// Copyright 2026 seasea1010
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -1172,7 +1172,7 @@ new file mode 100644
 index 0000000..a48b009
 --- /dev/null
 +++ b/chrome/browser/ui/webui/extensions/lumo_github_extensions_handler.cc
-@@ -100,0 +100,114 @@
+@@ -0,0 +1,130 @@
 +// Copyright 2026 seasea1010
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
