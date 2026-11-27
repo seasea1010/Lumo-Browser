@@ -6138,7 +6138,7 @@ _LUMO_RESUME_FIXUP_INSERTIONS = (
      'chrome/browser/resources/extensions/toolbar.ts (patch 0049)'),
     (_EXTENSIONS_TOOLBAR_TS_REL,
      b"  static get is() {\n    return 'extensions-toolbar';\n  }\n",
-     b"  // Lumo (patch 0049, task 36): opens the GitHub add dialog\n  // hosted in this toolbar's template.\n  protected onLumoGithubAddClick_() {\n    this.shadowRoot!.querySelector('extensions-github-dialog')!.show();\n  }\n",
+     b"  // Lumo (patch 0049, task 36): opens the GitHub add dialog\n  // hosted in this toolbar's template.\n  protected onLumoGithubAddClick_() {\n    this.shadowRoot.querySelector('extensions-github-dialog')!.show();\n  }\n",
      b'onLumoGithubAddClick_', True,
      'chrome/browser/resources/extensions/toolbar.ts (patch 0049)'),
     (_PREF_NAMES_REL,

@@ -28,7 +28,7 @@ index 6666666..a49b003
 +  // Lumo (patch 0049, task 36): opens the GitHub add dialog
 +  // hosted in this toolbar's template.
 +  protected onLumoGithubAddClick_() {
-+    this.shadowRoot!.querySelector('extensions-github-dialog')!.show();
++    this.shadowRoot.querySelector('extensions-github-dialog')!.show();
 +  }
    static get is() {
      return 'extensions-toolbar';
@@ -73,6 +73,10 @@ index 0000000..a49b004
 +    return 'extensions-github-dialog';
 +  }
 +
++  override render() {
++    return getHtml.bind(this)();
++  }
++
 +  static override get properties() {
 +    return {
 +      open_: {type: Boolean},
@@ -84,16 +88,12 @@ index 0000000..a49b004
 +    };
 +  }
 +
-+  protected open_: boolean = false;
-+  protected repo_: string = '';
-+  protected tag_: string = '';
-+  protected assets_: string[] = [];
-+  protected error_: string = '';
-+  protected busy_: boolean = false;
-+
-+  override render() {
-+    return getHtml.bind(this)();
-+  }
++  protected accessor open_: boolean = false;
++  protected accessor repo_: string = '';
++  protected accessor tag_: string = '';
++  protected accessor assets_: string[] = [];
++  protected accessor error_: string = '';
++  protected accessor busy_: boolean = false;
 +
 +  show() {
 +    this.repo_ = '';
@@ -303,7 +303,17 @@ index 0a80651..81c05db 100644
  import '/strings.m.js';
  import './toggle_row.js';
  
-@@ -133,6 +135,7 @@ export class ExtensionsDetailViewElement extends
+@@ -112,5 +112,9 @@ export class ExtensionsDetailViewElement extends
+       /** Whether the extensions safety check warning is shown. */
+       showSafetyCheck_: {type: Boolean},
+       webuiRoundedIconsEnabled_: {type: Boolean},
++      // Lumo (patch 0049, task 36): the GitHub registration of this
++      // extension (null when not GitHub-managed). It must be
++      // declared here: the detail template reads this.lumoGithubInfo_.
++      lumoGithubInfo_: {type: Object},
+     };
+   }
+@@ -133,6 +139,7 @@ export class ExtensionsDetailViewElement extends
    accessor fromActivityLog: boolean = false;
    protected accessor showSafetyCheck_: boolean = false;
    protected accessor size_: string = '';
@@ -311,7 +321,7 @@ index 0a80651..81c05db 100644
    protected accessor sortedViews_: chrome.developerPrivate.ExtensionView[] = [];
    protected accessor webuiRoundedIconsEnabled_: boolean =
        loadTimeData.getBoolean('webuiRoundedIconsEnabled');
-@@ -192,6 +195,19 @@ export class ExtensionsDetailViewElement extends
+@@ -192,6 +199,19 @@ export class ExtensionsDetailViewElement extends
      this.delegate.getExtensionSize(this.data.id).then(size => {
        this.size_ = size;
      });
