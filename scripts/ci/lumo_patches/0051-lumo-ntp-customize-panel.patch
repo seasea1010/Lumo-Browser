@@ -232,7 +232,7 @@ index 0000000..0000000
 +  }
 +
 +  override render() {
-+    return getHtml.bind(this)``;
++    return getHtml.bind(this)();
 +  }
 +
 +  static override get properties() {
