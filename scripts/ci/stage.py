@@ -243,7 +243,37 @@ def log(message, file=sys.stdout):
             pass
 
 
-def run(cmd, cwd, env=None, timeout_at=None, graceful=False):
+def _pump_output(stream, line_callback):
+    """Forward a child's merged output line by line (run() helper).
+
+    Each decoded line goes to our own stdout (and the stage log
+    file) exactly as if the child had inherited them, and to
+    line_callback for inspection. Nothing in here may raise: a
+    forwarding failure must never wedge the child on a full pipe.
+    """
+    try:
+        for raw in stream:
+            text = raw.decode("utf-8", errors="replace").rstrip("\r\n")
+            try:
+                print(text, flush=True)
+                if _LOG_FILE is not None:
+                    try:
+                        _LOG_FILE.write(text + "\n")
+                        _LOG_FILE.flush()
+                    except (OSError, ValueError):
+                        pass
+            except (OSError, ValueError):
+                pass
+            try:
+                line_callback(text)
+            except Exception:
+                pass
+    except (OSError, ValueError):
+        pass
+
+
+def run(cmd, cwd, env=None, timeout_at=None, graceful=False,
+        line_callback=None):
     """Run a command.
 
     Returns its exit code. Raises BudgetExpired if timeout_at passes
@@ -254,6 +284,13 @@ def run(cmd, cwd, env=None, timeout_at=None, graceful=False):
     up to 120s for a clean stop, then terminate/kill. Ninja stops
     starting new edges and finishes the running ones, so its build
     state stays resumable.
+
+    line_callback, when given, receives every output line (stdout
+    and stderr merged, decoded as UTF-8 with replacement) while the
+    output is forwarded to our own stdout unchanged in content. The
+    preflight uses this to collect every FAILED action from a
+    keep-going build; without a callback the child simply inherits
+    our stdout/stderr as before.
     """
     printable = (
         subprocess.list2cmdline(cmd) if os.name == "nt" else " ".join(cmd)
@@ -264,38 +301,57 @@ def run(cmd, cwd, env=None, timeout_at=None, graceful=False):
         kwargs["env"] = env
     if graceful and os.name == "nt":
         kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    if line_callback is not None:
+        kwargs["stdout"] = subprocess.PIPE
+        kwargs["stderr"] = subprocess.STDOUT
     proc = subprocess.Popen(cmd, **kwargs)
-    while True:
-        try:
-            return proc.wait(timeout=30)
-        except subprocess.TimeoutExpired:
-            if timeout_at is not None and time.time() >= timeout_at:
-                log("Time budget expired, stopping the command...")
-                if graceful and os.name == "nt":
-                    try:
-                        ctypes.windll.kernel32.GenerateConsoleCtrlEvent(
-                            1, proc.pid
-                        )
-                    except OSError as error:
-                        log(f"Could not send CTRL_BREAK: {error}")
-                    try:
-                        proc.wait(timeout=120)
-                    except subprocess.TimeoutExpired:
-                        log("Command did not stop cleanly, terminating...")
-                        proc.terminate()
+    reader = None
+    if line_callback is not None:
+        reader = threading.Thread(
+            target=_pump_output,
+            args=(proc.stdout, line_callback),
+            daemon=True,
+            name="run-output-pump",
+        )
+        reader.start()
+    try:
+        while True:
+            try:
+                return proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                if timeout_at is not None and time.time() >= timeout_at:
+                    log("Time budget expired, stopping the command...")
+                    if graceful and os.name == "nt":
                         try:
-                            proc.wait(timeout=60)
+                            ctypes.windll.kernel32.GenerateConsoleCtrlEvent(
+                                1, proc.pid
+                            )
+                        except OSError as error:
+                            log(f"Could not send CTRL_BREAK: {error}")
+                        try:
+                            proc.wait(timeout=120)
                         except subprocess.TimeoutExpired:
-                            proc.kill()
-                            proc.wait()
+                            log("Command did not stop cleanly, terminating...")
+                            proc.terminate()
+                            try:
+                                proc.wait(timeout=60)
+                            except subprocess.TimeoutExpired:
+                                proc.kill()
+                                proc.wait()
+                        raise BudgetExpired()
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=60)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait()
                     raise BudgetExpired()
-                proc.terminate()
-                try:
-                    proc.wait(timeout=60)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                    proc.wait()
-                raise BudgetExpired()
+    finally:
+        if reader is not None:
+            # The pipe hits EOF when the child (and any process
+            # holding its stdout) exits; the join is bounded so a
+            # lingering grandchild cannot hang the stage.
+            reader.join(timeout=10)
 
 
 def run_checked(cmd, cwd, env=None, timeout_at=None, graceful=False):
@@ -6685,7 +6741,18 @@ def apply_lumo_resume_fixups(ctx):
 #      .cc file a Lumo patch touches, so API drift fails here
 #      instead of hours into the full build. All of these outputs
 #      are inputs to the full build, so the work is reused, not
-#      wasted.
+#      wasted. The build runs keep-going (-k 0, forwarded by
+#      autoninja to siso/ninja) and every FAILED action is
+#      collected and reported together: builds #42-#48 each burned
+#      ~an hour surfacing a single module's lint/TS errors because
+#      the builder stopped at the first failure, so the fix for
+#      one module only revealed the next. Targets that depend on
+#      a failed action are skipped by the builder; they are NOT
+#      failures and are never listed as such. Keep-going is still
+#      bounded by the stage deadline: a budget expiry raises
+#      BudgetExpired as before (the marker is not written, and
+#      the next stage's re-run is fast because the builder keeps
+#      the finished actions).
 #
 # A failure raises StageError (exit 1, no checkpoint): the chain
 # stops in minutes instead of after hours of compile. A budget
@@ -7149,6 +7216,43 @@ def preflight_ninja_targets(out_dir, cxx_sources):
     return sorted(set(targets)), missing
 
 
+# How many failed actions the preflight StageError message lists;
+# the full list is always logged, one line per action, before the
+# raise.
+_PREFLIGHT_MAX_REPORTED_FAILURES = 50
+
+# siso's FAILED line names the GN label after ACTION:
+#   FAILED: <hash> "<output>" ACTION //chrome/...:lint_ts(<config>)
+_SISO_FAILED_ACTION_RE = re.compile(r"^FAILED:\s+.*?\sACTION\s+([^\s(]+)")
+# Plain ninja's FAILED line names the output file, optionally
+# preceded by a bracketed exit status:
+#   FAILED: obj/chrome/browser/foo.obj
+_NINJA_FAILED_RE = re.compile(r"^FAILED:\s+(?:\[[^\]]*\]\s+)?(\S+)")
+# siso's progress line for a failed action:
+#   [8198/25317] 39m50.68s E ACTION //chrome/...:lint_ts(<config>)
+_SISO_ERROR_ACTION_RE = re.compile(r"\]\s+\S+\s+E ACTION\s+([^\s(]+)")
+
+
+def _note_build_failure(failures, line):
+    """Collect one failed action from a builder output line.
+
+    Appends the action's identifier (the GN label for siso, the
+    output path for plain ninja) to failures when the line reports
+    a failure and the action is not already listed: siso prints
+    both a progress line and a FAILED line for one failure, and
+    they must collapse to a single entry. Actions the builder
+    skipped because a dependency failed produce no such line, so
+    they are never collected — only real failures are.
+    """
+    match = (
+        _SISO_FAILED_ACTION_RE.match(line)
+        or _NINJA_FAILED_RE.match(line)
+        or _SISO_ERROR_ACTION_RE.search(line)
+    )
+    if match and match.group(1) not in failures:
+        failures.append(match.group(1))
+
+
 def run_preflight(args, ctx, deadline):
     """Run the fail-fast checks once per Lumo patch set.
 
@@ -7200,9 +7304,13 @@ def run_preflight(args, ctx, deadline):
     log(f"Preflight: targeted compile of {len(targets)} targets "
         f"(WebUI build/lint + grit + {len(cxx_sources)} Lumo-touched "
         f"C++ sources) with autoninja -j {jobs}.")
+    log("Preflight: keep-going (-k 0): every target is attempted "
+        "and all failures are reported together, instead of "
+        "stopping at the first failing module (builds #42-#48).")
     env = dict(ctx["env"])
     env["NINJA_SUMMARIZE_BUILD"] = "1"
     env["NINJA_STATUS"] = "[%r processes, %f/%t @ %o/s | %e sec. ] "
+    failures = []
     code = run(
         [
             sys.executable,
@@ -7211,20 +7319,39 @@ def run_preflight(args, ctx, deadline):
             str(out_dir),
             "-j",
             str(jobs),
+            "-k",
+            "0",
             *targets,
         ],
         chromium_src,
         env=env,
         timeout_at=deadline,
         graceful=True,
+        line_callback=lambda line: _note_build_failure(
+            failures, line),
     )
     if code != 0:
+        if failures:
+            log(f"Preflight: {len(failures)} failed action(s). "
+                f"Targets that depend on a failed action were "
+                f"skipped by the builder; those are not failures "
+                f"and are not listed.")
+            for failure in failures:
+                log(f"Preflight failed action: {failure}")
+            detail = "; failed actions: " + ", ".join(
+                failures[:_PREFLIGHT_MAX_REPORTED_FAILURES])
+            extra = len(failures) - _PREFLIGHT_MAX_REPORTED_FAILURES
+            if extra > 0:
+                detail += f" (+{extra} more, listed in the log above)"
+        else:
+            detail = ("; no FAILED action could be parsed from "
+                      "the builder output (see the log above)")
         raise StageError(
             f"preflight targeted compile failed with exit code "
             f"{code}; a Lumo-touched file does not build. Fix it "
             f"and re-run — this failure just saved the hours the "
             f"full build would have spent reaching the same error "
-            f"(builds #26-#28)."
+            f"(builds #26-#28).{detail}"
         )
     marker = {
         "fingerprint": fingerprint,
