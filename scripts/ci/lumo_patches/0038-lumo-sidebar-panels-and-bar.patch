@@ -314,7 +314,7 @@ index 0000000..0b3da5c
 +  collapsible_children_.push_back(AddChildView(MakeIconButton(
 +      base::BindRepeating(&LumoSidebarBar::ToggleEntry,
 +                          base::Unretained(this), key),
-+      *icon, std::u16string(item->GetText())));
++      *icon, std::u16string(item->GetText()))));
 +}
 +
 +void LumoSidebarBar::AddWebPanelPresetButton(const std::string& name,

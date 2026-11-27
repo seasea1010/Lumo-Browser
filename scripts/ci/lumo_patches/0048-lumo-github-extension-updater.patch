@@ -1076,7 +1076,7 @@ index 0000000..a48b007
 +      extensions::ExtensionRegistry::Get(profile_)
 +          ->GetInstalledExtension(extension_id);
 +  const std::u16string name =
-+      extension ? extension->name()
++      extension ? base::UTF8ToUTF16(extension->name())
 +                : base::UTF8ToUTF16(extension_id);
 +  message_center::Notification notification(
 +      message_center::NotificationType::NOTIFICATION_TYPE_SIMPLE,
