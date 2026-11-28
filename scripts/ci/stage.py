@@ -4695,12 +4695,7 @@ def phase_gn(args, ctx, deadline):
     write_args_gn(args, ctx)
     chromium_src = ctx["chromium_src"]
     out_dir = chromium_src / OUT_DIR_NAME
-    gn_exe = chromium_src / "buildtools" / "win" / "gn.exe"
-    if gn_exe.is_file():
-        gn_cmd = [str(gn_exe)]
-    else:
-        # Fall back to depot_tools' gn (downloaded by runhooks).
-        gn_cmd = python_script_tool(ctx["depot_tools"], "gn")
+    gn_cmd = _gn_command(ctx)
     log(f"\nRunning gn gen {OUT_DIR_NAME} (fail on unused args).")
     run_checked(
         [*gn_cmd, "gen", OUT_DIR_NAME, "--fail-on-unused-args"],
@@ -7364,6 +7359,63 @@ def run_preflight(args, ctx, deadline):
     log("Preflight passed; marker written. Starting the full build.")
 
 
+def _gn_command(ctx):
+    """The `gn` invocation for this tree: buildtools' gn.exe when
+    present, else depot_tools' gn (downloaded by runhooks).
+    Shared by phase_gn and the build-phase regeneration in
+    _regenerate_ninja_files_if_needed."""
+    chromium_src = ctx["chromium_src"]
+    gn_exe = chromium_src / "buildtools" / "win" / "gn.exe"
+    if gn_exe.is_file():
+        return [str(gn_exe)]
+    return python_script_tool(ctx["depot_tools"], "gn")
+
+
+# The checkpoint zip keeps the google_apis .ninja files out (their
+# compile command lines carry the API key as -D defines; see
+# _checkpoint_exclusion_switches), so a tree resumed from a
+# post-#53 checkpoint is missing them. ninja fails at manifest
+# load when a subninja file is absent (build.ninja references
+# them), and the build phase never re-runs `gn gen` on resume —
+# so regenerate them here before preflight/autoninja touch the
+# tree. The files are pure functions of args.gn, which
+# restore_generated_secret_files() has already recreated from
+# this stage's environment, so a regeneration reproduces exactly
+# the bytes the original stage's gn gen wrote (same args, same
+# sources); compiled objects are untouched and ninja's
+# incremental state is unaffected. No-op on a from-scratch tree
+# and on checkpoints made before the exclusion existed.
+_GOOGLE_APIS_NINJA_FILES = (
+    "obj/google_apis/google_apis.ninja",
+    "obj/google_apis/google_apis_unittests.ninja",
+)
+
+
+def _regenerate_ninja_files_if_needed(ctx, deadline):
+    out_dir = ctx["chromium_src"] / OUT_DIR_NAME
+    missing = [rel for rel in _GOOGLE_APIS_NINJA_FILES
+               if not (out_dir / rel).is_file()]
+    if not missing:
+        return
+    log("\nResume: the checkpoint keeps the google_apis .ninja "
+        "files out (their command lines carry the API key); "
+        f"missing: {', '.join(missing)}. Regenerating the Ninja "
+        "files with `gn gen` before building.")
+    run_checked(
+        [*_gn_command(ctx), "gen", OUT_DIR_NAME,
+         "--fail-on-unused-args"],
+        ctx["chromium_src"],
+        env=ctx["env"],
+        timeout_at=deadline,
+    )
+    still_missing = [rel for rel in _GOOGLE_APIS_NINJA_FILES
+                     if not (out_dir / rel).is_file()]
+    if still_missing:
+        raise StageError(
+            "gn gen did not regenerate the checkpoint-excluded "
+            f"Ninja files: {', '.join(still_missing)}")
+
+
 def phase_build(args, ctx, deadline):
     """Run autoninja on Thorium's Windows targets.
 
@@ -7397,6 +7449,12 @@ def phase_build(args, ctx, deadline):
     # them from this stage's environment before the preflight's
     # targeted compile reads them. No-op when they are present.
     restore_generated_secret_files(args, ctx)
+    # The checkpoint zip also keeps the google_apis .ninja files
+    # out (their command lines carry the API key); a resumed tree
+    # may be missing them, and ninja cannot load build.ninja
+    # without them. Regenerate with gn gen when absent (a no-op
+    # on from-scratch trees and pre-#53 checkpoints).
+    _regenerate_ninja_files_if_needed(ctx, deadline)
     # Fail fast on the Lumo patch set's known failure shapes
     # (grit ids, WebUI imports, API drift in Lumo-touched C++)
     # before spending hours on the full compile. Once per patch
@@ -7447,7 +7505,7 @@ def phase_build(args, ctx, deadline):
 
 def _checkpoint_exclusion_switches(build_root):
     """7z switches keeping Secret-bearing generated files out of
-    the checkpoint zip (build #30 audit fix).
+    the checkpoint zip (build #30 audit fix, extended in #53).
 
     Four generated files carry GitHub Secrets into the tree:
     out/thorium/args.gn (the Google API keys, write_args_gn),
@@ -7465,11 +7523,40 @@ def _checkpoint_exclusion_switches(build_root):
     final lumo-windows-x64.zip was never affected: build-final
     packages the compiled binaries, not these config files.)
 
+    Build #53 (2026-11-28) showed two more carriers, caught by
+    the value scan after the name check had passed: the budget
+    expired as designed, but checkpointing then failed because
+    the zip contained live secret values and had to be deleted
+    (exit 1 instead of the intended 42), losing the whole stage.
+
+    * obj/google_apis/google_apis.ninja and
+      obj/google_apis/google_apis_unittests.ninja: GN bakes the
+      API key, client id and client secret into the compile
+      command lines as -D defines, via config("key_defines") in
+      google_apis/BUILD.gn (verified against Chromium
+      156.0.8078.80). Only those two targets use key_defines
+      (it is in `configs`, not `public_configs`, so it does not
+      propagate to dependents), and the #53 scan found exactly
+      these two .ninja files carrying live values. Excluding
+      them is safe for resume: phase_build re-runs `gn gen`
+      when they are absent (see
+      _regenerate_ninja_files_if_needed), and the files are pure
+      functions of args.gn, which is restored first.
+    * siso_trace.json / siso_trace.0.json: siso records the
+      executed command lines, including the -D defines, so the
+      traces carry the same values. Rotation can produce
+      further numbered files, so the pattern is siso_trace*.json.
+      Traces are diagnostics siso recreates on the next run;
+      nothing reads them on resume.
+
     args.gn gets both a path-anchored pattern and the recursive
     name pattern: the pinned Chromium tree contains no other
     args.gn (verified against the 156 tree), so the name pattern
     can only ever match the generated one, and the path pattern
     covers the exact location if name matching ever changes.
+    The same uniqueness holds for google_apis.ninja /
+    google_apis_unittests.ninja: only one target in the tree
+    carries each label name.
     """
     sep = "\\" if os.name == "nt" else "/"
     args_gn_path = sep.join(
@@ -7481,6 +7568,9 @@ def _checkpoint_exclusion_switches(build_root):
         "-xr!lumo_lock_config.h",
         "-xr!lumo_lock_config_2.h",
         "-xr!lumo_launch_config.h",
+        "-xr!google_apis.ninja",
+        "-xr!google_apis_unittests.ninja",
+        "-xr!siso_trace*.json",
     ]
 
 
@@ -7508,6 +7598,16 @@ def _checkpoint_secret_entries(zip_path):
             bad.append(name)
         elif normalized.endswith("/" + OUT_DIR_NAME + "/args.gn"):
             bad.append(name)
+        elif leaf in ("google_apis.ninja",
+                      "google_apis_unittests.ninja"):
+            # Build #53: these carry the API key as -D defines.
+            bad.append(name)
+        elif leaf.startswith("siso_trace") and leaf.endswith(".json"):
+            # Build #53: siso traces record executed command lines.
+            # Checked by name as well as by value: a trace large
+            # enough to exceed the value scan's size cap would
+            # otherwise slip past the second layer.
+            bad.append(name)
     return bad
 
 
@@ -7519,6 +7619,13 @@ _SECRET_VALUE_ENVS = (
 _SECRET_SCAN_SUFFIXES = (
     ".gn", ".h", ".cc", ".txt", ".log", ".json", ".ninja",
     ".py", ".md", ".html", ".ts", ".spec",
+    # ".rsp": response files are command-line material by
+    # definition. The Windows toolchain's link/alink tools write
+    # only input lists into them today (no defines), and the cxx
+    # tool embeds defines directly in the .ninja file, but the
+    # scan is the safety net and should cover command-line files
+    # if a future toolchain change puts flags in them.
+    ".rsp",
 )
 
 
@@ -7722,7 +7829,8 @@ def checkpoint(args, ctx):
     else:
         log("Checkpoint verified: no Secret-bearing generated "
             "files (args.gn, lumo_lock_config*.h, "
-            "lumo_launch_config.h) are inside.")
+            "lumo_launch_config.h, google_apis*.ninja, "
+            "siso_trace*.json) are inside.")
     # Second layer: the name check above cannot see a secret VALUE
     # that reached the zip inside some other file (a copy under a
     # different name, or stage.log). Scan text-like entries for the
